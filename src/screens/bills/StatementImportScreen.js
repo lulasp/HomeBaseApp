@@ -1,12 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, TextInput,
-  StyleSheet, ActivityIndicator, Platform,
+  StyleSheet, ActivityIndicator, Platform, useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { format } from 'date-fns';
 import * as DocumentPicker from 'expo-document-picker';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
@@ -28,6 +29,10 @@ import { useIsDesktop, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
 function fmtCurrency(n) {
   return `$${Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
+
+// Persisted review draft — survives leaving the screen (and page reloads on web)
+// so an analyzed-but-not-imported statement isn't lost.
+const draftKey = (householdId) => `statementImportDraft:${householdId}`;
 
 // Read a picked file's bytes as base64. Works on web (blob: URI) and native
 // (file:// URI) — avoids expo-file-system, which has no web implementation.
@@ -184,6 +189,7 @@ export default function StatementImportScreen({ navigation }) {
   const { showAlert } = useAlert();
   const { notify } = useNotification();
   const isDesktop = useIsDesktop();
+  const { height: windowHeight } = useWindowDimensions();
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
   const [customBillCats, setCustomBillCats] = useState([]);
@@ -210,6 +216,37 @@ export default function StatementImportScreen({ navigation }) {
     });
     return subscribeExpenses(householdId, setExistingExpenses);
   }, [householdId]);
+
+  // Restore a previously analyzed (but not imported) statement.
+  useEffect(() => {
+    if (!householdId) return;
+    let active = true;
+    AsyncStorage.getItem(draftKey(householdId)).then((raw) => {
+      if (!active || !raw) return;
+      try {
+        const draft = JSON.parse(raw);
+        if (draft?.rows?.length) {
+          setRows(draft.rows);
+          if (draft.fileName) setFile({ name: draft.fileName }); // no uri: re-analyze needs a re-pick
+        }
+      } catch { /* ignore corrupt draft */ }
+    });
+    return () => { active = false; };
+  }, [householdId]);
+
+  // Persist the review list as it changes so it survives navigation / reload.
+  useEffect(() => {
+    if (!householdId) return;
+    if (rows && rows.length) {
+      AsyncStorage.setItem(draftKey(householdId), JSON.stringify({ fileName: file?.name, rows }));
+    }
+  }, [rows, householdId, file?.name]);
+
+  const clearDraft = () => {
+    if (householdId) AsyncStorage.removeItem(draftKey(householdId));
+    setRows(null);
+    setFile(null);
+  };
 
   const pickFile = async () => {
     try {
@@ -283,6 +320,7 @@ export default function StatementImportScreen({ navigation }) {
       await addExpensesBatch(householdId, expenseDocs);
       await Promise.all(billRows.map((r) => addBill(householdId, toBillDoc(r))));
 
+      await AsyncStorage.removeItem(draftKey(householdId));
       notify(
         'Statement imported',
         `${expenseDocs.length} expense${expenseDocs.length === 1 ? '' : 's'}` +
@@ -302,27 +340,38 @@ export default function StatementImportScreen({ navigation }) {
     : null;
 
   return (
-    <SafeAreaView style={[styles.root, Platform.OS === 'android' && { paddingTop: 24 }]}>
-      {/* Header */}
-      <View style={[styles.header, contentWidth]}>
-        <TouchableOpacity
-          onPress={() => navigation.goBack()}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          accessibilityRole="button"
-          accessibilityLabel="Back"
-        >
-          <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
-        </TouchableOpacity>
-        <Text style={styles.title}>Import statement</Text>
-        <View style={{ width: 26 }} />
-      </View>
-
+    <SafeAreaView
+      style={[
+        styles.root,
+        Platform.OS === 'android' && { paddingTop: 24 },
+        // On web the ancestor height chain doesn't reliably bound this screen,
+        // so pin it to the viewport height — gives the ScrollView a real height
+        // to scroll within instead of growing to fit all content.
+        Platform.OS === 'web' && { height: windowHeight },
+      ]}
+    >
       <ScrollView
-        style={{ flex: 1 }}
+        // Web: explicit pixel height (not flex:1) so the scroll container has a
+        // real, bounded height regardless of the ancestor flex chain.
+        style={Platform.OS === 'web' ? { height: windowHeight } : { flex: 1 }}
         contentContainerStyle={[styles.container, contentWidth]}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
+        {/* Header */}
+        <View style={styles.header}>
+          <TouchableOpacity
+            onPress={() => navigation.goBack()}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityRole="button"
+            accessibilityLabel="Back"
+          >
+            <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
+          </TouchableOpacity>
+          <Text style={styles.title}>Import statement</Text>
+          <View style={{ width: 26 }} />
+        </View>
+
         {/* Pick + analyze */}
         <View style={styles.pickCard}>
           <TouchableOpacity style={styles.pickBtn} onPress={pickFile} accessibilityRole="button">
@@ -334,7 +383,7 @@ export default function StatementImportScreen({ navigation }) {
           <Text style={styles.privacyNote}>
             Statement data is sent to OpenRouter (your configured AI model) to extract transactions.
           </Text>
-          {!!file && (
+          {!!file?.uri && (
             <TouchableOpacity
               style={[styles.analyzeBtn, analyzing && { opacity: 0.6 }]}
               onPress={analyze}
@@ -344,6 +393,12 @@ export default function StatementImportScreen({ navigation }) {
               {analyzing
                 ? <ActivityIndicator color="#fff" />
                 : <Text style={styles.analyzeBtnText}>{rows ? 'Re-analyze' : 'Analyze statement'}</Text>}
+            </TouchableOpacity>
+          )}
+          {rows !== null && (
+            <TouchableOpacity onPress={clearDraft} accessibilityRole="button" style={styles.discardBtn}>
+              <Ionicons name="trash-outline" size={14} color={colors.danger} />
+              <Text style={styles.discardText}>Discard & start over</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -391,38 +446,35 @@ export default function StatementImportScreen({ navigation }) {
                 />
               ))}
             </View>
+
+            {/* Import action — in-flow so it aligns with the list and avoids
+                the sidebar/absolute-positioning issues on web */}
+            <TouchableOpacity
+              style={[styles.confirmBtn, (!selected.length || saving) && { opacity: 0.5 }]}
+              onPress={confirmImport}
+              disabled={!selected.length || saving}
+              accessibilityRole="button"
+            >
+              {saving
+                ? <ActivityIndicator color="#fff" />
+                : <Text style={styles.confirmBtnText}>
+                    Import {selected.length} transaction{selected.length === 1 ? '' : 's'}
+                  </Text>}
+            </TouchableOpacity>
           </>
         )}
 
-        <View style={{ height: 140 }} />
+        <View style={{ height: 40 }} />
       </ScrollView>
-
-      {/* Confirm bar */}
-      {rows !== null && rows.length > 0 && (
-        <View style={[styles.confirmBar, contentWidth]}>
-          <TouchableOpacity
-            style={[styles.confirmBtn, (!selected.length || saving) && { opacity: 0.5 }]}
-            onPress={confirmImport}
-            disabled={!selected.length || saving}
-            accessibilityRole="button"
-          >
-            {saving
-              ? <ActivityIndicator color="#fff" />
-              : <Text style={styles.confirmBtnText}>
-                  Import {selected.length} transaction{selected.length === 1 ? '' : 's'}
-                </Text>}
-          </TouchableOpacity>
-        </View>
-      )}
     </SafeAreaView>
   );
 }
 
 const makeStyles = (colors) => StyleSheet.create({
-  root: { flex: 1, backgroundColor: colors.background },
+  root: { flex: 1, minHeight: 0, backgroundColor: colors.background },
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: spacing.xl, paddingVertical: spacing.md,
+    paddingVertical: spacing.md,
   },
   title: { ...type.h3, color: colors.textPrimary },
   container: { paddingHorizontal: spacing.xl, paddingTop: spacing.sm },
@@ -489,15 +541,15 @@ const makeStyles = (colors) => StyleSheet.create({
 
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingVertical: 2 },
 
-  confirmBar: {
-    position: 'absolute', left: 0, right: 0, bottom: 0,
-    padding: spacing.xl, paddingBottom: spacing.xxl,
-    backgroundColor: colors.background,
-    borderTopWidth: 1, borderTopColor: colors.border,
-  },
   confirmBtn: {
     backgroundColor: colors.accent, borderRadius: radius.md,
     paddingVertical: spacing.md, alignItems: 'center',
+    marginTop: spacing.lg,
   },
+  discardBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 6, paddingVertical: spacing.sm,
+  },
+  discardText: { ...type.caption, color: colors.danger, fontWeight: '600' },
   confirmBtnText: { ...type.body, color: '#fff', fontWeight: '700' },
 });
