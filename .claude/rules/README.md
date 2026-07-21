@@ -1,0 +1,11 @@
+# Rules
+
+Focused project rules, loaded every session via `@.claude/rules/<name>.md` references in `AGENTS.md`.
+
+Rules in this project:
+
+- **expo.md** — SDK 56 versioned docs are the source of truth; `npx expo install`; `app.config.js` conventions; when a native rebuild is needed.
+- **firebase.md** — all Firestore access through `src/services/firestore.js`; household scoping; keep `firestore.rules` and `firestore.indexes.json` in sync with queries.
+- **secrets.md** — `EXPO_PUBLIC_*` env vars via `.env.example`; per-user keys (Govee) as function params; nothing hardcoded or logged.
+- **ui.md** — theme colors only, light+dark support, file layout, reuse of existing components/contexts, navigation registration.
+- **testing.md** — jest-expo conventions, what needs tests, mocking policy, `npm test` before commits.

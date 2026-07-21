@@ -1,20 +1,42 @@
+import 'react-native-get-random-values';
+import 'react-native-gesture-handler';
+import React from 'react';
 import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, Text, View } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { AuthProvider } from './src/context/AuthContext';
+import { ThemeProvider, useTheme } from './src/context/ThemeContext';
+import { AlertProvider } from './src/context/AlertContext';
+import { NotificationProvider } from './src/context/NotificationContext';
+import { LightTimerProvider } from './src/context/LightTimerContext';
+import { NavScrollProvider } from './src/context/NavScrollContext';
+import AppNavigator from './src/navigation/index';
 
-export default function App() {
+function AppContent() {
+  const { theme } = useTheme();
   return (
-    <View style={styles.container}>
-      <Text>Open up App.js to start working on your app!</Text>
-      <StatusBar style="auto" />
-    </View>
+    <>
+      <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
+      <AppNavigator />
+    </>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});
+export default function App() {
+  return (
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <AuthProvider>
+        <ThemeProvider>
+          <AlertProvider>
+            <NotificationProvider>
+              <LightTimerProvider>
+                <NavScrollProvider>
+                  <AppContent />
+                </NavScrollProvider>
+              </LightTimerProvider>
+            </NotificationProvider>
+          </AlertProvider>
+        </ThemeProvider>
+      </AuthProvider>
+    </GestureHandlerRootView>
+  );
+}

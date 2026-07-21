@@ -1,13 +1,15 @@
 {
   "expo": {
-    "name": "home-app",
+    "name": "HomeBase",
     "slug": "home-app",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
+    "scheme": "homebase",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.homebase.app"
     },
     "android": {
       "adaptiveIcon": {
@@ -19,6 +21,9 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      "@react-native-community/datetimepicker"
+    ]
   }
 }
