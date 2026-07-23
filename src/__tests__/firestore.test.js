@@ -36,6 +36,7 @@ import {
   deleteGroceryItem,
   deductPantryIngredients,
   getGroceryItems,
+  getHouseholdsForUser,
   updateHouseholdUnits,
   addExpensesBatch,
   updateHouseholdOpenRouterApiKey,
@@ -177,6 +178,35 @@ describe('getGroceryItems', () => {
       householdId,
       'groceryItems',
     );
+  });
+});
+
+// ── getHouseholdsForUser ──────────────────────────────────────────────────────
+
+describe('getHouseholdsForUser', () => {
+  it('returns every household the user is a member of, mapped with ids', async () => {
+    mockGetDocs.mockResolvedValue({
+      docs: [
+        { id: 'h1', data: () => ({ name: 'Home', members: ['u1'] }) },
+        { id: 'h2', data: () => ({ name: 'Lake House', members: ['u1', 'u2'] }) },
+      ],
+    });
+    const households = await getHouseholdsForUser('u1');
+    expect(households).toEqual([
+      { id: 'h1', name: 'Home', members: ['u1'] },
+      { id: 'h2', name: 'Lake House', members: ['u1', 'u2'] },
+    ]);
+  });
+
+  it('returns an empty array when the user belongs to no household', async () => {
+    mockGetDocs.mockResolvedValue({ docs: [] });
+    expect(await getHouseholdsForUser('u1')).toEqual([]);
+  });
+
+  it('queries the households collection', async () => {
+    mockGetDocs.mockResolvedValue({ docs: [] });
+    await getHouseholdsForUser('u1');
+    expect(mockCollection).toHaveBeenCalledWith(expect.anything(), 'households');
   });
 });
 
