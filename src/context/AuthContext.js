@@ -3,6 +3,7 @@ import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { onAuthStateChanged, getRedirectResult, updateProfile, signOut as firebaseSignOut } from 'firebase/auth';
 import { auth } from '../config/firebase';
+import { getHouseholdsForUser } from '../services/firestore';
 
 const HOUSEHOLD_KEY     = '@homebase_household_id';
 const HOUSEHOLD_IDS_KEY = '@homebase_household_ids';
@@ -28,11 +29,30 @@ export const AuthProvider = ({ children }) => {
       if (firebaseUser) {
         setUser(firebaseUser);
         setDisplayName(firebaseUser.displayName || '');
-        const hid     = await AsyncStorage.getItem(HOUSEHOLD_KEY);
-        const hidsRaw = await AsyncStorage.getItem(HOUSEHOLD_IDS_KEY);
-        const hids    = hidsRaw ? JSON.parse(hidsRaw) : (hid ? [hid] : []);
-        setHouseholdId(hid || null);
-        setHouseholdIds(hids);
+
+        const storedActive = await AsyncStorage.getItem(HOUSEHOLD_KEY);
+
+        // Firestore membership is the source of truth — recovers households on a
+        // fresh device where AsyncStorage is empty. Fall back to the local cache
+        // only if the query fails (e.g. offline), so we don't wipe state.
+        let ids;
+        try {
+          const households = await getHouseholdsForUser(firebaseUser.uid);
+          ids = households.map((h) => h.id);
+        } catch (e) {
+          const hidsRaw = await AsyncStorage.getItem(HOUSEHOLD_IDS_KEY);
+          ids = hidsRaw ? JSON.parse(hidsRaw) : (storedActive ? [storedActive] : []);
+        }
+
+        // Keep the last-active household if still valid, else pick the first.
+        const active = (storedActive && ids.includes(storedActive)) ? storedActive : (ids[0] || null);
+
+        await AsyncStorage.setItem(HOUSEHOLD_IDS_KEY, JSON.stringify(ids));
+        if (active) await AsyncStorage.setItem(HOUSEHOLD_KEY, active);
+        else        await AsyncStorage.removeItem(HOUSEHOLD_KEY);
+
+        setHouseholdIds(ids);
+        setHouseholdId(active);
       } else {
         setUser(null);
         setDisplayName('');

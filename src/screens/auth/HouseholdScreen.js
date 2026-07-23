@@ -11,7 +11,7 @@ import { createHousehold, joinHousehold } from '../../services/firestore';
 import { spacing, radius, type } from '../../theme/colors';
 
 export default function HouseholdScreen() {
-  const { user, saveHouseholdId } = useAuth();
+  const { user, saveHouseholdId, signOut } = useAuth();
   const { colors } = useTheme();
   const { showAlert } = useAlert();
   const styles = useMemo(() => makeStyles(colors), [colors]);
@@ -147,6 +147,16 @@ export default function HouseholdScreen() {
             )}
           </View>
 
+          <TouchableOpacity
+            style={styles.logoutButton}
+            onPress={signOut}
+            accessibilityRole="button"
+            accessibilityLabel="Log out"
+          >
+            <Ionicons name="log-out-outline" size={17} color={colors.textSecondary} />
+            <Text style={styles.logoutLabel}>Log out</Text>
+          </TouchableOpacity>
+
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -230,4 +240,10 @@ const makeStyles = (colors) => StyleSheet.create({
   },
   primaryButtonDisabled: { opacity: 0.5 },
   primaryButtonLabel:    { ...type.h4, color: '#fff' },
+
+  logoutButton: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 6, marginTop: spacing.xxl, paddingVertical: spacing.md,
+  },
+  logoutLabel: { ...type.bodyMed, color: colors.textSecondary },
 });
