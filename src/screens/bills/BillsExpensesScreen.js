@@ -1,9 +1,8 @@
 import React, { useEffect, useState, useMemo, useCallback, memo } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, StyleSheet,
-  Modal, TextInput, KeyboardAvoidingView, Platform,
+  Modal, TextInput, KeyboardAvoidingView, Platform, useWindowDimensions,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { format } from 'date-fns';
 import { useAuth } from '../../context/AuthContext';
@@ -12,12 +11,14 @@ import { useAlert } from '../../context/AlertContext';
 import {
   subscribeBills, addBill, updateBill, deleteBill,
   subscribeExpenses, addExpense, updateExpense, deleteExpense,
+  subscribeBudgets, setBudget, deleteBudget,
   getHousehold,
 } from '../../services/firestore';
 import { spacing, radius, type } from '../../theme/colors';
 import { useIsDesktop, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
 import DatePickerInput from '../../components/DatePickerInput';
 import { BILL_CATS, EXPENSE_CATS, withCustomCats } from '../../utils/financeCategories';
+import { cashFlow, monthlyTrend, budgetProgress } from '../../utils/financeSummary';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -33,6 +34,13 @@ function ordinal(n) {
 
 function fmtCurrency(n) {
   return `$${Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+// Compact form for tight spaces (chart labels, summary cards): $1.2k, $980.
+function fmtCompact(n) {
+  const v = Number(n || 0);
+  if (Math.abs(v) >= 1000) return `$${(v / 1000).toLocaleString('en-US', { maximumFractionDigits: 1 })}k`;
+  return `$${Math.round(v)}`;
 }
 
 // Money spent by an expense — income rows (direction 'in') don't count toward spend totals.
@@ -277,6 +285,82 @@ const ExpenseCard = memo(function ExpenseCard({ expense, cats, onEdit, onDelete,
   );
 });
 
+// ── Spending trend (dependency-free View bars) ───────────────────────────────────
+
+const CHART_H = 130;
+
+const TrendChart = memo(function TrendChart({ data, colors, styles }) {
+  const max        = Math.max(1, ...data.map(d => d.spending));
+  const currentKey = data.length ? data[data.length - 1].key : null;
+  return (
+    <View style={styles.chartCard}>
+      <View style={styles.cardHeaderRow}>
+        <Text style={styles.cardTitle}>Spending trend</Text>
+        <Text style={styles.cardHint}>Last {data.length} months</Text>
+      </View>
+      <View style={styles.chartBars}>
+        {data.map((d) => {
+          const isCur = d.key === currentKey;
+          const h     = d.spending > 0 ? Math.max(3, Math.round((d.spending / max) * CHART_H)) : 0;
+          return (
+            <View key={d.key} style={styles.chartCol}>
+              <Text style={styles.chartValue} numberOfLines={1}>
+                {d.spending > 0 ? fmtCompact(d.spending) : ''}
+              </Text>
+              <View style={styles.chartTrack}>
+                <View style={[styles.chartBar, { height: h, backgroundColor: isCur ? colors.accent : colors.muted }]} />
+              </View>
+              <Text style={[styles.chartLabel, isCur && { color: colors.textPrimary, fontWeight: '700' }]}>
+                {d.label}
+              </Text>
+            </View>
+          );
+        })}
+      </View>
+    </View>
+  );
+});
+
+// ── Budget progress row ──────────────────────────────────────────────────────────
+
+const BudgetRow = memo(function BudgetRow({ row, cat, colors, styles, onEdit, onDelete }) {
+  const iconColor = colors[cat.colorKey] || colors.textSecondary;
+  const pct       = Math.min(1, row.ratio);
+  const barColor  = row.over ? colors.danger : row.ratio >= 0.8 ? colors.amber : colors.sage;
+  return (
+    <View style={styles.budgetCard}>
+      <View style={styles.budgetTop}>
+        <View style={[styles.expCatIcon, { backgroundColor: iconColor + '22' }]}>
+          {cat.isCustom
+            ? <Text style={styles.catEmoji}>{cat.icon}</Text>
+            : <Ionicons name={cat.icon} size={20} color={iconColor} />}
+        </View>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={styles.budgetName} numberOfLines={1}>{cat.label}</Text>
+          <Text style={styles.budgetSub}>{fmtCurrency(row.spent)} of {fmtCurrency(row.budget)}</Text>
+        </View>
+        <Text style={[styles.budgetRemain, { color: row.over ? colors.danger : colors.sage }]}>
+          {row.over ? `${fmtCurrency(-row.remaining)} over` : `${fmtCurrency(row.remaining)} left`}
+        </Text>
+      </View>
+
+      <View style={styles.progressTrack}>
+        <View style={[styles.progressFill, { width: `${pct * 100}%`, backgroundColor: barColor }]} />
+      </View>
+
+      <View style={styles.budgetActions}>
+        <View style={{ flex: 1 }} />
+        <TouchableOpacity onPress={() => onEdit(row.category)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+          <Ionicons name="pencil-outline" size={16} color={colors.textTertiary} />
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => onDelete(row.category)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+          <Ionicons name="trash-outline" size={16} color={colors.textTertiary} />
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+});
+
 // ── Screen ─────────────────────────────────────────────────────────────────────
 
 export default function BillsExpensesScreen({ navigation }) {
@@ -284,11 +368,13 @@ export default function BillsExpensesScreen({ navigation }) {
   const { colors }    = useTheme();
   const { showConfirm } = useAlert();
   const isDesktop     = useIsDesktop();
+  const { height: windowHeight } = useWindowDimensions();
   const styles        = useMemo(() => makeStyles(colors), [colors]);
 
-  const [activeTab,       setActiveTab]       = useState('bills');
+  const [activeTab,       setActiveTab]       = useState('overview');
   const [bills,           setBills]           = useState([]);
   const [expenses,        setExpenses]        = useState([]);
+  const [budgets,         setBudgets]         = useState([]);
   const [customBillCats,  setCustomBillCats]  = useState([]);
   const [customExpCats,   setCustomExpCats]   = useState([]);
   const [modalVisible,  setModalVisible]  = useState(false);
@@ -296,6 +382,7 @@ export default function BillsExpensesScreen({ navigation }) {
   const [editingId,     setEditingId]     = useState(null);
   const [billForm,      setBillForm]      = useState(BLANK_BILL);
   const [expenseForm,   setExpenseForm]   = useState(blankExpense());
+  const [budgetForm,    setBudgetForm]    = useState({ category: 'other', amount: '' });
   const [errors,        setErrors]        = useState({});
   const [saving,        setSaving]        = useState(false);
 
@@ -326,6 +413,11 @@ export default function BillsExpensesScreen({ navigation }) {
     );
   }, [householdId]);
 
+  useEffect(() => {
+    if (!householdId) return;
+    return subscribeBudgets(householdId, setBudgets);
+  }, [householdId]);
+
   // ── Summary stats ──────────────────────────────────────────────────────────
 
   const monthlyTotal   = useMemo(() => bills.reduce((s, b) => s + Number(b.amount || 0), 0), [bills]);
@@ -347,17 +439,48 @@ export default function BillsExpensesScreen({ navigation }) {
     return Object.entries(groups).sort(([a], [b]) => b.localeCompare(a));
   }, [expenses]);
 
+  // ── Overview / budgets ──────────────────────────────────────────────────────
+
+  const flow      = useMemo(() => cashFlow(expenses, monthKey), [expenses, monthKey]);
+  const trend     = useMemo(() => monthlyTrend(expenses, 6), [expenses]);
+  const budgetCatById = useMemo(() => {
+    const m = {};
+    allExpenseCats.forEach(c => { m[c.key] = c; });
+    return m;
+  }, [allExpenseCats]);
+  const budgetRows = useMemo(() => budgetProgress(budgets, expenses, monthKey), [budgets, expenses, monthKey]);
+  const budgetTotals = useMemo(() => {
+    const budgeted  = budgetRows.reduce((s, r) => s + r.budget, 0);
+    const spent     = budgetRows.reduce((s, r) => s + r.spent, 0);
+    return { budgeted, spent, remaining: budgeted - spent, overCount: budgetRows.filter(r => r.over).length };
+  }, [budgetRows]);
+
   // ── Modal helpers ──────────────────────────────────────────────────────────
 
   const openNew = useCallback(() => {
-    const t = activeTab === 'bills' ? 'bill' : 'expense';
+    const t = activeTab === 'bills' ? 'bill' : activeTab === 'budgets' ? 'budget' : 'expense';
     setModalType(t);
     setEditingId(null);
     setBillForm(BLANK_BILL);
     setExpenseForm(blankExpense());
+    if (t === 'budget') {
+      // Default to the first expense category that has no budget yet.
+      const budgeted = new Set(budgets.map(b => b.category));
+      const next = allExpenseCats.find(c => !budgeted.has(c.key)) || allExpenseCats[0];
+      setBudgetForm({ category: next?.key || 'other', amount: '' });
+    }
     setErrors({});
     setModalVisible(true);
-  }, [activeTab]);
+  }, [activeTab, budgets, allExpenseCats]);
+
+  const openEditBudget = useCallback((category) => {
+    const existing = budgets.find(b => b.category === category);
+    setModalType('budget');
+    setEditingId(category);   // budget doc id === category key
+    setBudgetForm({ category, amount: String(existing?.amount ?? '') });
+    setErrors({});
+    setModalVisible(true);
+  }, [budgets]);
 
   const openEditBill = useCallback((bill) => {
     setModalType('bill');
@@ -445,6 +568,21 @@ export default function BillsExpensesScreen({ navigation }) {
     }
   }, [expenseForm, editingId, householdId, closeModal]);
 
+  const handleSaveBudget = useCallback(async () => {
+    const errs = {};
+    if (!budgetForm.amount || isNaN(Number(budgetForm.amount)) || Number(budgetForm.amount) <= 0) errs.amount = true;
+    if (!budgetForm.category) errs.category = true;
+    if (Object.keys(errs).length) { setErrors(errs); return; }
+
+    setSaving(true);
+    try {
+      await setBudget(householdId, budgetForm.category, Number(budgetForm.amount));
+      closeModal();
+    } finally {
+      setSaving(false);
+    }
+  }, [budgetForm, householdId, closeModal]);
+
   // ── Delete ─────────────────────────────────────────────────────────────────
 
   const handleDeleteBill = useCallback(async (bill) => {
@@ -474,12 +612,33 @@ export default function BillsExpensesScreen({ navigation }) {
     updateBill(householdId, bill.id, { paidMonths: next });
   }, [householdId]);
 
+  const handleDeleteBudget = useCallback(async (category) => {
+    const cat = budgetCatById[category];
+    const ok = await showConfirm({
+      title: 'Remove budget',
+      message: `Remove the budget for "${cat?.label || category}"?`,
+      confirmLabel: 'Remove',
+      type: 'danger',
+    });
+    if (ok) deleteBudget(householdId, category);
+  }, [householdId, showConfirm, budgetCatById]);
+
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <SafeAreaView style={[styles.root, Platform.OS === 'android' && { paddingTop: 24 }]}>
+    <View style={[
+      styles.root,
+      // Web: a ScrollView only scrolls with a definite-height ancestor; the
+      // Stack card's height doesn't propagate through flex:1 on react-native-web.
+      // Matches ProfileScreen, which scrolls correctly in the same nav stack.
+      Platform.OS === 'web' ? { height: windowHeight } : null,
+      Platform.OS === 'android' && { paddingTop: 24 },
+    ]}>
       <ScrollView
-        style={{ flex: 1 }}
+        // Web: explicit pixel height (not flex:1) so the scroll container has a
+        // real, bounded height instead of growing to fit all content. Same fix
+        // that made StatementImportScreen scroll.
+        style={Platform.OS === 'web' ? { height: windowHeight } : { flex: 1 }}
         contentContainerStyle={[
           styles.container,
           isDesktop && { maxWidth: DESKTOP_MAX_CONTENT, alignSelf: 'center', width: '100%' },
@@ -491,7 +650,7 @@ export default function BillsExpensesScreen({ navigation }) {
         <View style={styles.header}>
           <View>
             <Text style={styles.title}>Finances</Text>
-            <Text style={styles.subtitle}>Bills & expenses</Text>
+            <Text style={styles.subtitle}>Cash flow, budgets & bills</Text>
           </View>
           <TouchableOpacity
             style={styles.importBtn}
@@ -506,7 +665,7 @@ export default function BillsExpensesScreen({ navigation }) {
 
         {/* Tab switcher */}
         <View style={styles.tabRow}>
-          {[['bills', 'Recurring Bills'], ['expenses', 'Expenses']].map(([key, label]) => (
+          {[['overview', 'Overview'], ['bills', 'Bills'], ['expenses', 'Expenses'], ['budgets', 'Budgets']].map(([key, label]) => (
             <TouchableOpacity
               key={key}
               style={[styles.tabBtn, activeTab === key && styles.tabBtnActive]}
@@ -514,12 +673,63 @@ export default function BillsExpensesScreen({ navigation }) {
               accessibilityRole="tab"
               accessibilityState={{ selected: activeTab === key }}
             >
-              <Text style={[styles.tabBtnLabel, activeTab === key && styles.tabBtnLabelActive]}>
+              <Text style={[styles.tabBtnLabel, activeTab === key && styles.tabBtnLabelActive]} numberOfLines={1}>
                 {label}
               </Text>
             </TouchableOpacity>
           ))}
         </View>
+
+        {/* ── Overview tab ──────────────────────────────────────────────── */}
+        {activeTab === 'overview' && expenses.length === 0 && (
+          <View style={styles.emptyState}>
+            <Ionicons name="stats-chart-outline" size={48} color={colors.textTertiary} />
+            <Text style={styles.emptyTitle}>No activity yet</Text>
+            <Text style={styles.emptySub}>Add expenses or import a statement to see your cash flow and trends.</Text>
+          </View>
+        )}
+
+        {activeTab === 'overview' && expenses.length > 0 && (
+          <>
+            {/* Cash-flow hero */}
+            <View style={styles.flowCard}>
+              <Text style={styles.flowLabel}>Net this month</Text>
+              <Text style={[styles.flowNet, { color: flow.net >= 0 ? colors.sage : colors.danger }]}>
+                {flow.net >= 0 ? '' : '−'}{fmtCurrency(Math.abs(flow.net))}
+              </Text>
+              <View style={styles.flowRow}>
+                <View style={styles.flowStat}>
+                  <View style={styles.flowStatHead}>
+                    <Ionicons name="arrow-down-circle" size={14} color={colors.sage} />
+                    <Text style={styles.flowStatLabel}>Money in</Text>
+                  </View>
+                  <Text style={[styles.flowStatValue, { color: colors.sage }]}>{fmtCurrency(flow.income)}</Text>
+                </View>
+                <View style={styles.flowDivider} />
+                <View style={styles.flowStat}>
+                  <View style={styles.flowStatHead}>
+                    <Ionicons name="arrow-up-circle" size={14} color={colors.amber} />
+                    <Text style={styles.flowStatLabel}>Money out</Text>
+                  </View>
+                  <Text style={[styles.flowStatValue, { color: colors.amber }]}>{fmtCurrency(flow.spending)}</Text>
+                </View>
+                <View style={styles.flowDivider} />
+                <View style={styles.flowStat}>
+                  <View style={styles.flowStatHead}>
+                    <Ionicons name="pie-chart" size={13} color={colors.textSecondary} />
+                    <Text style={styles.flowStatLabel}>Saved</Text>
+                  </View>
+                  <Text style={styles.flowStatValue}>
+                    {flow.income > 0 ? `${Math.round(flow.savingsRate * 100)}%` : '—'}
+                  </Text>
+                </View>
+              </View>
+            </View>
+
+            {/* Spending trend */}
+            <TrendChart data={trend} colors={colors} styles={styles} />
+          </>
+        )}
 
         {/* ── Bills tab ─────────────────────────────────────────────────── */}
         {activeTab === 'bills' && (
@@ -619,6 +829,54 @@ export default function BillsExpensesScreen({ navigation }) {
           </>
         )}
 
+        {/* ── Budgets tab ───────────────────────────────────────────────── */}
+        {activeTab === 'budgets' && (
+          <>
+            {budgetRows.length > 0 && (
+              <View style={styles.summaryRow}>
+                <View style={styles.summaryCard}>
+                  <Text style={styles.summaryValue}>{fmtCurrency(budgetTotals.budgeted)}</Text>
+                  <Text style={styles.summaryLabel}>Budgeted</Text>
+                </View>
+                <View style={styles.summaryCard}>
+                  <Text style={[styles.summaryValue, { color: colors.amber }]}>{fmtCurrency(budgetTotals.spent)}</Text>
+                  <Text style={styles.summaryLabel}>Spent</Text>
+                </View>
+                <View style={styles.summaryCard}>
+                  <Text style={[styles.summaryValue, { color: budgetTotals.remaining < 0 ? colors.danger : colors.sage }]}>
+                    {fmtCurrency(budgetTotals.remaining)}
+                  </Text>
+                  <Text style={styles.summaryLabel}>
+                    {budgetTotals.overCount > 0 ? `${budgetTotals.overCount} over` : 'Left'}
+                  </Text>
+                </View>
+              </View>
+            )}
+
+            {budgetRows.length === 0 ? (
+              <View style={styles.emptyState}>
+                <Ionicons name="wallet-outline" size={48} color={colors.textTertiary} />
+                <Text style={styles.emptyTitle}>No budgets yet</Text>
+                <Text style={styles.emptySub}>Set a monthly limit per category and track spending against it.</Text>
+              </View>
+            ) : (
+              <View style={styles.list}>
+                {budgetRows.map(row => (
+                  <BudgetRow
+                    key={row.category}
+                    row={row}
+                    cat={budgetCatById[row.category] || { key: row.category, label: row.category, icon: 'cash', colorKey: 'textSecondary' }}
+                    colors={colors}
+                    styles={styles}
+                    onEdit={openEditBudget}
+                    onDelete={handleDeleteBudget}
+                  />
+                ))}
+              </View>
+            )}
+          </>
+        )}
+
         <View style={{ height: 180 }} />
       </ScrollView>
 
@@ -627,7 +885,7 @@ export default function BillsExpensesScreen({ navigation }) {
         style={[styles.fab, { backgroundColor: colors.accent }]}
         onPress={openNew}
         accessibilityRole="button"
-        accessibilityLabel={`Add ${activeTab === 'bills' ? 'bill' : 'expense'}`}
+        accessibilityLabel={`Add ${activeTab === 'bills' ? 'bill' : activeTab === 'budgets' ? 'budget' : 'expense'}`}
       >
         <Ionicons name="add" size={28} color="#fff" />
       </TouchableOpacity>
@@ -657,7 +915,9 @@ export default function BillsExpensesScreen({ navigation }) {
               <Text style={styles.sheetTitle}>
                 {modalType === 'bill'
                   ? (editingId ? 'Edit Bill' : 'Add Bill')
-                  : (editingId ? 'Edit Expense' : 'Add Expense')}
+                  : modalType === 'budget'
+                    ? (editingId ? 'Edit Budget' : 'Add Budget')
+                    : (editingId ? 'Edit Expense' : 'Add Expense')}
               </Text>
               <TouchableOpacity onPress={closeModal} accessibilityRole="button" accessibilityLabel="Close">
                 <Ionicons name="close" size={22} color={colors.textSecondary} />
@@ -669,7 +929,44 @@ export default function BillsExpensesScreen({ navigation }) {
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
             >
-              {modalType === 'bill' ? (
+              {modalType === 'budget' ? (
+                <>
+                  <Text style={styles.fieldLabel}>Category</Text>
+                  {editingId ? (
+                    <View style={styles.budgetCatStatic}>
+                      <Text style={styles.budgetCatStaticText}>
+                        {(budgetCatById[budgetForm.category] || {}).label || budgetForm.category}
+                      </Text>
+                    </View>
+                  ) : (
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipsWrap} contentContainerStyle={styles.chipsWrapContent}>
+                      {allExpenseCats.map(cat => (
+                        <CatChip
+                          key={cat.key}
+                          cat={cat}
+                          selected={budgetForm.category === cat.key}
+                          onSelect={v => setBudgetForm(f => ({ ...f, category: v }))}
+                          colors={colors}
+                        />
+                      ))}
+                    </ScrollView>
+                  )}
+
+                  <Text style={styles.fieldLabel}>Monthly limit *</Text>
+                  <View style={[styles.inputPrefix, errors.amount && styles.inputError]}>
+                    <Text style={styles.prefixText}>$</Text>
+                    <TextInput
+                      style={styles.inputInner}
+                      placeholder="0.00"
+                      placeholderTextColor={colors.textTertiary}
+                      value={budgetForm.amount}
+                      onChangeText={v => { setBudgetForm(f => ({ ...f, amount: v })); setErrors(e => ({ ...e, amount: false })); }}
+                      keyboardType="decimal-pad"
+                    />
+                  </View>
+                  <Text style={styles.helperText}>Applies every month. Track it on the Budgets tab.</Text>
+                </>
+              ) : modalType === 'bill' ? (
                 <>
                   <Text style={styles.fieldLabel}>Bill name *</Text>
                   <TextInput
@@ -798,7 +1095,7 @@ export default function BillsExpensesScreen({ navigation }) {
 
               <TouchableOpacity
                 style={[styles.saveBtn, { backgroundColor: colors.accent }, saving && { opacity: 0.6 }]}
-                onPress={modalType === 'bill' ? handleSaveBill : handleSaveExpense}
+                onPress={modalType === 'bill' ? handleSaveBill : modalType === 'budget' ? handleSaveBudget : handleSaveExpense}
                 disabled={saving}
                 accessibilityRole="button"
               >
@@ -810,14 +1107,14 @@ export default function BillsExpensesScreen({ navigation }) {
           </View>
         </KeyboardAvoidingView>
       </Modal>
-    </SafeAreaView>
+    </View>
   );
 }
 
 // ── Styles ─────────────────────────────────────────────────────────────────────
 
 const makeStyles = (colors) => StyleSheet.create({
-  root:      { flex: 1, backgroundColor: colors.background },
+  root:      { flex: 1, minHeight: 0, backgroundColor: colors.background },
   container: { paddingHorizontal: spacing.xl, paddingTop: spacing.xl },
 
   header: {
@@ -867,6 +1164,58 @@ const makeStyles = (colors) => StyleSheet.create({
   },
   summaryValue: { ...type.h4, color: colors.textPrimary },
   summaryLabel: { ...type.caption, color: colors.textTertiary, textAlign: 'center' },
+
+  // ── Overview: cash-flow hero ──────────────────────────────────────────────
+  flowCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.xl, borderWidth: 1, borderColor: colors.border,
+    padding: spacing.xl, marginBottom: spacing.lg, alignItems: 'center',
+  },
+  flowLabel:     { ...type.label, color: colors.textTertiary, marginBottom: 4 },
+  flowNet:       { fontSize: 34, fontWeight: '800', letterSpacing: -0.5, fontVariant: ['tabular-nums'] },
+  flowRow:       { flexDirection: 'row', alignSelf: 'stretch', marginTop: spacing.lg },
+  flowStat:      { flex: 1, alignItems: 'center', gap: 4 },
+  flowStatHead:  { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  flowStatLabel: { ...type.caption, color: colors.textTertiary },
+  flowStatValue: { ...type.bodyMed, color: colors.textPrimary, fontVariant: ['tabular-nums'] },
+  flowDivider:   { width: 1, backgroundColor: colors.border, marginVertical: 2 },
+
+  // ── Overview: trend chart ─────────────────────────────────────────────────
+  cardHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.md },
+  cardTitle:     { ...type.h4, color: colors.textPrimary },
+  cardHint:      { ...type.caption, color: colors.textTertiary },
+  chartCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.xl, borderWidth: 1, borderColor: colors.border,
+    padding: spacing.lg, marginBottom: spacing.lg,
+  },
+  chartBars:  { flexDirection: 'row', alignItems: 'flex-end', gap: spacing.sm, height: CHART_H + 40 },
+  chartCol:   { flex: 1, alignItems: 'center', justifyContent: 'flex-end', gap: 4 },
+  chartValue: { ...type.caption, color: colors.textTertiary, fontSize: 9, fontVariant: ['tabular-nums'] },
+  chartTrack: { height: CHART_H, width: '100%', alignItems: 'center', justifyContent: 'flex-end' },
+  chartBar:   { width: '70%', maxWidth: 34, borderTopLeftRadius: radius.sm, borderTopRightRadius: radius.sm },
+  chartLabel: { ...type.caption, color: colors.textTertiary },
+
+  // ── Budgets ───────────────────────────────────────────────────────────────
+  budgetCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.xl, borderWidth: 1, borderColor: colors.border,
+    padding: spacing.lg, gap: spacing.sm,
+  },
+  budgetTop:    { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  budgetName:   { ...type.bodyMed, color: colors.textPrimary },
+  budgetSub:    { ...type.caption, color: colors.textTertiary, marginTop: 2, fontVariant: ['tabular-nums'] },
+  budgetRemain: { ...type.bodySm, fontWeight: '700', fontVariant: ['tabular-nums'] },
+  progressTrack: { height: 8, borderRadius: radius.full, backgroundColor: colors.muted, overflow: 'hidden' },
+  progressFill:  { height: 8, borderRadius: radius.full },
+  budgetActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  budgetCatStatic: {
+    height: 50, justifyContent: 'center', paddingHorizontal: spacing.lg,
+    backgroundColor: colors.surfaceElevated, borderRadius: radius.md,
+    borderWidth: 1, borderColor: colors.border,
+  },
+  budgetCatStaticText: { ...type.body, color: colors.textPrimary },
+  helperText: { ...type.caption, color: colors.textTertiary, marginTop: spacing.sm },
 
   emptyState: { alignItems: 'center', gap: spacing.md, marginTop: 60 },
   emptyTitle: { ...type.h4, color: colors.textSecondary },

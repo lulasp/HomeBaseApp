@@ -329,6 +329,25 @@ export const updateExpense = (householdId, expenseId, data) =>
 export const deleteExpense = (householdId, expenseId) =>
   deleteDoc(doc(db, 'households', householdId, 'expenses', expenseId));
 
+// ── Budgets ──────────────────────────────────────────────
+// One budget per expense category — the category key is the doc id, so setting
+// a budget for a category is idempotent (no duplicates).
+export const subscribeBudgets = (householdId, callback) =>
+  onSnapshot(
+    collection(db, 'households', householdId, 'budgets'),
+    (snap) => callback(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+  );
+
+export const setBudget = (householdId, category, amount) =>
+  setDoc(
+    doc(db, 'households', householdId, 'budgets', category),
+    { category, amount: Number(amount) || 0, updatedAt: serverTimestamp() },
+    { merge: true },
+  );
+
+export const deleteBudget = (householdId, category) =>
+  deleteDoc(doc(db, 'households', householdId, 'budgets', category));
+
 // ── Emergency Contacts ───────────────────────────────────
 export const subscribeEmergencyContacts = (householdId, callback) =>
   onSnapshot(
