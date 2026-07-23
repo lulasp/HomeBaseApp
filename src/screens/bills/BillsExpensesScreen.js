@@ -1,9 +1,8 @@
 import React, { useEffect, useState, useMemo, useCallback, memo } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, StyleSheet,
-  Modal, TextInput, KeyboardAvoidingView, Platform,
+  Modal, TextInput, KeyboardAvoidingView, Platform, useWindowDimensions,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { format } from 'date-fns';
 import { useAuth } from '../../context/AuthContext';
@@ -284,6 +283,7 @@ export default function BillsExpensesScreen({ navigation }) {
   const { colors }    = useTheme();
   const { showConfirm } = useAlert();
   const isDesktop     = useIsDesktop();
+  const { height: windowHeight } = useWindowDimensions();
   const styles        = useMemo(() => makeStyles(colors), [colors]);
 
   const [activeTab,       setActiveTab]       = useState('bills');
@@ -477,9 +477,19 @@ export default function BillsExpensesScreen({ navigation }) {
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <SafeAreaView style={[styles.root, Platform.OS === 'android' && { paddingTop: 24 }]}>
+    <View style={[
+      styles.root,
+      // Web: a ScrollView only scrolls with a definite-height ancestor; the
+      // Stack card's height doesn't propagate through flex:1 on react-native-web.
+      // Matches ProfileScreen, which scrolls correctly in the same nav stack.
+      Platform.OS === 'web' ? { height: windowHeight } : null,
+      Platform.OS === 'android' && { paddingTop: 24 },
+    ]}>
       <ScrollView
-        style={{ flex: 1 }}
+        // Web: explicit pixel height (not flex:1) so the scroll container has a
+        // real, bounded height instead of growing to fit all content. Same fix
+        // that made StatementImportScreen scroll.
+        style={Platform.OS === 'web' ? { height: windowHeight } : { flex: 1 }}
         contentContainerStyle={[
           styles.container,
           isDesktop && { maxWidth: DESKTOP_MAX_CONTENT, alignSelf: 'center', width: '100%' },
@@ -810,14 +820,14 @@ export default function BillsExpensesScreen({ navigation }) {
           </View>
         </KeyboardAvoidingView>
       </Modal>
-    </SafeAreaView>
+    </View>
   );
 }
 
 // ── Styles ─────────────────────────────────────────────────────────────────────
 
 const makeStyles = (colors) => StyleSheet.create({
-  root:      { flex: 1, backgroundColor: colors.background },
+  root:      { flex: 1, minHeight: 0, backgroundColor: colors.background },
   container: { paddingHorizontal: spacing.xl, paddingTop: spacing.xl },
 
   header: {

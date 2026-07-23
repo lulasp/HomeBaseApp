@@ -21,4 +21,5 @@ Read the exact versioned docs at https://docs.expo.dev/versions/v56.0.0/ before 
 @.claude/rules/firebase.md
 @.claude/rules/secrets.md
 @.claude/rules/ui.md
+@.claude/rules/web-scroll.md
 @.claude/rules/testing.md
