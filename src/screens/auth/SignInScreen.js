@@ -3,7 +3,7 @@ import {
   View, Text, TouchableOpacity, StyleSheet,
   SafeAreaView, ActivityIndicator, Platform,
 } from 'react-native';
-import { GoogleAuthProvider, signInWithCredential, signInWithPopup } from 'firebase/auth';
+import { GoogleAuthProvider, signInWithCredential, signInWithPopup, signInWithRedirect } from 'firebase/auth';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../context/ThemeContext';
 import { useAlert } from '../../context/AlertContext';
@@ -29,7 +29,17 @@ export default function SignInScreen() {
     try {
       if (Platform.OS === 'web') {
         const provider = new GoogleAuthProvider();
-        await signInWithPopup(auth, provider);
+        try {
+          await signInWithPopup(auth, provider);
+        } catch (e) {
+          // Some browsers (notably desktop Firefox) block the popup — fall back
+          // to a full-page redirect, completed via getRedirectResult in AuthContext.
+          if (['auth/popup-blocked', 'auth/popup-closed-by-user', 'auth/cancelled-popup-request'].includes(e.code)) {
+            await signInWithRedirect(auth, provider);
+            return;
+          }
+          throw e;
+        }
       } else {
         const { GoogleSignin } = require('@react-native-google-signin/google-signin');
         await GoogleSignin.hasPlayServices();
