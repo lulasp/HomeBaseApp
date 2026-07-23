@@ -52,6 +52,13 @@ export const getHousehold = async (householdId) => {
   return snap.exists() ? { id: snap.id, ...snap.data() } : null;
 };
 
+// Households the user belongs to — source of truth for membership across devices.
+export const getHouseholdsForUser = async (uid) => {
+  const q = query(collection(db, 'households'), where('members', 'array-contains', uid));
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+};
+
 // ── Grocery List ─────────────────────────────────────────
 export const subscribeGroceryItems = (householdId, callback) => {
   return onSnapshot(
