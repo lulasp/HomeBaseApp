@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
+import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { onAuthStateChanged, updateProfile, signOut as firebaseSignOut } from 'firebase/auth';
+import { onAuthStateChanged, getRedirectResult, updateProfile, signOut as firebaseSignOut } from 'firebase/auth';
 import { auth } from '../config/firebase';
 
 const HOUSEHOLD_KEY     = '@homebase_household_id';
@@ -14,6 +15,13 @@ export const AuthProvider = ({ children }) => {
   const [householdId, setHouseholdId]   = useState(null);
   const [householdIds, setHouseholdIds] = useState([]);
   const [loading, setLoading]           = useState(true);
+
+  useEffect(() => {
+    // Complete a redirect-based Google sign-in (popup fallback on web).
+    if (Platform.OS === 'web') {
+      getRedirectResult(auth).catch(() => {});
+    }
+  }, []);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
