@@ -8,6 +8,7 @@ const mockGetDocs = jest.fn();
 const mockDoc = jest.fn((db, ...segments) => segments.join('/'));
 const mockCollection = jest.fn((db, ...segments) => segments.join('/'));
 const mockAddDoc = jest.fn().mockResolvedValue({ id: 'new-id' });
+const mockSetDoc = jest.fn().mockResolvedValue(undefined);
 const mockServerTimestamp = jest.fn(() => 'SERVER_TIMESTAMP');
 const mockDeleteField = jest.fn(() => 'DELETE_FIELD');
 const mockBatchSet = jest.fn();
@@ -22,7 +23,7 @@ jest.mock('firebase/firestore', () => ({
   deleteDoc: (...args) => mockDeleteDoc(...args),
   getDocs: (...args) => mockGetDocs(...args),
   getDoc: (...args) => mockGetDoc(...args),
-  setDoc: jest.fn(),
+  setDoc: (...args) => mockSetDoc(...args),
   query: jest.fn(),
   where: jest.fn(),
   onSnapshot: jest.fn(),
@@ -37,10 +38,16 @@ import {
   deductPantryIngredients,
   getGroceryItems,
   getHouseholdsForUser,
+  getHouseholdPrivate,
+  getHouseholdWithPrivate,
+  migrateHouseholdSecrets,
+  joinHousehold,
+  upsertMemberProfile,
   updateHouseholdUnits,
   addExpensesBatch,
   updateHouseholdOpenRouterApiKey,
   updateHouseholdAiModel,
+  updateHouseholdXiaomiCreds,
 } from '../services/firestore';
 
 beforeEach(() => {
@@ -210,6 +217,127 @@ describe('getHouseholdsForUser', () => {
   });
 });
 
+// ── upsertMemberProfile ───────────────────────────────────────────────────────
+
+describe('upsertMemberProfile', () => {
+  it('merges the trimmed name and email into the private doc', async () => {
+    await upsertMemberProfile('hh1', 'u1', { name: '  Alice  ', email: '  a@x.com  ' });
+    expect(mockSetDoc).toHaveBeenCalledWith(
+      'households/hh1/private/data',
+      { memberProfiles: { u1: { name: 'Alice', email: 'a@x.com' } } },
+      { merge: true },
+    );
+  });
+
+  it('coerces missing fields to empty strings', async () => {
+    await upsertMemberProfile('hh1', 'u1', {});
+    expect(mockSetDoc).toHaveBeenCalledWith(
+      'households/hh1/private/data',
+      { memberProfiles: { u1: { name: '', email: '' } } },
+      { merge: true },
+    );
+  });
+});
+
+// ── joinHousehold ─────────────────────────────────────────────────────────────
+
+describe('joinHousehold', () => {
+  it('adds the user to members and records their profile in the private doc', async () => {
+    mockGetDocs.mockResolvedValue({
+      empty: false,
+      docs: [{ id: 'hh1', data: () => ({ members: ['owner'] }) }],
+    });
+    const id = await joinHousehold('u2', 'abc123', { name: 'Bob', email: 'b@x.com' });
+    expect(id).toBe('hh1');
+    expect(mockUpdateDoc).toHaveBeenCalledWith('households/hh1', { members: ['owner', 'u2'] });
+    expect(mockSetDoc).toHaveBeenCalledWith(
+      'households/hh1/private/data',
+      { memberProfiles: { u2: { name: 'Bob', email: 'b@x.com' } } },
+      { merge: true },
+    );
+  });
+
+  it('throws on an invalid invite code', async () => {
+    mockGetDocs.mockResolvedValue({ empty: true, docs: [] });
+    await expect(joinHousehold('u2', 'nope')).rejects.toThrow('Invalid invite code.');
+  });
+
+  it('skips re-adding an existing member but still refreshes their profile', async () => {
+    mockGetDocs.mockResolvedValue({
+      empty: false,
+      docs: [{ id: 'hh1', data: () => ({ members: ['u2'] }) }],
+    });
+    await joinHousehold('u2', 'abc123', { name: 'Bob', email: 'b@x.com' });
+    expect(mockUpdateDoc).not.toHaveBeenCalled();       // no members-array change
+    expect(mockSetDoc).toHaveBeenCalledWith(
+      'households/hh1/private/data',
+      { memberProfiles: { u2: { name: 'Bob', email: 'b@x.com' } } },
+      { merge: true },
+    );
+  });
+});
+
+// ── getHouseholdPrivate / getHouseholdWithPrivate ─────────────────────────────
+
+describe('getHouseholdPrivate', () => {
+  it('returns the private doc data', async () => {
+    mockGetDoc.mockResolvedValue({ exists: () => true, data: () => ({ goveeApiKey: 'g' }) });
+    expect(await getHouseholdPrivate('hh1')).toEqual({ goveeApiKey: 'g' });
+  });
+
+  it('returns an empty object when the private doc is missing', async () => {
+    mockGetDoc.mockResolvedValue({ exists: () => false });
+    expect(await getHouseholdPrivate('hh1')).toEqual({});
+  });
+});
+
+describe('getHouseholdWithPrivate', () => {
+  it('merges the private doc over the parent, with private winning', async () => {
+    mockGetDoc
+      .mockResolvedValueOnce({ exists: () => true, id: 'hh1', data: () => ({ name: 'Home', goveeApiKey: 'legacy' }) })
+      .mockResolvedValueOnce({ exists: () => true, data: () => ({ goveeApiKey: 'current', memberProfiles: { u1: {} } }) });
+    const merged = await getHouseholdWithPrivate('hh1');
+    expect(merged).toEqual({
+      id: 'hh1', name: 'Home', goveeApiKey: 'current', memberProfiles: { u1: {} },
+    });
+  });
+
+  it('returns null when the household does not exist', async () => {
+    mockGetDoc
+      .mockResolvedValueOnce({ exists: () => false })
+      .mockResolvedValueOnce({ exists: () => false });
+    expect(await getHouseholdWithPrivate('hh1')).toBeNull();
+  });
+});
+
+// ── migrateHouseholdSecrets ───────────────────────────────────────────────────
+
+describe('migrateHouseholdSecrets', () => {
+  it('copies legacy secrets to the private doc and deletes them from the parent', async () => {
+    mockGetDoc.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ name: 'Home', goveeApiKey: 'g', openRouterApiKey: 'o' }),
+    });
+    await migrateHouseholdSecrets('hh1');
+    expect(mockSetDoc).toHaveBeenCalledWith(
+      'households/hh1/private/data',
+      { goveeApiKey: 'g', openRouterApiKey: 'o' },
+      { merge: true },
+    );
+    expect(mockUpdateDoc).toHaveBeenCalledWith(
+      'households/hh1',
+      { goveeApiKey: 'DELETE_FIELD', openRouterApiKey: 'DELETE_FIELD' },
+    );
+  });
+
+  it('does nothing when the parent holds no legacy secrets', async () => {
+    mockGetDoc.mockResolvedValue({ exists: () => true, data: () => ({ name: 'Home' }) });
+    await migrateHouseholdSecrets('hh1');
+    expect(mockSetDoc).not.toHaveBeenCalled();
+    expect(mockUpdateDoc).not.toHaveBeenCalled();
+  });
+});
+
 // ── updateHouseholdUnits ──────────────────────────────────────────────────────
 
 describe('updateHouseholdUnits', () => {
@@ -280,19 +408,21 @@ describe('addExpensesBatch', () => {
 describe('updateHouseholdOpenRouterApiKey', () => {
   const householdId = 'hh1';
 
-  it('trims and stores the key', async () => {
+  it('trims and stores the key in the private doc', async () => {
     await updateHouseholdOpenRouterApiKey(householdId, '  sk-or-abc  ');
-    expect(mockUpdateDoc).toHaveBeenCalledWith(
-      expect.anything(),
+    expect(mockSetDoc).toHaveBeenCalledWith(
+      'households/hh1/private/data',
       { openRouterApiKey: 'sk-or-abc' },
+      { merge: true },
     );
   });
 
   it('deletes the field when cleared', async () => {
     await updateHouseholdOpenRouterApiKey(householdId, '');
-    expect(mockUpdateDoc).toHaveBeenCalledWith(
-      expect.anything(),
+    expect(mockSetDoc).toHaveBeenCalledWith(
+      'households/hh1/private/data',
       { openRouterApiKey: 'DELETE_FIELD' },
+      { merge: true },
     );
   });
 });
@@ -305,6 +435,37 @@ describe('updateHouseholdAiModel', () => {
     expect(mockUpdateDoc).toHaveBeenCalledWith(
       expect.anything(),
       { aiModel: 'google/gemma-4-31b-it:free' },
+    );
+  });
+});
+
+// ── updateHouseholdXiaomiCreds ────────────────────────────────────────────────
+
+describe('updateHouseholdXiaomiCreds', () => {
+  it('stores trimmed credentials with a defaulted region in the private doc', async () => {
+    await updateHouseholdXiaomiCreds('hh1', { userId: ' 123 ', serviceToken: ' tok ', ssecurity: ' key ' });
+    expect(mockSetDoc).toHaveBeenCalledWith(
+      'households/hh1/private/data',
+      { xiaomiCreds: { userId: '123', serviceToken: 'tok', ssecurity: 'key', region: 'cn' } },
+      { merge: true },
+    );
+  });
+
+  it('keeps the chosen region', async () => {
+    await updateHouseholdXiaomiCreds('hh1', { userId: '1', serviceToken: 't', ssecurity: 's', region: 'eu' });
+    expect(mockSetDoc).toHaveBeenCalledWith(
+      'households/hh1/private/data',
+      { xiaomiCreds: expect.objectContaining({ region: 'eu' }) },
+      { merge: true },
+    );
+  });
+
+  it('deletes the field when all credentials are empty', async () => {
+    await updateHouseholdXiaomiCreds('hh1', { userId: '', serviceToken: '', ssecurity: '', region: 'us' });
+    expect(mockSetDoc).toHaveBeenCalledWith(
+      'households/hh1/private/data',
+      { xiaomiCreds: 'DELETE_FIELD' },
+      { merge: true },
     );
   });
 });

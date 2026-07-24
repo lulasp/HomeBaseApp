@@ -29,7 +29,10 @@ service cloud.firestore {
       // Households cannot be deleted from the client
       allow delete: if false;
 
-      // All subcollections (groceryItems, pantryItems, recipes, etc.) — members only
+      // All subcollections — members only. This covers feature data
+      // (groceryItems, pantryItems, recipes, …) AND the `private/data` doc that
+      // holds integration secrets + member profiles, keeping them out of the
+      // world-readable parent household doc above.
       match /{subcollection}/{docId} {
         allow read, write: if isMember(householdId);
       }

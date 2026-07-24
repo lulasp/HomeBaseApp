@@ -14,7 +14,7 @@ import { useTheme } from '../../context/ThemeContext';
 import { useAlert } from '../../context/AlertContext';
 import { useNotification } from '../../context/NotificationContext';
 import {
-  getHousehold, subscribeExpenses, addExpensesBatch, addBill,
+  getHouseholdWithPrivate, subscribeExpenses, addExpensesBatch, addBill,
 } from '../../services/firestore';
 import { parseBankStatement, parseStatementText } from '../../services/openrouter';
 import {
@@ -208,7 +208,7 @@ export default function StatementImportScreen({ navigation }) {
 
   useEffect(() => {
     if (!householdId) return;
-    getHousehold(householdId).then((hh) => {
+    getHouseholdWithPrivate(householdId).then((hh) => {
       setCustomBillCats(hh?.billCustomCategories ?? []);
       setCustomExpCats(hh?.expenseCustomCategories ?? []);
       setApiKey(hh?.openRouterApiKey ?? '');

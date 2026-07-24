@@ -8,7 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 import { useAlert } from '../../context/AlertContext';
-import { subscribePantryItems, saveRecipe, getHousehold } from '../../services/firestore';
+import { subscribePantryItems, saveRecipe, getHouseholdWithPrivate } from '../../services/firestore';
 import { sendChatMessage, suggestRecipes } from '../../services/openrouter';
 import { DEFAULT_AI_MODEL } from '../../utils/aiModels';
 import { useNotification } from '../../context/NotificationContext';
@@ -469,7 +469,7 @@ export default function AIScreen() {
 
   useEffect(() => {
     if (!householdId) return;
-    getHousehold(householdId).then((hh) => {
+    getHouseholdWithPrivate(householdId).then((hh) => {
       setApiKey(hh?.openRouterApiKey ?? '');
       setAiModel(hh?.aiModel ?? DEFAULT_AI_MODEL);
     });

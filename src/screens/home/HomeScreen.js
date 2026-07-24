@@ -12,7 +12,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { useNavScroll } from '../../context/NavScrollContext';
 import {
-  getHousehold, subscribePantryItems, subscribeGroceryItems,
+  getHouseholdWithPrivate, subscribePantryItems, subscribeGroceryItems,
   subscribeBills, subscribeMealPlan, subscribeLightShortcuts,
   subscribeWeeklyTodos, addWeeklyTodo, toggleWeeklyTodo, deleteWeeklyTodo,
 } from '../../services/firestore';
@@ -398,7 +398,7 @@ export default function HomeScreen({ navigation }) {
     if (!householdId) return;
     let apiKey = null;
     try {
-      const hh = await getHousehold(householdId);
+      const hh = await getHouseholdWithPrivate(householdId);
       setHousehold(hh);
       apiKey = hh?.goveeApiKey ?? null;
       setGoveeApiKey(apiKey);

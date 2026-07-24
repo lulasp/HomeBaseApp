@@ -35,7 +35,8 @@ export default function HouseholdScreen() {
     if (!householdName.trim()) { showAlert({ title: 'Missing name', message: 'Enter a household name to continue.', type: 'info' }); return; }
     setLoading(true);
     try {
-      const id = await withTimeout(createHousehold(user.uid, householdName.trim()));
+      const profile = { name: user.displayName || '', email: user.email || '' };
+      const id = await withTimeout(createHousehold(user.uid, householdName.trim(), profile));
       await saveHouseholdId(id);
     } catch (e) {
       showAlert({ title: 'Error', message: e.message, type: 'error' });
@@ -48,7 +49,8 @@ export default function HouseholdScreen() {
     if (!inviteCode.trim()) { showAlert({ title: 'Missing code', message: 'Enter an invite code to continue.', type: 'info' }); return; }
     setLoading(true);
     try {
-      const id = await withTimeout(joinHousehold(user.uid, inviteCode.trim()));
+      const profile = { name: user.displayName || '', email: user.email || '' };
+      const id = await withTimeout(joinHousehold(user.uid, inviteCode.trim(), profile));
       await saveHouseholdId(id);
     } catch (e) {
       showAlert({ title: 'Error', message: e.message, type: 'error' });

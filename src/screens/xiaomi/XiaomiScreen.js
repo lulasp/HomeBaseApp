@@ -7,10 +7,13 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../context/ThemeContext';
 import { useNavScroll } from '../../context/NavScrollContext';
+import { useAuth } from '../../context/AuthContext';
 import { spacing, radius, type } from '../../theme/colors';
 import { useIsDesktop, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
+import { getHouseholdWithPrivate, updateHouseholdXiaomiCreds } from '../../services/firestore';
 import {
-  getCredentials, saveCredentials, hasCredentials, getDevices, getDeviceType,
+  getCredentials, saveCredentials, hasCredentials, syncCredentialsFromHousehold,
+  getDevices, getDeviceType,
   fanStateFromProps, vacuumStateFromProps,
   getFanState, setFanPower, setFanLevel, setFanMode, setFanOscillation,
   getVacuumState, startCleaning, pauseCleaning, returnToDock,
@@ -59,7 +62,7 @@ const REGIONS = [
 
 // ── CredentialsModal ──────────────────────────────────────────────────────────
 
-function CredentialsModal({ visible, onClose, onSaved, colors }) {
+function CredentialsModal({ visible, onClose, onSaved, colors, householdId }) {
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const [form, setForm] = useState({ userId: '', serviceToken: '', ssecurity: '', region: 'cn' });
   const [saving, setSaving] = useState(false);
@@ -77,6 +80,8 @@ function CredentialsModal({ visible, onClose, onSaved, colors }) {
     setSaving(true);
     try {
       await saveCredentials(form);
+      // Share with the household so other devices/members pick them up.
+      if (householdId) await updateHouseholdXiaomiCreds(householdId, form).catch(() => {});
       onSaved();
       onClose();
     } finally {
@@ -438,6 +443,7 @@ function VacuumCard({ device, state, onStart, onPause, onDock, onFind, onSetSuct
 export default function XiaomiScreen() {
   const { colors } = useTheme();
   const { handleScroll } = useNavScroll();
+  const { householdId } = useAuth();
   const styles    = useMemo(() => makeStyles(colors), [colors]);
   const isDesktop = useIsDesktop();
 
@@ -458,6 +464,14 @@ export default function XiaomiScreen() {
 
   const loadDevices = useCallback(async () => {
     try {
+      // Household credentials are the source of truth — pull them into this
+      // device's cache before reading, so shared creds work across devices.
+      if (householdId) {
+        try {
+          const hh = await getHouseholdWithPrivate(householdId);
+          await syncCredentialsFromHousehold(hh?.xiaomiCreds);
+        } catch { /* offline — fall back to whatever's cached locally */ }
+      }
       const creds = await getCredentials();
       setConfigured(hasCredentials(creds));
       if (!hasCredentials(creds)) { setLoading(false); return; }
@@ -496,9 +510,9 @@ export default function XiaomiScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [selectedFan, selectedVacuum]);
+  }, [selectedFan, selectedVacuum, householdId]);
 
-  useEffect(() => { loadDevices(); }, []);
+  useEffect(() => { loadDevices(); }, [householdId]);
 
   const handleRefresh = () => { setRefreshing(true); loadDevices(); };
 
@@ -590,6 +604,7 @@ export default function XiaomiScreen() {
       <CredentialsModal
         visible={showSetup}
         colors={colors}
+        householdId={householdId}
         onClose={() => setShowSetup(false)}
         onSaved={() => { setLoading(true); loadDevices(); }}
       />
