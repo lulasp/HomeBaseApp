@@ -10,7 +10,7 @@ import { useTheme } from '../../context/ThemeContext';
 import { useAlert } from '../../context/AlertContext';
 import { useNotification } from '../../context/NotificationContext';
 import {
-  getHouseholdWithPrivate, updateHouseholdName, leaveHousehold, updateHouseholdPantryCategories,
+  getHouseholdWithPrivate, updateHouseholdName, leaveHousehold, removeHouseholdMember, updateHouseholdPantryCategories,
   updateHouseholdNonFoodCategories, updateHouseholdFinanceCategories, updateHouseholdGoveeApiKey,
   updateHouseholdOpenRouterApiKey, updateHouseholdAiModel,
   updateHouseholdUnits, upsertMemberProfile, updateHouseholdXiaomiCreds,
@@ -348,6 +348,28 @@ export default function HouseholdEditScreen({ route, navigation }) {
     }
   };
 
+  const handleRemoveMember = async (uid, label) => {
+    const confirmed = await showConfirm({
+      title: 'Remove member',
+      message: `Remove ${label} from "${household?.name}"? They can rejoin with the invite code.`,
+      confirmLabel: 'Remove',
+      type: 'danger',
+    });
+    if (!confirmed) return;
+    try {
+      await removeHouseholdMember(hhId, uid);
+      setHousehold((h) => {
+        if (!h) return h;
+        const profiles = { ...(h.memberProfiles || {}) };
+        delete profiles[uid];
+        return { ...h, members: (h.members || []).filter((m) => m !== uid), memberProfiles: profiles };
+      });
+      notify('Member removed', `${label} has been removed.`, { type: 'info' });
+    } catch (e) {
+      showAlert({ title: 'Error', message: e.message, type: 'error' });
+    }
+  };
+
   const isCreator = household?.createdBy === user?.uid;
   const memberCount = household?.members?.length ?? 0;
 
@@ -450,6 +472,17 @@ export default function HouseholdEditScreen({ route, navigation }) {
                       <View style={styles.youBadge}>
                         <Text style={styles.youBadgeText}>You</Text>
                       </View>
+                    )}
+                    {isCreator && !isYou && !isOwner && (
+                      <TouchableOpacity
+                        style={styles.memberRemoveBtn}
+                        onPress={() => handleRemoveMember(uid, displayLabel)}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Remove ${displayLabel}`}
+                      >
+                        <Ionicons name="close-circle" size={20} color={colors.danger} />
+                      </TouchableOpacity>
                     )}
                   </View>
                 </View>
@@ -1257,7 +1290,8 @@ const makeStyles = (colors) => StyleSheet.create({
   },
   memberName:   { ...type.bodySm, color: colors.textPrimary, fontWeight: '600' },
   memberEmail:  { ...type.caption, color: colors.textTertiary, marginTop: 1 },
-  memberBadges: { flexDirection: 'row', gap: 6 },
+  memberBadges: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  memberRemoveBtn: { padding: 2 },
   ownerBadge: {
     backgroundColor: colors.amberSoft, borderRadius: radius.sm,
     paddingHorizontal: 8, paddingVertical: 3,

@@ -257,6 +257,21 @@ export const leaveHousehold = async (householdId, uid) => {
   if (!snap.exists()) return;
   const members = snap.data().members || [];
   await updateDoc(ref, { members: members.filter((m) => m !== uid) });
+  // Drop their stored profile from the private doc too.
+  await updateDoc(privateRef(householdId), { [`memberProfiles.${uid}`]: deleteField() }).catch(() => {});
+};
+
+// Remove another member (owner action). Same as leaveHousehold but for a
+// different uid; the owner cannot be removed this way.
+export const removeHouseholdMember = async (householdId, uid) => {
+  const ref = doc(db, 'households', householdId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return;
+  const data = snap.data();
+  if (data.createdBy === uid) throw new Error('The household owner cannot be removed.');
+  const members = data.members || [];
+  await updateDoc(ref, { members: members.filter((m) => m !== uid) });
+  await updateDoc(privateRef(householdId), { [`memberProfiles.${uid}`]: deleteField() }).catch(() => {});
 };
 
 // ── Pantry ───────────────────────────────────────────────

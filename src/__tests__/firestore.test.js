@@ -41,6 +41,7 @@ import {
   getHouseholdPrivate,
   getHouseholdWithPrivate,
   migrateHouseholdSecrets,
+  removeHouseholdMember,
   joinHousehold,
   upsertMemberProfile,
   updateHouseholdUnits,
@@ -334,6 +335,38 @@ describe('migrateHouseholdSecrets', () => {
     mockGetDoc.mockResolvedValue({ exists: () => true, data: () => ({ name: 'Home' }) });
     await migrateHouseholdSecrets('hh1');
     expect(mockSetDoc).not.toHaveBeenCalled();
+    expect(mockUpdateDoc).not.toHaveBeenCalled();
+  });
+});
+
+// ── removeHouseholdMember ─────────────────────────────────────────────────────
+
+describe('removeHouseholdMember', () => {
+  it('removes the member from the array and deletes their profile', async () => {
+    mockGetDoc.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ createdBy: 'owner', members: ['owner', 'u2'] }),
+    });
+    await removeHouseholdMember('hh1', 'u2');
+    expect(mockUpdateDoc).toHaveBeenCalledWith('households/hh1', { members: ['owner'] });
+    expect(mockUpdateDoc).toHaveBeenCalledWith(
+      'households/hh1/private/data',
+      { 'memberProfiles.u2': 'DELETE_FIELD' },
+    );
+  });
+
+  it('refuses to remove the owner', async () => {
+    mockGetDoc.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ createdBy: 'owner', members: ['owner', 'u2'] }),
+    });
+    await expect(removeHouseholdMember('hh1', 'owner')).rejects.toThrow('owner cannot be removed');
+    expect(mockUpdateDoc).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when the household is missing', async () => {
+    mockGetDoc.mockResolvedValue({ exists: () => false });
+    await removeHouseholdMember('hh1', 'u2');
     expect(mockUpdateDoc).not.toHaveBeenCalled();
   });
 });
