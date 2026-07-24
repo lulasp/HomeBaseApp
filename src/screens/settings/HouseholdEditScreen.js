@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet,
-  ActivityIndicator, Platform, Modal, Switch, KeyboardAvoidingView,
+  ActivityIndicator, Platform, Modal, KeyboardAvoidingView, AccessibilityInfo,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
@@ -11,7 +11,8 @@ import { useTheme } from '../../context/ThemeContext';
 import { useAlert } from '../../context/AlertContext';
 import { useNotification } from '../../context/NotificationContext';
 import {
-  getHouseholdWithPrivate, updateHouseholdName, leaveHousehold, removeHouseholdMember, updateHouseholdPantryCategories,
+  getHouseholdWithPrivate, updateHouseholdName, leaveHousehold, removeHouseholdMember,
+  regenerateInviteCode, transferHouseholdOwnership, updateHouseholdPantryCategories,
   updateHouseholdNonFoodCategories, updateHouseholdFinanceCategories, updateHouseholdGoveeApiKey,
   updateHouseholdOpenRouterApiKey, updateHouseholdAiModel,
   updateHouseholdUnits, upsertMemberProfile, updateHouseholdXiaomiCreds,
@@ -21,6 +22,7 @@ import { saveCredentials as saveXiaomiCredentials } from '../../services/xiaomi'
 import { PANTRY_CATEGORIES, NON_FOOD_CATEGORIES, UNITS } from '../../utils/categories';
 import { AI_MODELS, DEFAULT_AI_MODEL } from '../../utils/aiModels';
 import DraggableCategoryList from '../../components/DraggableCategoryList';
+import IconPicker from '../../components/IconPicker';
 import { spacing, radius, type } from '../../theme/colors';
 import { useIsDesktop, SIDEBAR_WIDTH, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
 import { useWindowDimensions } from 'react-native';
@@ -104,6 +106,10 @@ export default function HouseholdEditScreen({ route, navigation }) {
     emergency: false, integrations: false, danger: false,
   });
   const toggleGroup = (id) => setOpenGroups((p) => ({ ...p, [id]: !p[id] }));
+  const [reduceMotion, setReduceMotion]     = useState(false);
+  const [foodFilter, setFoodFilter]         = useState('');
+  const [nonFoodFilter, setNonFoodFilter]   = useState('');
+  const [regenerating, setRegenerating]     = useState(false);
   const [nameInput, setNameInput]           = useState('');
   const [saving, setSaving]                 = useState(false);
   const [copied, setCopied]                 = useState(false);
@@ -232,6 +238,14 @@ export default function HouseholdEditScreen({ route, navigation }) {
   }, [hhId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { loadHousehold(); }, [loadHousehold]);
+
+  // Honor the OS "reduce motion" setting for modal transitions.
+  useEffect(() => {
+    let mounted = true;
+    AccessibilityInfo.isReduceMotionEnabled().then((v) => { if (mounted) setReduceMotion(v); });
+    const sub = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion);
+    return () => { mounted = false; sub?.remove?.(); };
+  }, []);
 
   // Warn before leaving with unsaved (staged) changes on back / swipe-back.
   useEffect(() => {
@@ -373,6 +387,80 @@ export default function HouseholdEditScreen({ route, navigation }) {
     setNonFoodCategoryOrder(labels);
   }, [orderedNonFoodCats]);
 
+  // Row renderers shared by the draggable list (unfiltered) and the plain
+  // filtered list (a search term is active, where reordering is disabled).
+  const renderFoodCatRow = (cat) => {
+    const isOn = enabledCategories?.includes(cat.label);
+    const isCustom = !PANTRY_CATEGORIES.some((c) => c.label === cat.label);
+    return (
+      <>
+        <TouchableOpacity
+          style={styles.categoryRowToggle}
+          onPress={() => togglePantryCategory(cat.label)}
+          accessibilityRole="switch"
+          accessibilityState={{ checked: isOn }}
+          accessibilityLabel={cat.label}
+        >
+          <Text style={styles.categoryRowIcon}>{cat.icon}</Text>
+          <Text style={[styles.categoryRowLabel, !isOn && { opacity: 0.4 }]}>{cat.label}</Text>
+          <Ionicons
+            name={isOn ? 'checkmark-circle' : 'ellipse-outline'}
+            size={21}
+            color={isOn ? colors.accent : colors.textTertiary}
+          />
+        </TouchableOpacity>
+        {isCustom && (
+          <TouchableOpacity
+            onPress={() => handleDeleteCustomCategory(cat.label)}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityRole="button"
+            accessibilityLabel={`Delete ${cat.label}`}
+            style={styles.categoryDeleteBtn}
+          >
+            <Ionicons name="trash-outline" size={16} color={colors.danger} />
+          </TouchableOpacity>
+        )}
+      </>
+    );
+  };
+
+  const renderNonFoodCatRow = (cat) => {
+    const isOn = enabledNonFoodCategories?.includes(cat.label);
+    const isCustom = !NON_FOOD_CATEGORIES.some((c) => c.label === cat.label);
+    return (
+      <>
+        <TouchableOpacity
+          style={styles.categoryRowToggle}
+          onPress={() => toggleNonFoodCategory(cat.label)}
+          accessibilityRole="switch"
+          accessibilityState={{ checked: isOn }}
+          accessibilityLabel={cat.label}
+        >
+          <Text style={styles.categoryRowIcon}>{cat.icon}</Text>
+          <Text style={[styles.categoryRowLabel, !isOn && { opacity: 0.4 }]}>{cat.label}</Text>
+          <Ionicons
+            name={isOn ? 'checkmark-circle' : 'ellipse-outline'}
+            size={21}
+            color={isOn ? colors.accent : colors.textTertiary}
+          />
+        </TouchableOpacity>
+        {isCustom && (
+          <TouchableOpacity
+            onPress={() => handleDeleteCustomNonFoodCategory(cat.label)}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityRole="button"
+            accessibilityLabel={`Delete ${cat.label}`}
+            style={styles.categoryDeleteBtn}
+          >
+            <Ionicons name="trash-outline" size={16} color={colors.danger} />
+          </TouchableOpacity>
+        )}
+      </>
+    );
+  };
+
+  const matchesFilter = (cat, term) => cat.label.toLowerCase().includes(term.trim().toLowerCase());
+
   const openAddFinanceCat = (type) => {
     setFinanceCatType(type);
     setFinanceCatForm({ label: '', icon: '💡' });
@@ -493,6 +581,43 @@ export default function HouseholdEditScreen({ route, navigation }) {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handleRegenerateCode = async () => {
+    const confirmed = await showConfirm({
+      title: 'Regenerate invite code',
+      message: 'The current code will stop working immediately. Anyone using it will need the new code to join.',
+      confirmLabel: 'Regenerate',
+      type: 'danger',
+    });
+    if (!confirmed) return;
+    setRegenerating(true);
+    try {
+      const code = await regenerateInviteCode(hhId);
+      setHousehold((h) => (h ? { ...h, inviteCode: code } : h));
+      notify('Invite code updated', 'A new code is now active.', { type: 'success' });
+    } catch (e) {
+      showAlert({ title: 'Error', message: e.message, type: 'error' });
+    } finally {
+      setRegenerating(false);
+    }
+  };
+
+  const handleTransferOwnership = async (uid, label) => {
+    const confirmed = await showConfirm({
+      title: 'Make owner',
+      message: `Make ${label} the owner of "${household?.name}"? You'll stay a member but lose owner controls.`,
+      confirmLabel: 'Make owner',
+      type: 'warning',
+    });
+    if (!confirmed) return;
+    try {
+      await transferHouseholdOwnership(hhId, uid);
+      setHousehold((h) => (h ? { ...h, createdBy: uid } : h));
+      notify('Ownership transferred', `${label} is now the owner.`, { type: 'success' });
+    } catch (e) {
+      showAlert({ title: 'Error', message: e.message, type: 'error' });
+    }
+  };
+
   const handleLeave = async () => {
     const confirmed = await showConfirm({
       title: 'Leave household',
@@ -535,7 +660,12 @@ export default function HouseholdEditScreen({ route, navigation }) {
   };
 
   const isCreator = household?.createdBy === user?.uid;
-  const memberCount = household?.members?.length ?? 0;
+  const modalAnim = reduceMotion ? 'fade' : 'slide';
+
+  const foodTerm    = foodFilter.trim();
+  const nonFoodTerm = nonFoodFilter.trim();
+  const filteredFoodCats    = foodTerm    ? orderedFoodCats.filter((c) => matchesFilter(c, foodFilter))       : null;
+  const filteredNonFoodCats = nonFoodTerm ? orderedNonFoodCats.filter((c) => matchesFilter(c, nonFoodFilter)) : null;
 
   return (
     <View style={{ height: windowHeight, backgroundColor: colors.background, marginLeft: isDesktop ? SIDEBAR_WIDTH : 0 }}>
@@ -633,6 +763,21 @@ export default function HouseholdEditScreen({ route, navigation }) {
               </TouchableOpacity>
             </View>
             <Text style={styles.inviteHint}>Share this code so others can join your household.</Text>
+            {isCreator && (
+              <TouchableOpacity
+                style={styles.regenerateBtn}
+                onPress={handleRegenerateCode}
+                disabled={regenerating}
+                accessibilityRole="button"
+                accessibilityLabel="Regenerate invite code"
+                accessibilityState={{ disabled: regenerating }}
+              >
+                <Ionicons name="refresh" size={14} color={regenerating ? colors.textTertiary : colors.danger} />
+                <Text style={[styles.regenerateBtnLabel, regenerating && { color: colors.textTertiary }]}>
+                  {regenerating ? 'Regenerating…' : 'Regenerate code'}
+                </Text>
+              </TouchableOpacity>
+            )}
           </View>
 
           {/* ── Members ── */}
@@ -667,15 +812,26 @@ export default function HouseholdEditScreen({ route, navigation }) {
                       </View>
                     )}
                     {isCreator && !isYou && !isOwner && (
-                      <TouchableOpacity
-                        style={styles.memberRemoveBtn}
-                        onPress={() => handleRemoveMember(uid, displayLabel)}
-                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                        accessibilityRole="button"
-                        accessibilityLabel={`Remove ${displayLabel}`}
-                      >
-                        <Ionicons name="close-circle" size={20} color={colors.danger} />
-                      </TouchableOpacity>
+                      <>
+                        <TouchableOpacity
+                          style={styles.memberActionBtn}
+                          onPress={() => handleTransferOwnership(uid, displayLabel)}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Make ${displayLabel} owner`}
+                        >
+                          <Ionicons name="ribbon-outline" size={18} color={colors.accent} />
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={styles.memberRemoveBtn}
+                          onPress={() => handleRemoveMember(uid, displayLabel)}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Remove ${displayLabel}`}
+                        >
+                          <Ionicons name="close-circle" size={20} color={colors.danger} />
+                        </TouchableOpacity>
+                      </>
                     )}
                   </View>
                 </View>
@@ -707,45 +863,47 @@ export default function HouseholdEditScreen({ route, navigation }) {
           </View>
           <View style={[styles.card, { padding: 0 }]}>
             {enabledCategories !== null && (
-              <DraggableCategoryList
-                items={orderedFoodCats}
-                onReorder={reorderFoodCategories}
-                scrollRef={scrollRef}
-                renderItem={(cat) => {
-                  const isOn = enabledCategories.includes(cat.label);
-                  const isCustom = !PANTRY_CATEGORIES.some((c) => c.label === cat.label);
-                  return (
-                    <>
-                      <TouchableOpacity
-                        style={styles.categoryRowToggle}
-                        onPress={() => togglePantryCategory(cat.label)}
-                        accessibilityRole="switch"
-                        accessibilityState={{ checked: isOn }}
-                        accessibilityLabel={cat.label}
-                      >
-                        <Text style={styles.categoryRowIcon}>{cat.icon}</Text>
-                        <Text style={[styles.categoryRowLabel, !isOn && { opacity: 0.4 }]}>{cat.label}</Text>
-                        <Ionicons
-                          name={isOn ? 'checkmark-circle' : 'ellipse-outline'}
-                          size={21}
-                          color={isOn ? colors.accent : colors.textTertiary}
-                        />
-                      </TouchableOpacity>
-                      {isCustom && (
-                        <TouchableOpacity
-                          onPress={() => handleDeleteCustomCategory(cat.label)}
-                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                          accessibilityRole="button"
-                          accessibilityLabel={`Delete ${cat.label}`}
-                          style={styles.categoryDeleteBtn}
-                        >
-                          <Ionicons name="trash-outline" size={16} color={colors.danger} />
-                        </TouchableOpacity>
-                      )}
-                    </>
-                  );
-                }}
-              />
+              <>
+                <View style={styles.catSearchRow}>
+                  <Ionicons name="search-outline" size={16} color={colors.textTertiary} />
+                  <TextInput
+                    style={styles.catSearchInput}
+                    value={foodFilter}
+                    onChangeText={setFoodFilter}
+                    placeholder="Filter food categories…"
+                    placeholderTextColor={colors.textTertiary}
+                    autoCapitalize="none"
+                    accessibilityLabel="Filter food categories"
+                  />
+                  {!!foodTerm && (
+                    <TouchableOpacity
+                      onPress={() => setFoodFilter('')}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      accessibilityRole="button" accessibilityLabel="Clear filter"
+                    >
+                      <Ionicons name="close-circle" size={16} color={colors.textTertiary} />
+                    </TouchableOpacity>
+                  )}
+                </View>
+                {foodTerm ? (
+                  filteredFoodCats.length === 0 ? (
+                    <Text style={[styles.inviteHint, { padding: spacing.lg, textAlign: 'center' }]}>
+                      No categories match “{foodTerm}”.
+                    </Text>
+                  ) : filteredFoodCats.map((cat, i) => (
+                    <View key={cat.label} style={[styles.categoryRow, i > 0 && styles.categoryRowBorder]}>
+                      {renderFoodCatRow(cat)}
+                    </View>
+                  ))
+                ) : (
+                  <DraggableCategoryList
+                    items={orderedFoodCats}
+                    onReorder={reorderFoodCategories}
+                    scrollRef={scrollRef}
+                    renderItem={renderFoodCatRow}
+                  />
+                )}
+              </>
             )}
           </View>
 
@@ -764,45 +922,47 @@ export default function HouseholdEditScreen({ route, navigation }) {
           </View>
           <View style={[styles.card, { padding: 0 }]}>
             {enabledNonFoodCategories !== null && (
-              <DraggableCategoryList
-                items={orderedNonFoodCats}
-                onReorder={reorderNonFoodCategories}
-                scrollRef={scrollRef}
-                renderItem={(cat) => {
-                  const isOn = enabledNonFoodCategories.includes(cat.label);
-                  const isCustom = !NON_FOOD_CATEGORIES.some((c) => c.label === cat.label);
-                  return (
-                    <>
-                      <TouchableOpacity
-                        style={styles.categoryRowToggle}
-                        onPress={() => toggleNonFoodCategory(cat.label)}
-                        accessibilityRole="switch"
-                        accessibilityState={{ checked: isOn }}
-                        accessibilityLabel={cat.label}
-                      >
-                        <Text style={styles.categoryRowIcon}>{cat.icon}</Text>
-                        <Text style={[styles.categoryRowLabel, !isOn && { opacity: 0.4 }]}>{cat.label}</Text>
-                        <Ionicons
-                          name={isOn ? 'checkmark-circle' : 'ellipse-outline'}
-                          size={21}
-                          color={isOn ? colors.accent : colors.textTertiary}
-                        />
-                      </TouchableOpacity>
-                      {isCustom && (
-                        <TouchableOpacity
-                          onPress={() => handleDeleteCustomNonFoodCategory(cat.label)}
-                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                          accessibilityRole="button"
-                          accessibilityLabel={`Delete ${cat.label}`}
-                          style={styles.categoryDeleteBtn}
-                        >
-                          <Ionicons name="trash-outline" size={16} color={colors.danger} />
-                        </TouchableOpacity>
-                      )}
-                    </>
-                  );
-                }}
-              />
+              <>
+                <View style={styles.catSearchRow}>
+                  <Ionicons name="search-outline" size={16} color={colors.textTertiary} />
+                  <TextInput
+                    style={styles.catSearchInput}
+                    value={nonFoodFilter}
+                    onChangeText={setNonFoodFilter}
+                    placeholder="Filter non-food categories…"
+                    placeholderTextColor={colors.textTertiary}
+                    autoCapitalize="none"
+                    accessibilityLabel="Filter non-food categories"
+                  />
+                  {!!nonFoodTerm && (
+                    <TouchableOpacity
+                      onPress={() => setNonFoodFilter('')}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      accessibilityRole="button" accessibilityLabel="Clear filter"
+                    >
+                      <Ionicons name="close-circle" size={16} color={colors.textTertiary} />
+                    </TouchableOpacity>
+                  )}
+                </View>
+                {nonFoodTerm ? (
+                  filteredNonFoodCats.length === 0 ? (
+                    <Text style={[styles.inviteHint, { padding: spacing.lg, textAlign: 'center' }]}>
+                      No categories match “{nonFoodTerm}”.
+                    </Text>
+                  ) : filteredNonFoodCats.map((cat, i) => (
+                    <View key={cat.label} style={[styles.categoryRow, i > 0 && styles.categoryRowBorder]}>
+                      {renderNonFoodCatRow(cat)}
+                    </View>
+                  ))
+                ) : (
+                  <DraggableCategoryList
+                    items={orderedNonFoodCats}
+                    onReorder={reorderNonFoodCategories}
+                    scrollRef={scrollRef}
+                    renderItem={renderNonFoodCatRow}
+                  />
+                )}
+              </>
             )}
           </View>
 
@@ -1247,7 +1407,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
       <Modal
         visible={financeCatType !== null}
         transparent
-        animationType="slide"
+        animationType={modalAnim}
         onRequestClose={() => setFinanceCatType(null)}
       >
         <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -1261,20 +1421,11 @@ export default function HouseholdEditScreen({ route, navigation }) {
               </TouchableOpacity>
             </View>
 
-            <Text style={styles.modalLabel}>Icon</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.iconPicker} contentContainerStyle={styles.iconPickerContent}>
-              {FINANCE_ICONS.map((ic) => (
-                <TouchableOpacity
-                  key={ic}
-                  style={[styles.iconOption, financeCatForm.icon === ic && styles.iconOptionSelected]}
-                  onPress={() => setFinanceCatForm((f) => ({ ...f, icon: ic }))}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Select icon ${ic}`}
-                >
-                  <Text style={styles.iconOptionText}>{ic}</Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
+            <IconPicker
+              icons={FINANCE_ICONS}
+              value={financeCatForm.icon}
+              onChange={(ic) => setFinanceCatForm((f) => ({ ...f, icon: ic }))}
+            />
 
             <Text style={styles.modalLabel}>Category Name *</Text>
             <TextInput
@@ -1306,7 +1457,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
       <Modal
         visible={catModal}
         transparent
-        animationType="slide"
+        animationType={modalAnim}
         onRequestClose={() => setCatModal(false)}
       >
         <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -1318,20 +1469,11 @@ export default function HouseholdEditScreen({ route, navigation }) {
               </TouchableOpacity>
             </View>
 
-            <Text style={styles.modalLabel}>Icon</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.iconPicker} contentContainerStyle={styles.iconPickerContent}>
-              {CATEGORY_ICONS.map((ic) => (
-                <TouchableOpacity
-                  key={ic}
-                  style={[styles.iconOption, catForm.icon === ic && styles.iconOptionSelected]}
-                  onPress={() => setCatForm((f) => ({ ...f, icon: ic }))}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Select icon ${ic}`}
-                >
-                  <Text style={styles.iconOptionText}>{ic}</Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
+            <IconPicker
+              icons={CATEGORY_ICONS}
+              value={catForm.icon}
+              onChange={(ic) => setCatForm((f) => ({ ...f, icon: ic }))}
+            />
 
             <Text style={styles.modalLabel}>Category Name *</Text>
             <TextInput
@@ -1363,7 +1505,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
       <Modal
         visible={!!contactModal}
         transparent
-        animationType="slide"
+        animationType={modalAnim}
         onRequestClose={() => setContactModal(null)}
       >
         <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -1378,20 +1520,11 @@ export default function HouseholdEditScreen({ route, navigation }) {
             </View>
 
             {/* Icon picker */}
-            <Text style={styles.modalLabel}>Icon</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.iconPicker} contentContainerStyle={styles.iconPickerContent}>
-              {CONTACT_ICONS.map((ic) => (
-                <TouchableOpacity
-                  key={ic}
-                  style={[styles.iconOption, contactForm.icon === ic && styles.iconOptionSelected]}
-                  onPress={() => setContactForm((f) => ({ ...f, icon: ic }))}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Select icon ${ic}`}
-                >
-                  <Text style={styles.iconOptionText}>{ic}</Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
+            <IconPicker
+              icons={CONTACT_ICONS}
+              value={contactForm.icon}
+              onChange={(ic) => setContactForm((f) => ({ ...f, icon: ic }))}
+            />
 
             {/* Name */}
             <Text style={styles.modalLabel}>Name *</Text>
@@ -1562,6 +1695,11 @@ const makeStyles = (colors) => StyleSheet.create({
   },
   copyButtonLabel: { ...type.label, color: colors.accent, fontWeight: '700' },
   inviteHint: { ...type.caption, color: colors.textTertiary },
+  regenerateBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start',
+    paddingVertical: 4,
+  },
+  regenerateBtnLabel: { ...type.label, color: colors.danger, fontWeight: '600' },
 
   memberRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingVertical: 4 },
   memberRowBorder: { borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.md, marginTop: 0 },
@@ -1574,6 +1712,7 @@ const makeStyles = (colors) => StyleSheet.create({
   memberEmail:  { ...type.caption, color: colors.textTertiary, marginTop: 1 },
   memberBadges: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   memberRemoveBtn: { padding: 2 },
+  memberActionBtn: { padding: 2 },
   ownerBadge: {
     backgroundColor: colors.amberSoft, borderRadius: radius.sm,
     paddingHorizontal: 8, paddingVertical: 3,
@@ -1627,6 +1766,12 @@ const makeStyles = (colors) => StyleSheet.create({
   categoryRowIcon:   { fontSize: 18, width: 24, textAlign: 'center' },
   categoryRowLabel:  { ...type.bodyMed, color: colors.textPrimary, flex: 1 },
   categoryDeleteBtn: { paddingLeft: spacing.sm },
+  catSearchRow: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+    paddingHorizontal: spacing.lg, paddingVertical: spacing.sm,
+    borderBottomWidth: 1, borderBottomColor: colors.border,
+  },
+  catSearchInput: { flex: 1, ...type.body, color: colors.textPrimary, paddingVertical: 4 },
 
   leaveButton: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.md,
@@ -1691,18 +1836,6 @@ const makeStyles = (colors) => StyleSheet.create({
   modalInputMulti: {
     height: 80, paddingTop: spacing.md, textAlignVertical: 'top',
   },
-  iconPicker:        { marginVertical: 4 },
-  iconPickerContent: { gap: 8, paddingVertical: 4 },
-  iconOption: {
-    width: 44, height: 44, borderRadius: radius.md,
-    borderWidth: 1, borderColor: colors.border,
-    backgroundColor: colors.surfaceElevated,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  iconOptionSelected: {
-    borderColor: colors.accent, backgroundColor: colors.accentSoft,
-  },
-  iconOptionText: { fontSize: 22 },
 
   chipRow:        { marginVertical: 4 },
   chipRowContent: { gap: 8, paddingVertical: 4 },

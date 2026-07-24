@@ -42,6 +42,8 @@ import {
   getHouseholdWithPrivate,
   migrateHouseholdSecrets,
   removeHouseholdMember,
+  regenerateInviteCode,
+  transferHouseholdOwnership,
   joinHousehold,
   upsertMemberProfile,
   updateHouseholdUnits,
@@ -500,5 +502,49 @@ describe('updateHouseholdXiaomiCreds', () => {
       { xiaomiCreds: 'DELETE_FIELD' },
       { merge: true },
     );
+  });
+});
+
+// ── regenerateInviteCode ──────────────────────────────────────────────────────
+
+describe('regenerateInviteCode', () => {
+  beforeEach(() => {
+    // Deterministic bytes so we can assert the shape without a real CSPRNG.
+    global.crypto = { getRandomValues: (arr) => { for (let i = 0; i < arr.length; i++) arr[i] = i; return arr; } };
+  });
+
+  it('writes a fresh 6-char uppercase code and returns it', async () => {
+    const code = await regenerateInviteCode('hh1');
+    expect(code).toHaveLength(6);
+    expect(code).toMatch(/^[A-Z0-9]{6}$/);
+    expect(mockUpdateDoc).toHaveBeenCalledWith('households/hh1', { inviteCode: code });
+  });
+});
+
+// ── transferHouseholdOwnership ────────────────────────────────────────────────
+
+describe('transferHouseholdOwnership', () => {
+  it('sets createdBy to the new owner when they are a member', async () => {
+    mockGetDoc.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ createdBy: 'owner', members: ['owner', 'u2'] }),
+    });
+    await transferHouseholdOwnership('hh1', 'u2');
+    expect(mockUpdateDoc).toHaveBeenCalledWith('households/hh1', { createdBy: 'u2' });
+  });
+
+  it('rejects when the new owner is not a member', async () => {
+    mockGetDoc.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ createdBy: 'owner', members: ['owner'] }),
+    });
+    await expect(transferHouseholdOwnership('hh1', 'stranger')).rejects.toThrow('must be a household member');
+    expect(mockUpdateDoc).not.toHaveBeenCalled();
+  });
+
+  it('rejects when the household is missing', async () => {
+    mockGetDoc.mockResolvedValue({ exists: () => false });
+    await expect(transferHouseholdOwnership('hh1', 'u2')).rejects.toThrow('not found');
+    expect(mockUpdateDoc).not.toHaveBeenCalled();
   });
 });

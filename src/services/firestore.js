@@ -28,11 +28,16 @@ const sanitizeProfile = ({ name, email } = {}) => ({
 // world-readable to any authenticated user so join-by-invite-code can query it.
 const privateRef = (householdId) => doc(db, 'households', householdId, 'private', 'data');
 
-export const createHousehold = async (uid, name, profile = {}) => {
+// Invite codes: 6 random chars, uppercase alphanumeric.
+const INVITE_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+const genInviteCode = () => {
   const bytes = new Uint8Array(6);
   crypto.getRandomValues(bytes);
-  const CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  const inviteCode = Array.from(bytes, (b) => CHARS[b % CHARS.length]).join('');
+  return Array.from(bytes, (b) => INVITE_CHARS[b % INVITE_CHARS.length]).join('');
+};
+
+export const createHousehold = async (uid, name, profile = {}) => {
+  const inviteCode = genInviteCode();
   const ref = await addDoc(collection(db, 'households'), {
     name,
     members: [uid],
@@ -175,6 +180,26 @@ export const getRecipe = async (householdId, recipeId) => {
 
 export const updateHouseholdName = (householdId, name) =>
   updateDoc(doc(db, 'households', householdId), { name });
+
+// Rotate the invite code (e.g. if the old one leaked). Returns the new code.
+// The previous code stops working immediately.
+export const regenerateInviteCode = async (householdId) => {
+  const inviteCode = genInviteCode();
+  await updateDoc(doc(db, 'households', householdId), { inviteCode });
+  return inviteCode;
+};
+
+// Hand ownership to another member (owner action). The new owner must already
+// be in the household; ownership drives owner-only abilities like removing members.
+export const transferHouseholdOwnership = async (householdId, newOwnerUid) => {
+  const ref = doc(db, 'households', householdId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error('Household not found.');
+  if (!(snap.data().members || []).includes(newOwnerUid)) {
+    throw new Error('The new owner must be a household member.');
+  }
+  await updateDoc(ref, { createdBy: newOwnerUid });
+};
 
 export const getHouseholdsByIds = async (ids) => {
   if (!ids.length) return [];
