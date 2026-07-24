@@ -1,8 +1,9 @@
 import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet,
-  ActivityIndicator, Platform, Modal, Switch,
+  ActivityIndicator, Platform, Modal, Switch, KeyboardAvoidingView,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../context/AuthContext';
@@ -54,10 +55,13 @@ export default function HouseholdEditScreen({ route, navigation }) {
 
   const styles    = useMemo(() => makeStyles(colors), [colors]);
   const isDesktop = useIsDesktop();
+  const insets    = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
 
   const [household, setHousehold]           = useState(null);
   const [loading, setLoading]               = useState(true);
+  const [loadError, setLoadError]           = useState(null);
+  const [navBarH, setNavBarH]               = useState(0);
   const [nameInput, setNameInput]           = useState('');
   const [saving, setSaving]                 = useState(false);
   const [copied, setCopied]                 = useState(false);
@@ -145,7 +149,9 @@ export default function HouseholdEditScreen({ route, navigation }) {
     );
   };
 
-  useEffect(() => {
+  const loadHousehold = useCallback(() => {
+    setLoading(true);
+    setLoadError(null);
     getHouseholdWithPrivate(hhId)
       .then((hh) => {
         setHousehold(hh);
@@ -179,8 +185,11 @@ export default function HouseholdEditScreen({ route, navigation }) {
             : prev));
         }
       })
+      .catch((e) => setLoadError(e))
       .finally(() => setLoading(false));
-  }, [hhId]);
+  }, [hhId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => { loadHousehold(); }, [loadHousehold]);
 
   // Warn before leaving with unsaved (staged) changes on back / swipe-back.
   useEffect(() => {
@@ -490,7 +499,10 @@ export default function HouseholdEditScreen({ route, navigation }) {
     <View style={{ height: windowHeight, backgroundColor: colors.background, marginLeft: isDesktop ? SIDEBAR_WIDTH : 0 }}>
 
       {/* Nav bar */}
-      <View style={styles.navBar}>
+      <View
+        style={[styles.navBar, { paddingTop: insets.top + spacing.sm }]}
+        onLayout={(e) => setNavBarH(e.nativeEvent.layout.height)}
+      >
         <TouchableOpacity
           onPress={() => navigation.goBack()}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -505,10 +517,29 @@ export default function HouseholdEditScreen({ route, navigation }) {
 
       {loading ? (
         <ActivityIndicator color={colors.accent} style={{ marginTop: 60 }} />
+      ) : loadError ? (
+        <View style={styles.errorState}>
+          <Ionicons name="cloud-offline-outline" size={44} color={colors.textTertiary} />
+          <Text style={styles.errorStateTitle}>Couldn't load household</Text>
+          <Text style={styles.errorStateMsg}>
+            {loadError?.message || 'Something went wrong. Check your connection and try again.'}
+          </Text>
+          <TouchableOpacity
+            style={styles.retryButton}
+            onPress={loadHousehold}
+            accessibilityRole="button"
+            accessibilityLabel="Retry loading household"
+          >
+            <Ionicons name="refresh" size={16} color="#fff" />
+            <Text style={styles.retryButtonLabel}>Retry</Text>
+          </TouchableOpacity>
+        </View>
       ) : (
         <ScrollView
           ref={scrollRef}
-          style={{ flex: 1 }}
+          // Web: the ancestor flex chain doesn't reliably bound a flex:1 ScrollView,
+          // so pin it to the viewport height minus the fixed nav bar (see web-scroll rule).
+          style={Platform.OS === 'web' ? { height: Math.max(windowHeight - navBarH, 0) } : { flex: 1 }}
           contentContainerStyle={[
             styles.scrollContent,
             isDesktop && { maxWidth: DESKTOP_MAX_CONTENT, alignSelf: 'center', width: '100%' },
@@ -1120,7 +1151,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
         animationType="slide"
         onRequestClose={() => setFinanceCatType(null)}
       >
-        <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={styles.modalSheet}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>
@@ -1169,7 +1200,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
               <Text style={styles.updateButtonLabel}>Add Category</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* ── Add Pantry Category Modal ── */}
@@ -1179,7 +1210,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
         animationType="slide"
         onRequestClose={() => setCatModal(false)}
       >
-        <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={styles.modalSheet}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>{catModalType === 'non-food' ? 'Add Non-Food Category' : 'Add Food Category'}</Text>
@@ -1226,7 +1257,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
               <Text style={styles.updateButtonLabel}>Add Category</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* ── Contact Modal ── */}
@@ -1236,7 +1267,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
         animationType="slide"
         onRequestClose={() => setContactModal(null)}
       >
-        <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={styles.modalSheet}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>
@@ -1330,7 +1361,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
               <Text style={styles.updateButtonLabel}>{contactSaving ? 'Saving…' : 'Save Contact'}</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
@@ -1339,12 +1370,25 @@ export default function HouseholdEditScreen({ route, navigation }) {
 const makeStyles = (colors) => StyleSheet.create({
   navBar: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: spacing.xl, paddingTop: 56, paddingBottom: spacing.md,
+    paddingHorizontal: spacing.xl, paddingBottom: spacing.md, // paddingTop set inline from safe-area insets
     backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.border,
   },
   navTitle: { ...type.h4, color: colors.textPrimary },
 
   scrollContent: { padding: spacing.xl, paddingBottom: 200, gap: spacing.md },
+
+  errorState: {
+    flex: 1, alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: spacing.xxl, gap: spacing.sm,
+  },
+  errorStateTitle: { ...type.h4, color: colors.textPrimary, marginTop: spacing.sm },
+  errorStateMsg:   { ...type.body, color: colors.textTertiary, textAlign: 'center' },
+  retryButton: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+    backgroundColor: colors.accent, borderRadius: radius.md,
+    paddingHorizontal: spacing.xl, paddingVertical: spacing.md, marginTop: spacing.md,
+  },
+  retryButtonLabel: { ...type.bodyMed, color: '#fff', fontWeight: '700' },
 
   sectionLabel: {
     ...type.label, color: colors.textSecondary,
