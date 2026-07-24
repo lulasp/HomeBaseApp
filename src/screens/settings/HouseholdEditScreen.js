@@ -49,7 +49,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
   const { householdId: hhId } = route.params;
   const { user, removeHousehold } = useAuth();
   const { colors } = useTheme();
-  const { showAlert, showConfirm } = useAlert();
+  const { showAlert, showConfirm, showOptions } = useAlert();
   const { notify } = useNotification();
 
   const styles    = useMemo(() => makeStyles(colors), [colors]);
@@ -79,6 +79,10 @@ export default function HouseholdEditScreen({ route, navigation }) {
   const [financeCatError, setFinanceCatError]     = useState(null);
   const [contacts, setContacts]                   = useState([]);
   const scrollRef = useRef(null);
+  const baselineRef   = useRef(null); // JSON of staged values at load / last save
+  const isDirtyRef    = useRef(false);
+  const allowLeaveRef = useRef(false); // bypass the unsaved-changes guard on intentional exit
+  const persistRef    = useRef(null);  // latest persistChanges, for the guard listener
   const [contactModal, setContactModal]           = useState(null); // null | { mode: 'add'|'edit', contact }
   const [contactForm, setContactForm]             = useState(BLANK_CONTACT);
   const [contactSaving, setContactSaving]         = useState(false);
@@ -178,6 +182,34 @@ export default function HouseholdEditScreen({ route, navigation }) {
       .finally(() => setLoading(false));
   }, [hhId]);
 
+  // Warn before leaving with unsaved (staged) changes on back / swipe-back.
+  useEffect(() => {
+    const sub = navigation.addListener('beforeRemove', (e) => {
+      if (allowLeaveRef.current || !isDirtyRef.current) return;
+      e.preventDefault();
+      const leave = () => { allowLeaveRef.current = true; navigation.dispatch(e.data.action); };
+      showOptions({
+        title: 'Unsaved changes',
+        message: 'You have unsaved changes to this household.',
+        type: 'warning',
+        options: [
+          { label: 'Save changes', value: 'save' },
+          { label: 'Discard', value: 'discard', style: 'destructive' },
+          { label: 'Cancel', style: 'cancel' },
+        ],
+      }).then(async (choice) => {
+        if (choice === 'discard') {
+          leave();
+        } else if (choice === 'save') {
+          const ok = await persistRef.current?.();
+          if (ok) leave();
+        }
+        // cancel / null → stay on the screen
+      });
+    });
+    return sub;
+  }, [navigation, showOptions]);
+
   const togglePantryCategory = (label) => {
     setEnabledCategories((prev) =>
       prev.includes(label) ? prev.filter((l) => l !== label) : [...prev, label]
@@ -241,6 +273,41 @@ export default function HouseholdEditScreen({ route, navigation }) {
     [customNonFoodCategories, nonFoodCategoryOrder],
   );
 
+  // Snapshot of every batch-saved (staged) field. Emergency contacts are excluded —
+  // they persist immediately through their own modal, not this snapshot.
+  const snapshot = useMemo(() => ({
+    name: nameInput.trim(),
+    enabledCategories,
+    customCategories,
+    foodCategoryOrder: orderedFoodCats.map((c) => c.label),
+    enabledNonFoodCategories,
+    customNonFoodCategories,
+    nonFoodCategoryOrder: orderedNonFoodCats.map((c) => c.label),
+    customBillCats,
+    customExpenseCats,
+    goveeApiKey,
+    openRouterApiKey,
+    aiModel,
+    enabledUnits,
+    customUnits,
+    xiaomiCreds,
+  }), [
+    nameInput, enabledCategories, customCategories, orderedFoodCats,
+    enabledNonFoodCategories, customNonFoodCategories, orderedNonFoodCats,
+    customBillCats, customExpenseCats, goveeApiKey, openRouterApiKey,
+    aiModel, enabledUnits, customUnits, xiaomiCreds,
+  ]);
+
+  // Capture the baseline once the household has loaded.
+  useEffect(() => {
+    if (!loading && household && baselineRef.current === null) {
+      baselineRef.current = JSON.stringify(snapshot);
+    }
+  }, [loading, household, snapshot]);
+
+  const isDirty = baselineRef.current !== null && JSON.stringify(snapshot) !== baselineRef.current;
+  isDirtyRef.current = isDirty;
+
   const reorderFoodCategories = useCallback((from, to) => {
     const labels = orderedFoodCats.map((c) => c.label);
     const [removed] = labels.splice(from, 1);
@@ -297,29 +364,74 @@ export default function HouseholdEditScreen({ route, navigation }) {
     setNewUnitInput('');
   };
 
-  const handleSaveAll = async () => {
-    if (!nameInput.trim()) { setNameError('Required'); return; }
+  // Persist staged changes without navigating. Returns true on success (incl. no-op),
+  // false if validation or a write failed. The caller owns navigation.
+  const persistChanges = async () => {
+    if (!nameInput.trim()) { setNameError('Required'); return false; }
+
+    // Only write fields that actually changed — this is a shared household doc,
+    // so blindly rewriting every field clobbers concurrent edits by other members.
+    const snap = snapshot;
+    const base = baselineRef.current ? JSON.parse(baselineRef.current) : {};
+    const changed = (a, b) => JSON.stringify(a) !== JSON.stringify(b);
+
+    const writes = [];
+    if (changed(snap.name, base.name)) {
+      writes.push(updateHouseholdName(hhId, snap.name));
+    }
+    if (changed(snap.enabledCategories, base.enabledCategories)
+      || changed(snap.customCategories, base.customCategories)
+      || changed(snap.foodCategoryOrder, base.foodCategoryOrder)) {
+      writes.push(updateHouseholdPantryCategories(hhId, snap.enabledCategories, snap.customCategories, snap.foodCategoryOrder));
+    }
+    if (changed(snap.enabledNonFoodCategories, base.enabledNonFoodCategories)
+      || changed(snap.customNonFoodCategories, base.customNonFoodCategories)
+      || changed(snap.nonFoodCategoryOrder, base.nonFoodCategoryOrder)) {
+      writes.push(updateHouseholdNonFoodCategories(hhId, snap.enabledNonFoodCategories, snap.customNonFoodCategories, snap.nonFoodCategoryOrder));
+    }
+    if (changed(snap.customBillCats, base.customBillCats) || changed(snap.customExpenseCats, base.customExpenseCats)) {
+      writes.push(updateHouseholdFinanceCategories(hhId, snap.customBillCats, snap.customExpenseCats));
+    }
+    if (changed(snap.goveeApiKey, base.goveeApiKey)) {
+      writes.push(updateHouseholdGoveeApiKey(hhId, snap.goveeApiKey));
+    }
+    if (changed(snap.openRouterApiKey, base.openRouterApiKey)) {
+      writes.push(updateHouseholdOpenRouterApiKey(hhId, snap.openRouterApiKey));
+    }
+    if (changed(snap.aiModel, base.aiModel)) {
+      writes.push(updateHouseholdAiModel(hhId, snap.aiModel));
+    }
+    if (changed(snap.enabledUnits, base.enabledUnits) || changed(snap.customUnits, base.customUnits)) {
+      writes.push(updateHouseholdUnits(hhId, snap.enabledUnits, snap.customUnits));
+    }
+    if (changed(snap.xiaomiCreds, base.xiaomiCreds)) {
+      writes.push(updateHouseholdXiaomiCreds(hhId, snap.xiaomiCreds));
+      writes.push(saveXiaomiCredentials(snap.xiaomiCreds)); // sync to this device's cache
+    }
+
+    if (writes.length === 0) return true;
+
     setSaving(true);
     try {
-      await Promise.all([
-        updateHouseholdName(hhId, nameInput.trim()),
-        updateHouseholdPantryCategories(hhId, enabledCategories, customCategories, orderedFoodCats.map((c) => c.label)),
-        updateHouseholdNonFoodCategories(hhId, enabledNonFoodCategories, customNonFoodCategories, orderedNonFoodCats.map((c) => c.label)),
-        updateHouseholdFinanceCategories(hhId, customBillCats, customExpenseCats),
-        updateHouseholdGoveeApiKey(hhId, goveeApiKey),
-        updateHouseholdOpenRouterApiKey(hhId, openRouterApiKey),
-        updateHouseholdAiModel(hhId, aiModel),
-        updateHouseholdUnits(hhId, enabledUnits, customUnits),
-        updateHouseholdXiaomiCreds(hhId, xiaomiCreds),
-        saveXiaomiCredentials(xiaomiCreds), // sync to this device's cache
-      ]);
-      setHousehold((h) => ({ ...h, name: nameInput.trim() }));
+      await Promise.all(writes);
+      baselineRef.current = JSON.stringify(snap);
+      isDirtyRef.current = false;
+      setHousehold((h) => ({ ...h, name: snap.name }));
       notify('Saved', 'Household updated.', { type: 'success' });
-      navigation.goBack();
+      return true;
     } catch (e) {
       showAlert({ title: 'Error', message: e.message, type: 'error' });
+      return false;
     } finally {
       setSaving(false);
+    }
+  };
+  persistRef.current = persistChanges;
+
+  const handleSaveAll = async () => {
+    if (await persistChanges()) {
+      allowLeaveRef.current = true;
+      navigation.goBack();
     }
   };
 
@@ -342,6 +454,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
       await leaveHousehold(hhId, user.uid);
       await removeHousehold(hhId);
       notify('Left household', `You've left "${household?.name}".`, { type: 'info' });
+      allowLeaveRef.current = true;
       navigation.goBack();
     } catch (e) {
       showAlert({ title: 'Error', message: e.message, type: 'error' });
