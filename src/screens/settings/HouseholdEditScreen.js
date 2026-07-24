@@ -46,6 +46,42 @@ const applyOrder = (all, order) => {
   return [...all].sort((a, b) => (map.get(a.label) ?? 999) - (map.get(b.label) ?? 999));
 };
 
+// Collapsible cluster of related sections. `action` renders on the right of the
+// header (e.g. an Add button) and is independent of the collapse toggle.
+function CollapsibleGroup({ title, icon, open, onToggle, action, styles, colors, children }) {
+  return (
+    <View style={styles.group}>
+      <View style={styles.groupHeader}>
+        <TouchableOpacity
+          style={styles.groupHeaderMain}
+          onPress={onToggle}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel={title}
+          accessibilityState={{ expanded: open }}
+        >
+          <View style={styles.groupIconRing}>
+            <Ionicons name={icon} size={16} color={colors.accent} />
+          </View>
+          <Text style={styles.groupTitle}>{title}</Text>
+        </TouchableOpacity>
+        <View style={styles.groupHeaderRight}>
+          {action}
+          <TouchableOpacity
+            onPress={onToggle}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            accessibilityRole="button"
+            accessibilityLabel={`${open ? 'Collapse' : 'Expand'} ${title}`}
+          >
+            <Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={18} color={colors.textTertiary} />
+          </TouchableOpacity>
+        </View>
+      </View>
+      {open && <View style={styles.groupBody}>{children}</View>}
+    </View>
+  );
+}
+
 export default function HouseholdEditScreen({ route, navigation }) {
   const { householdId: hhId } = route.params;
   const { user, removeHousehold } = useAuth();
@@ -62,6 +98,12 @@ export default function HouseholdEditScreen({ route, navigation }) {
   const [loading, setLoading]               = useState(true);
   const [loadError, setLoadError]           = useState(null);
   const [navBarH, setNavBarH]               = useState(0);
+  const [footerH, setFooterH]               = useState(0);
+  const [openGroups, setOpenGroups]         = useState({
+    household: true, pantry: true, finance: false,
+    emergency: false, integrations: false, danger: false,
+  });
+  const toggleGroup = (id) => setOpenGroups((p) => ({ ...p, [id]: !p[id] }));
   const [nameInput, setNameInput]           = useState('');
   const [saving, setSaving]                 = useState(false);
   const [copied, setCopied]                 = useState(false);
@@ -538,14 +580,21 @@ export default function HouseholdEditScreen({ route, navigation }) {
         <ScrollView
           ref={scrollRef}
           // Web: the ancestor flex chain doesn't reliably bound a flex:1 ScrollView,
-          // so pin it to the viewport height minus the fixed nav bar (see web-scroll rule).
-          style={Platform.OS === 'web' ? { height: Math.max(windowHeight - navBarH, 0) } : { flex: 1 }}
+          // so pin it to the viewport minus the fixed nav bar and sticky save bar (web-scroll rule).
+          style={Platform.OS === 'web' ? { height: Math.max(windowHeight - navBarH - footerH, 0) } : { flex: 1 }}
           contentContainerStyle={[
             styles.scrollContent,
             isDesktop && { maxWidth: DESKTOP_MAX_CONTENT, alignSelf: 'center', width: '100%' },
           ]}
           showsVerticalScrollIndicator={false}
         >
+
+          {/* ═══ Household ═══ */}
+          <CollapsibleGroup
+            title="Household" icon="home-outline"
+            open={openGroups.household} onToggle={() => toggleGroup('household')}
+            styles={styles} colors={colors}
+          >
 
           {/* ── Name ── */}
           <Text style={styles.sectionLabel}>Household Name</Text>
@@ -633,6 +682,15 @@ export default function HouseholdEditScreen({ route, navigation }) {
               );
             })}
           </View>
+
+          </CollapsibleGroup>
+
+          {/* ═══ Pantry & Groceries ═══ */}
+          <CollapsibleGroup
+            title="Pantry & Groceries" icon="basket-outline"
+            open={openGroups.pantry} onToggle={() => toggleGroup('pantry')}
+            styles={styles} colors={colors}
+          >
 
           {/* ── Pantry Categories ── */}
           <View style={styles.sectionHeaderRow}>
@@ -807,6 +865,15 @@ export default function HouseholdEditScreen({ route, navigation }) {
             {!!unitError && <Text style={styles.errorText}>{unitError}</Text>}
           </View>
 
+          </CollapsibleGroup>
+
+          {/* ═══ Finance ═══ */}
+          <CollapsibleGroup
+            title="Finance" icon="wallet-outline"
+            open={openGroups.finance} onToggle={() => toggleGroup('finance')}
+            styles={styles} colors={colors}
+          >
+
           {/* ── Bill Categories ── */}
           <View style={styles.sectionHeaderRow}>
             <Text style={styles.sectionLabel}>Bill Categories</Text>
@@ -881,19 +948,25 @@ export default function HouseholdEditScreen({ route, navigation }) {
             ))}
           </View>
 
-          {/* ── Emergency Contacts ── */}
-          <View style={styles.sectionHeaderRow}>
-            <Text style={styles.sectionLabel}>Emergency Contacts</Text>
-            <TouchableOpacity
-              style={styles.addContactBtn}
-              onPress={openAddContact}
-              accessibilityRole="button"
-              accessibilityLabel="Add emergency contact"
-            >
-              <Ionicons name="add" size={15} color={colors.accent} />
-              <Text style={styles.addContactBtnLabel}>Add</Text>
-            </TouchableOpacity>
-          </View>
+          </CollapsibleGroup>
+
+          {/* ═══ Emergency ═══ */}
+          <CollapsibleGroup
+            title="Emergency Contacts" icon="medkit-outline"
+            open={openGroups.emergency} onToggle={() => toggleGroup('emergency')}
+            styles={styles} colors={colors}
+            action={(
+              <TouchableOpacity
+                style={styles.addContactBtn}
+                onPress={openAddContact}
+                accessibilityRole="button"
+                accessibilityLabel="Add emergency contact"
+              >
+                <Ionicons name="add" size={15} color={colors.accent} />
+                <Text style={styles.addContactBtnLabel}>Add</Text>
+              </TouchableOpacity>
+            )}
+          >
           <View style={[styles.card, contacts.length === 0 && { paddingVertical: spacing.lg }]}>
             {contacts.length === 0 ? (
               <Text style={[styles.inviteHint, { textAlign: 'center' }]}>No emergency contacts yet.</Text>
@@ -931,6 +1004,15 @@ export default function HouseholdEditScreen({ route, navigation }) {
               ))
             )}
           </View>
+
+          </CollapsibleGroup>
+
+          {/* ═══ Integrations ═══ */}
+          <CollapsibleGroup
+            title="Integrations" icon="hardware-chip-outline"
+            open={openGroups.integrations} onToggle={() => toggleGroup('integrations')}
+            styles={styles} colors={colors}
+          >
 
           {/* ── OpenRouter API Key ── */}
           <Text style={styles.sectionLabel}>OpenRouter API Key</Text>
@@ -1122,26 +1204,43 @@ export default function HouseholdEditScreen({ route, navigation }) {
             </Text>
           </View>
 
-          {/* ── Danger zone ── */}
-          <Text style={[styles.sectionLabel, { color: colors.danger }]}>Danger Zone</Text>
+          </CollapsibleGroup>
+
+          {/* ═══ Danger Zone ═══ */}
+          <CollapsibleGroup
+            title="Danger Zone" icon="warning-outline"
+            open={openGroups.danger} onToggle={() => toggleGroup('danger')}
+            styles={styles} colors={colors}
+          >
           <View style={styles.card}>
             <TouchableOpacity style={styles.leaveButton} onPress={handleLeave} accessibilityRole="button">
               <Ionicons name="exit-outline" size={18} color={colors.danger} />
               <Text style={styles.leaveButtonLabel}>Leave Household</Text>
             </TouchableOpacity>
           </View>
-
-          {/* ── Save ── */}
-          <TouchableOpacity
-            style={[styles.updateButton, saving && { opacity: 0.5 }]}
-            onPress={handleSaveAll}
-            disabled={saving}
-            accessibilityRole="button"
-          >
-            <Text style={styles.updateButtonLabel}>{saving ? 'Saving…' : 'Update Changes'}</Text>
-          </TouchableOpacity>
+          </CollapsibleGroup>
 
         </ScrollView>
+      )}
+
+      {/* ── Sticky save bar (disabled until there are unsaved changes) ── */}
+      {!loading && !loadError && (
+        <View
+          style={[styles.saveBar, { paddingBottom: insets.bottom + spacing.md }]}
+          onLayout={(e) => setFooterH(e.nativeEvent.layout.height)}
+        >
+          <View style={isDesktop ? { maxWidth: DESKTOP_MAX_CONTENT, alignSelf: 'center', width: '100%' } : null}>
+            <TouchableOpacity
+              style={[styles.updateButton, { marginTop: 0 }, (!isDirty || saving) && styles.updateButtonDisabled]}
+              onPress={handleSaveAll}
+              disabled={!isDirty || saving}
+              accessibilityRole="button"
+              accessibilityState={{ disabled: !isDirty || saving }}
+            >
+              <Text style={styles.updateButtonLabel}>{saving ? 'Saving…' : isDirty ? 'Save Changes' : 'No Changes'}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       )}
 
       {/* ── Finance Category Modal ── */}
@@ -1375,7 +1474,33 @@ const makeStyles = (colors) => StyleSheet.create({
   },
   navTitle: { ...type.h4, color: colors.textPrimary },
 
-  scrollContent: { padding: spacing.xl, paddingBottom: 200, gap: spacing.md },
+  scrollContent: { padding: spacing.xl, paddingBottom: spacing.xl, gap: spacing.md },
+
+  group: {
+    backgroundColor: colors.surface, borderRadius: radius.xl,
+    borderWidth: 1, borderColor: colors.border, overflow: 'hidden',
+  },
+  groupHeader: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: spacing.lg, paddingVertical: spacing.md,
+  },
+  groupHeaderMain: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, flex: 1 },
+  groupHeaderRight: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  groupIconRing: {
+    width: 32, height: 32, borderRadius: radius.full,
+    backgroundColor: colors.accentSoft, alignItems: 'center', justifyContent: 'center',
+  },
+  groupTitle: { ...type.bodyMed, color: colors.textPrimary, fontWeight: '700' },
+  groupBody: {
+    paddingHorizontal: spacing.lg, paddingBottom: spacing.lg, gap: spacing.md,
+    borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.md,
+  },
+
+  saveBar: {
+    paddingHorizontal: spacing.xl, paddingTop: spacing.md,
+    backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border,
+  },
+  updateButtonDisabled: { backgroundColor: colors.muted, opacity: Platform.OS === 'web' ? 0.6 : 1 },
 
   errorState: {
     flex: 1, alignItems: 'center', justifyContent: 'center',
