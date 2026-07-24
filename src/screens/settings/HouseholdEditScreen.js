@@ -10,12 +10,13 @@ import { useTheme } from '../../context/ThemeContext';
 import { useAlert } from '../../context/AlertContext';
 import { useNotification } from '../../context/NotificationContext';
 import {
-  getHousehold, updateHouseholdName, leaveHousehold, updateHouseholdPantryCategories,
+  getHouseholdWithPrivate, updateHouseholdName, leaveHousehold, updateHouseholdPantryCategories,
   updateHouseholdNonFoodCategories, updateHouseholdFinanceCategories, updateHouseholdGoveeApiKey,
   updateHouseholdOpenRouterApiKey, updateHouseholdAiModel,
-  updateHouseholdUnits,
+  updateHouseholdUnits, upsertMemberProfile, updateHouseholdXiaomiCreds,
   subscribeEmergencyContacts, addEmergencyContact, updateEmergencyContact, deleteEmergencyContact,
 } from '../../services/firestore';
+import { saveCredentials as saveXiaomiCredentials } from '../../services/xiaomi';
 import { PANTRY_CATEGORIES, NON_FOOD_CATEGORIES, UNITS } from '../../utils/categories';
 import { AI_MODELS, DEFAULT_AI_MODEL } from '../../utils/aiModels';
 import DraggableCategoryList from '../../components/DraggableCategoryList';
@@ -30,6 +31,13 @@ const FINANCE_ICONS  = ['💡','🔥','💧','📡','📱','🚗','🐕','🐈',
 
 const BLANK_CONTACT = { icon: '📞', name: '', phone: '', relationship: '', notes: '' };
 const BLANK_CAT = { label: '', icon: '📦' };
+
+const XIAOMI_REGIONS = [
+  { key: 'cn', label: 'China' }, { key: 'us', label: 'US' }, { key: 'eu', label: 'Europe' },
+  { key: 'ru', label: 'Russia' }, { key: 'sg', label: 'Singapore' }, { key: 'in', label: 'India' },
+  { key: 'de', label: 'Germany' }, { key: 'tw', label: 'Taiwan' },
+];
+const BLANK_XIAOMI = { userId: '', serviceToken: '', ssecurity: '', region: 'cn' };
 
 const applyOrder = (all, order) => {
   if (!order.length) return all;
@@ -78,6 +86,8 @@ export default function HouseholdEditScreen({ route, navigation }) {
   const [showGoveeKey, setShowGoveeKey]           = useState(false);
   const [openRouterApiKey, setOpenRouterApiKey]   = useState('');
   const [showOpenRouterKey, setShowOpenRouterKey] = useState(false);
+  const [xiaomiCreds, setXiaomiCreds]             = useState(BLANK_XIAOMI);
+  const [showXiaomiSecrets, setShowXiaomiSecrets] = useState(false);
   const [aiModel, setAiModel]                     = useState(DEFAULT_AI_MODEL);
   const [enabledUnits, setEnabledUnits]           = useState(UNITS);
   const [customUnits, setCustomUnits]             = useState([]);
@@ -132,7 +142,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
   };
 
   useEffect(() => {
-    getHousehold(hhId)
+    getHouseholdWithPrivate(hhId)
       .then((hh) => {
         setHousehold(hh);
         setNameInput(hh?.name ?? '');
@@ -150,9 +160,20 @@ export default function HouseholdEditScreen({ route, navigation }) {
         setCustomExpenseCats(hh?.expenseCustomCategories ?? []);
         setGoveeApiKey(hh?.goveeApiKey ?? '');
         setOpenRouterApiKey(hh?.openRouterApiKey ?? '');
+        setXiaomiCreds({ ...BLANK_XIAOMI, ...(hh?.xiaomiCreds ?? {}) });
         setAiModel(hh?.aiModel ?? DEFAULT_AI_MODEL);
         setEnabledUnits(hh?.enabledUnits ?? UNITS);
         setCustomUnits(hh?.customUnits ?? []);
+
+        // Ensure my own name/email is stored so I show as a real name, not a UID.
+        const p = { name: (user?.displayName || '').trim(), email: (user?.email || '').trim() };
+        const cur = hh?.memberProfiles?.[user?.uid];
+        if (user?.uid && (!cur || cur.name !== p.name || cur.email !== p.email)) {
+          upsertMemberProfile(hhId, user.uid, p).catch(() => {});
+          setHousehold((prev) => (prev
+            ? { ...prev, memberProfiles: { ...(prev.memberProfiles || {}), [user.uid]: p } }
+            : prev));
+        }
       })
       .finally(() => setLoading(false));
   }, [hhId]);
@@ -289,6 +310,8 @@ export default function HouseholdEditScreen({ route, navigation }) {
         updateHouseholdOpenRouterApiKey(hhId, openRouterApiKey),
         updateHouseholdAiModel(hhId, aiModel),
         updateHouseholdUnits(hhId, enabledUnits, customUnits),
+        updateHouseholdXiaomiCreds(hhId, xiaomiCreds),
+        saveXiaomiCredentials(xiaomiCreds), // sync to this device's cache
       ]);
       setHousehold((h) => ({ ...h, name: nameInput.trim() }));
       notify('Saved', 'Household updated.', { type: 'success' });
@@ -403,14 +426,20 @@ export default function HouseholdEditScreen({ route, navigation }) {
             {household?.members?.map((uid, i) => {
               const isYou = uid === user?.uid;
               const isOwner = uid === household?.createdBy;
+              const profile = household?.memberProfiles?.[uid];
+              const name = profile?.name?.trim();
+              const displayLabel = name || profile?.email || (isYou ? 'You' : 'Member');
               return (
                 <View key={uid} style={[styles.memberRow, i > 0 && styles.memberRowBorder]}>
                   <View style={styles.memberAvatar}>
                     <Ionicons name="person" size={14} color={colors.textTertiary} />
                   </View>
-                  <Text style={styles.memberUid} numberOfLines={1}>
-                    {isYou ? 'You' : `${uid.slice(0, 12)}…`}
-                  </Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.memberName} numberOfLines={1}>{displayLabel}</Text>
+                    {!!name && !!profile?.email && (
+                      <Text style={styles.memberEmail} numberOfLines={1}>{profile.email}</Text>
+                    )}
+                  </View>
                   <View style={styles.memberBadges}>
                     {isOwner && (
                       <View style={styles.ownerBadge}>
@@ -837,6 +866,85 @@ export default function HouseholdEditScreen({ route, navigation }) {
             </Text>
           </View>
 
+          {/* ── Xiaomi (Mi Home) Credentials ── */}
+          <Text style={styles.sectionLabel}>Xiaomi (Mi Home)</Text>
+          <View style={styles.card}>
+            <Text style={styles.modalLabel}>User ID</Text>
+            <TextInput
+              style={styles.textInput}
+              value={xiaomiCreds.userId}
+              onChangeText={(t) => setXiaomiCreds((c) => ({ ...c, userId: t }))}
+              placeholder="1234567890"
+              placeholderTextColor={colors.textTertiary}
+              autoCapitalize="none"
+              autoCorrect={false}
+              accessibilityLabel="Xiaomi user ID"
+            />
+
+            <View style={styles.xiaomiLabelRow}>
+              <Text style={styles.modalLabel}>Service Token</Text>
+              <TouchableOpacity
+                onPress={() => setShowXiaomiSecrets((v) => !v)}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                accessibilityRole="button"
+                accessibilityLabel={showXiaomiSecrets ? 'Hide secrets' : 'Show secrets'}
+              >
+                <Ionicons
+                  name={showXiaomiSecrets ? 'eye-off-outline' : 'eye-outline'}
+                  size={18}
+                  color={colors.textTertiary}
+                />
+              </TouchableOpacity>
+            </View>
+            <TextInput
+              style={styles.textInput}
+              value={xiaomiCreds.serviceToken}
+              onChangeText={(t) => setXiaomiCreds((c) => ({ ...c, serviceToken: t }))}
+              placeholder="Service token"
+              placeholderTextColor={colors.textTertiary}
+              secureTextEntry={!showXiaomiSecrets}
+              autoCapitalize="none"
+              autoCorrect={false}
+              accessibilityLabel="Xiaomi service token"
+            />
+
+            <Text style={styles.modalLabel}>Security Key (ssecurity)</Text>
+            <TextInput
+              style={styles.textInput}
+              value={xiaomiCreds.ssecurity}
+              onChangeText={(t) => setXiaomiCreds((c) => ({ ...c, ssecurity: t }))}
+              placeholder="base64-encoded key"
+              placeholderTextColor={colors.textTertiary}
+              secureTextEntry={!showXiaomiSecrets}
+              autoCapitalize="none"
+              autoCorrect={false}
+              accessibilityLabel="Xiaomi security key"
+            />
+
+            <Text style={styles.modalLabel}>Region</Text>
+            <View style={styles.unitsGrid}>
+              {XIAOMI_REGIONS.map((r) => {
+                const isOn = xiaomiCreds.region === r.key;
+                return (
+                  <TouchableOpacity
+                    key={r.key}
+                    style={[styles.unitToggle, isOn && styles.unitToggleActive]}
+                    onPress={() => setXiaomiCreds((c) => ({ ...c, region: r.key }))}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected: isOn }}
+                    accessibilityLabel={r.label}
+                  >
+                    <Text style={[styles.unitToggleLabel, isOn && styles.unitToggleLabelActive]}>{r.label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <Text style={styles.inviteHint}>
+              Get User ID, Service Token, and ssecurity from the Mi Home app using a token extractor (e.g. xiaomi-cloud-tokens-extractor). Shared with your household and synced to each device.
+            </Text>
+          </View>
+
           {/* ── Danger zone ── */}
           <Text style={[styles.sectionLabel, { color: colors.danger }]}>Danger Zone</Text>
           <View style={styles.card}>
@@ -1116,6 +1224,7 @@ const makeStyles = (colors) => StyleSheet.create({
 
   goveeKeyRow:    { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   goveeKeyToggle: { padding: spacing.sm },
+  xiaomiLabelRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
 
   modelRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingVertical: spacing.sm },
   modelRowBorder: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
@@ -1146,7 +1255,8 @@ const makeStyles = (colors) => StyleSheet.create({
     backgroundColor: colors.surfaceElevated, borderWidth: 1, borderColor: colors.border,
     alignItems: 'center', justifyContent: 'center',
   },
-  memberUid:    { flex: 1, ...type.bodySm, color: colors.textSecondary },
+  memberName:   { ...type.bodySm, color: colors.textPrimary, fontWeight: '600' },
+  memberEmail:  { ...type.caption, color: colors.textTertiary, marginTop: 1 },
   memberBadges: { flexDirection: 'row', gap: 6 },
   ownerBadge: {
     backgroundColor: colors.amberSoft, borderRadius: radius.sm,
@@ -1189,6 +1299,11 @@ const makeStyles = (colors) => StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
 
+  categoryRow: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: spacing.lg,
+  },
+  categoryRowBorder: { borderTopWidth: 1, borderTopColor: colors.border },
   categoryRowToggle: {
     flex: 1, flexDirection: 'row', alignItems: 'center', gap: spacing.md,
     paddingVertical: 13,

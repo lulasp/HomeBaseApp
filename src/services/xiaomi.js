@@ -137,6 +137,15 @@ export function hasCredentials(c) {
   return !!(c.userId && c.serviceToken && c.ssecurity);
 }
 
+// Pull shared household credentials into this device's cache, so the
+// signed-request path (which reads AsyncStorage) can use them. No-op if the
+// household has no complete credential set, so local creds aren't wiped.
+export async function syncCredentialsFromHousehold(creds) {
+  if (!creds || !hasCredentials(creds)) return false;
+  await saveCredentials(creds);
+  return true;
+}
+
 // ── Core request ──────────────────────────────────────────────────────────────
 
 async function miRequest(path, data = {}) {

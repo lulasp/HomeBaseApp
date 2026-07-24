@@ -14,7 +14,7 @@ import { spacing, radius, type } from '../../theme/colors';
 import { useIsDesktop, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
 import { useLightTimer } from '../../context/LightTimerContext';
 import {
-  getHousehold, subscribeLightShortcuts,
+  getHouseholdWithPrivate, subscribeLightShortcuts,
   addLightShortcut, updateLightShortcut,
 } from '../../services/firestore';
 import {
@@ -172,7 +172,7 @@ export default function HomeLightsScreen({ route }) {
     let cancelled = false;
     async function load() {
       try {
-        const hh = await getHousehold(householdId);
+        const hh = await getHouseholdWithPrivate(householdId);
         const apiKey = hh?.goveeApiKey ?? null;
         if (!cancelled) setGoveeApiKey(apiKey);
         if (!apiKey) { if (!cancelled) setLoading(false); return; }

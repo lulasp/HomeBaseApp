@@ -65,7 +65,7 @@ export default function ProfileScreen({ navigation }) {
     if (!hhName.trim()) { setSheetErrors({ hhName: 'Required' }); return; }
     setSheetLoading(true);
     try {
-      const id = await createHousehold(user.uid, hhName.trim());
+      const id = await createHousehold(user.uid, hhName.trim(), { name: user.displayName || '', email: user.email || '' });
       await saveHouseholdId(id);
       notify('Household created', `"${hhName.trim()}" is ready.`, { type: 'success' });
       closeSheet();
@@ -80,7 +80,7 @@ export default function ProfileScreen({ navigation }) {
     if (!inviteCode.trim()) { setSheetErrors({ inviteCode: 'Required' }); return; }
     setSheetLoading(true);
     try {
-      const id = await joinHousehold(user.uid, inviteCode.trim());
+      const id = await joinHousehold(user.uid, inviteCode.trim(), { name: user.displayName || '', email: user.email || '' });
       await saveHouseholdId(id);
       notify('Joined household', "You've been added to the household.", { type: 'success' });
       closeSheet();
