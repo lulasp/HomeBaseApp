@@ -7,6 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useNavScroll } from '../context/NavScrollContext';
+import { useHousehold } from '../context/HouseholdContext';
 import { spacing, radius, type } from '../theme/colors';
 
 export const SIDEBAR_WIDTH       = 220;
@@ -151,7 +152,7 @@ const AnimatedMobileTabItem = memo(function AnimatedMobileTabItem({
 });
 
 // ── Desktop Sidebar ────────────────────────────────────────────────────────────
-function DesktopSidebar({ state, navigation }) {
+function DesktopSidebar({ state, navigation, hidden }) {
   const { colors, theme, toggleTheme } = useTheme();
   const styles  = useMemo(() => makeStyles(colors), [colors]);
   const isLight = theme === 'light';
@@ -179,7 +180,7 @@ function DesktopSidebar({ state, navigation }) {
         {SECTIONS.map((section, si) => {
           const sectionItems = state.routes
             .map((r, i) => ({ route: r, index: i }))
-            .filter(({ route }) => TAB_CONFIG[route.name]?.section === section.key);
+            .filter(({ route }) => TAB_CONFIG[route.name]?.section === section.key && !hidden.has(route.name));
           return (
             <View key={section.key} style={si > 0 ? styles.sectionGroup : undefined}>
               <Text style={styles.sectionLabel}>{section.label}</Text>
@@ -259,7 +260,7 @@ function DesktopSidebar({ state, navigation }) {
 }
 
 // ── Mobile Nav (section switcher + pill bar) ───────────────────────────────────
-function MobileNav({ state, navigation }) {
+function MobileNav({ state, navigation, hidden }) {
   const { colors } = useTheme();
   const styles  = useMemo(() => makeStyles(colors), [colors]);
   const insets  = useSafeAreaInsets();
@@ -287,6 +288,7 @@ function MobileNav({ state, navigation }) {
   const visibleRoutes = state.routes
     .map((r, i) => ({ route: r, index: i }))
     .filter(({ route }) => {
+      if (hidden.has(route.name)) return false;
       const sec = TAB_CONFIG[route.name]?.section;
       return sec === activeSection || sec === 'profile';
     });
@@ -354,10 +356,21 @@ function MobileNav({ state, navigation }) {
 
 export default function CustomTabBar({ state, navigation }) {
   const isDesktop = useIsDesktop();
+  const { goveeEnabled, xiaomiEnabled } = useHousehold();
+
+  // Routes hidden from the bar when their integration is toggled off. The screens
+  // stay registered in the navigator — they're just unreachable from the nav.
+  const hidden = useMemo(() => {
+    const h = new Set();
+    if (!goveeEnabled)  h.add('HomeLights');
+    if (!xiaomiEnabled) h.add('Xiaomi');
+    return h;
+  }, [goveeEnabled, xiaomiEnabled]);
+
   return isDesktop ? (
-    <DesktopSidebar state={state} navigation={navigation} />
+    <DesktopSidebar state={state} navigation={navigation} hidden={hidden} />
   ) : (
-    <MobileNav state={state} navigation={navigation} />
+    <MobileNav state={state} navigation={navigation} hidden={hidden} />
   );
 }
 

@@ -100,6 +100,10 @@ export const AuthProvider = ({ children }) => {
     const trimmed = name.trim();
     if (auth.currentUser) {
       await updateProfile(auth.currentUser, { displayName: trimmed });
+      // Sync the new name to every household's member profile so member lists
+      // reflect the edit immediately, not only after the next login.
+      const p = { name: trimmed, email: (auth.currentUser.email || '').trim() };
+      householdIds.forEach((id) => upsertMemberProfile(id, auth.currentUser.uid, p).catch(() => {}));
     }
     setDisplayName(trimmed);
   };

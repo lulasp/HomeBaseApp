@@ -1,8 +1,9 @@
 import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet,
-  ActivityIndicator, Platform, Modal, Switch,
+  ActivityIndicator, Platform, Modal, KeyboardAvoidingView, AccessibilityInfo, Switch,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../context/AuthContext';
@@ -10,16 +11,18 @@ import { useTheme } from '../../context/ThemeContext';
 import { useAlert } from '../../context/AlertContext';
 import { useNotification } from '../../context/NotificationContext';
 import {
-  getHouseholdWithPrivate, updateHouseholdName, leaveHousehold, updateHouseholdPantryCategories,
+  getHouseholdWithPrivate, updateHouseholdName, leaveHousehold, removeHouseholdMember,
+  regenerateInviteCode, transferHouseholdOwnership, updateHouseholdPantryCategories,
   updateHouseholdNonFoodCategories, updateHouseholdFinanceCategories, updateHouseholdGoveeApiKey,
   updateHouseholdOpenRouterApiKey, updateHouseholdAiModel,
-  updateHouseholdUnits, upsertMemberProfile, updateHouseholdXiaomiCreds,
+  updateHouseholdUnits, upsertMemberProfile, updateHouseholdXiaomiCreds, updateHouseholdIntegrationFlags,
   subscribeEmergencyContacts, addEmergencyContact, updateEmergencyContact, deleteEmergencyContact,
 } from '../../services/firestore';
 import { saveCredentials as saveXiaomiCredentials } from '../../services/xiaomi';
 import { PANTRY_CATEGORIES, NON_FOOD_CATEGORIES, UNITS } from '../../utils/categories';
 import { AI_MODELS, DEFAULT_AI_MODEL } from '../../utils/aiModels';
 import DraggableCategoryList from '../../components/DraggableCategoryList';
+import IconPicker from '../../components/IconPicker';
 import { spacing, radius, type } from '../../theme/colors';
 import { useIsDesktop, SIDEBAR_WIDTH, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
 import { useWindowDimensions } from 'react-native';
@@ -45,19 +48,68 @@ const applyOrder = (all, order) => {
   return [...all].sort((a, b) => (map.get(a.label) ?? 999) - (map.get(b.label) ?? 999));
 };
 
+// Collapsible cluster of related sections. `action` renders on the right of the
+// header (e.g. an Add button) and is independent of the collapse toggle.
+function CollapsibleGroup({ title, icon, open, onToggle, action, styles, colors, children }) {
+  return (
+    <View style={styles.group}>
+      <View style={styles.groupHeader}>
+        <TouchableOpacity
+          style={styles.groupHeaderMain}
+          onPress={onToggle}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel={title}
+          accessibilityState={{ expanded: open }}
+        >
+          <View style={styles.groupIconRing}>
+            <Ionicons name={icon} size={16} color={colors.accent} />
+          </View>
+          <Text style={styles.groupTitle}>{title}</Text>
+        </TouchableOpacity>
+        <View style={styles.groupHeaderRight}>
+          {action}
+          <TouchableOpacity
+            onPress={onToggle}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            accessibilityRole="button"
+            accessibilityLabel={`${open ? 'Collapse' : 'Expand'} ${title}`}
+          >
+            <Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={18} color={colors.textTertiary} />
+          </TouchableOpacity>
+        </View>
+      </View>
+      {open && <View style={styles.groupBody}>{children}</View>}
+    </View>
+  );
+}
+
 export default function HouseholdEditScreen({ route, navigation }) {
   const { householdId: hhId } = route.params;
   const { user, removeHousehold } = useAuth();
   const { colors } = useTheme();
-  const { showAlert, showConfirm } = useAlert();
+  const { showAlert, showConfirm, showOptions } = useAlert();
   const { notify } = useNotification();
 
   const styles    = useMemo(() => makeStyles(colors), [colors]);
   const isDesktop = useIsDesktop();
+  const insets    = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
 
   const [household, setHousehold]           = useState(null);
   const [loading, setLoading]               = useState(true);
+  const [loadError, setLoadError]           = useState(null);
+  const [navBarH, setNavBarH]               = useState(0);
+  const [footerH, setFooterH]               = useState(0);
+  const [openGroups, setOpenGroups]         = useState({
+    household: true, pantry: true, finance: false,
+    emergency: false, integrations: false, danger: false,
+  });
+  const toggleGroup = (id) => setOpenGroups((p) => ({ ...p, [id]: !p[id] }));
+  const [reduceMotion, setReduceMotion]     = useState(false);
+  const [foodFilter, setFoodFilter]         = useState('');
+  const [nonFoodFilter, setNonFoodFilter]   = useState('');
+  const [regenerating, setRegenerating]     = useState(false);
   const [nameInput, setNameInput]           = useState('');
   const [saving, setSaving]                 = useState(false);
   const [copied, setCopied]                 = useState(false);
@@ -79,11 +131,17 @@ export default function HouseholdEditScreen({ route, navigation }) {
   const [financeCatError, setFinanceCatError]     = useState(null);
   const [contacts, setContacts]                   = useState([]);
   const scrollRef = useRef(null);
+  const baselineRef   = useRef(null); // JSON of staged values at load / last save
+  const isDirtyRef    = useRef(false);
+  const allowLeaveRef = useRef(false); // bypass the unsaved-changes guard on intentional exit
+  const persistRef    = useRef(null);  // latest persistChanges, for the guard listener
   const [contactModal, setContactModal]           = useState(null); // null | { mode: 'add'|'edit', contact }
   const [contactForm, setContactForm]             = useState(BLANK_CONTACT);
   const [contactSaving, setContactSaving]         = useState(false);
   const [goveeApiKey, setGoveeApiKey]             = useState('');
   const [showGoveeKey, setShowGoveeKey]           = useState(false);
+  const [goveeEnabled, setGoveeEnabled]           = useState(false);
+  const [xiaomiEnabled, setXiaomiEnabled]         = useState(false);
   const [openRouterApiKey, setOpenRouterApiKey]   = useState('');
   const [showOpenRouterKey, setShowOpenRouterKey] = useState(false);
   const [xiaomiCreds, setXiaomiCreds]             = useState(BLANK_XIAOMI);
@@ -141,7 +199,9 @@ export default function HouseholdEditScreen({ route, navigation }) {
     );
   };
 
-  useEffect(() => {
+  const loadHousehold = useCallback(() => {
+    setLoading(true);
+    setLoadError(null);
     getHouseholdWithPrivate(hhId)
       .then((hh) => {
         setHousehold(hh);
@@ -160,7 +220,11 @@ export default function HouseholdEditScreen({ route, navigation }) {
         setCustomExpenseCats(hh?.expenseCustomCategories ?? []);
         setGoveeApiKey(hh?.goveeApiKey ?? '');
         setOpenRouterApiKey(hh?.openRouterApiKey ?? '');
-        setXiaomiCreds({ ...BLANK_XIAOMI, ...(hh?.xiaomiCreds ?? {}) });
+        const xc = hh?.xiaomiCreds ?? {};
+        setXiaomiCreds({ ...BLANK_XIAOMI, ...xc });
+        // Absent flag ⇒ enabled if already configured (see HouseholdContext).
+        setGoveeEnabled(hh?.goveeEnabled ?? !!hh?.goveeApiKey);
+        setXiaomiEnabled(hh?.xiaomiEnabled ?? !!(xc.userId || xc.serviceToken || xc.ssecurity));
         setAiModel(hh?.aiModel ?? DEFAULT_AI_MODEL);
         setEnabledUnits(hh?.enabledUnits ?? UNITS);
         setCustomUnits(hh?.customUnits ?? []);
@@ -175,8 +239,47 @@ export default function HouseholdEditScreen({ route, navigation }) {
             : prev));
         }
       })
+      .catch((e) => setLoadError(e))
       .finally(() => setLoading(false));
-  }, [hhId]);
+  }, [hhId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => { loadHousehold(); }, [loadHousehold]);
+
+  // Honor the OS "reduce motion" setting for modal transitions.
+  useEffect(() => {
+    let mounted = true;
+    AccessibilityInfo.isReduceMotionEnabled().then((v) => { if (mounted) setReduceMotion(v); });
+    const sub = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion);
+    return () => { mounted = false; sub?.remove?.(); };
+  }, []);
+
+  // Warn before leaving with unsaved (staged) changes on back / swipe-back.
+  useEffect(() => {
+    const sub = navigation.addListener('beforeRemove', (e) => {
+      if (allowLeaveRef.current || !isDirtyRef.current) return;
+      e.preventDefault();
+      const leave = () => { allowLeaveRef.current = true; navigation.dispatch(e.data.action); };
+      showOptions({
+        title: 'Unsaved changes',
+        message: 'You have unsaved changes to this household.',
+        type: 'warning',
+        options: [
+          { label: 'Save changes', value: 'save' },
+          { label: 'Discard', value: 'discard', style: 'destructive' },
+          { label: 'Cancel', style: 'cancel' },
+        ],
+      }).then(async (choice) => {
+        if (choice === 'discard') {
+          leave();
+        } else if (choice === 'save') {
+          const ok = await persistRef.current?.();
+          if (ok) leave();
+        }
+        // cancel / null → stay on the screen
+      });
+    });
+    return sub;
+  }, [navigation, showOptions]);
 
   const togglePantryCategory = (label) => {
     setEnabledCategories((prev) =>
@@ -241,6 +344,43 @@ export default function HouseholdEditScreen({ route, navigation }) {
     [customNonFoodCategories, nonFoodCategoryOrder],
   );
 
+  // Snapshot of every batch-saved (staged) field. Emergency contacts are excluded —
+  // they persist immediately through their own modal, not this snapshot.
+  const snapshot = useMemo(() => ({
+    name: nameInput.trim(),
+    enabledCategories,
+    customCategories,
+    foodCategoryOrder: orderedFoodCats.map((c) => c.label),
+    enabledNonFoodCategories,
+    customNonFoodCategories,
+    nonFoodCategoryOrder: orderedNonFoodCats.map((c) => c.label),
+    customBillCats,
+    customExpenseCats,
+    goveeApiKey,
+    openRouterApiKey,
+    aiModel,
+    enabledUnits,
+    customUnits,
+    xiaomiCreds,
+    goveeEnabled,
+    xiaomiEnabled,
+  }), [
+    nameInput, enabledCategories, customCategories, orderedFoodCats,
+    enabledNonFoodCategories, customNonFoodCategories, orderedNonFoodCats,
+    customBillCats, customExpenseCats, goveeApiKey, openRouterApiKey,
+    aiModel, enabledUnits, customUnits, xiaomiCreds, goveeEnabled, xiaomiEnabled,
+  ]);
+
+  // Capture the baseline once the household has loaded.
+  useEffect(() => {
+    if (!loading && household && baselineRef.current === null) {
+      baselineRef.current = JSON.stringify(snapshot);
+    }
+  }, [loading, household, snapshot]);
+
+  const isDirty = baselineRef.current !== null && JSON.stringify(snapshot) !== baselineRef.current;
+  isDirtyRef.current = isDirty;
+
   const reorderFoodCategories = useCallback((from, to) => {
     const labels = orderedFoodCats.map((c) => c.label);
     const [removed] = labels.splice(from, 1);
@@ -254,6 +394,80 @@ export default function HouseholdEditScreen({ route, navigation }) {
     labels.splice(to, 0, removed);
     setNonFoodCategoryOrder(labels);
   }, [orderedNonFoodCats]);
+
+  // Row renderers shared by the draggable list (unfiltered) and the plain
+  // filtered list (a search term is active, where reordering is disabled).
+  const renderFoodCatRow = (cat) => {
+    const isOn = enabledCategories?.includes(cat.label);
+    const isCustom = !PANTRY_CATEGORIES.some((c) => c.label === cat.label);
+    return (
+      <>
+        <TouchableOpacity
+          style={styles.categoryRowToggle}
+          onPress={() => togglePantryCategory(cat.label)}
+          accessibilityRole="switch"
+          accessibilityState={{ checked: isOn }}
+          accessibilityLabel={cat.label}
+        >
+          <Text style={styles.categoryRowIcon}>{cat.icon}</Text>
+          <Text style={[styles.categoryRowLabel, !isOn && { opacity: 0.4 }]}>{cat.label}</Text>
+          <Ionicons
+            name={isOn ? 'checkmark-circle' : 'ellipse-outline'}
+            size={21}
+            color={isOn ? colors.accent : colors.textTertiary}
+          />
+        </TouchableOpacity>
+        {isCustom && (
+          <TouchableOpacity
+            onPress={() => handleDeleteCustomCategory(cat.label)}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityRole="button"
+            accessibilityLabel={`Delete ${cat.label}`}
+            style={styles.categoryDeleteBtn}
+          >
+            <Ionicons name="trash-outline" size={16} color={colors.danger} />
+          </TouchableOpacity>
+        )}
+      </>
+    );
+  };
+
+  const renderNonFoodCatRow = (cat) => {
+    const isOn = enabledNonFoodCategories?.includes(cat.label);
+    const isCustom = !NON_FOOD_CATEGORIES.some((c) => c.label === cat.label);
+    return (
+      <>
+        <TouchableOpacity
+          style={styles.categoryRowToggle}
+          onPress={() => toggleNonFoodCategory(cat.label)}
+          accessibilityRole="switch"
+          accessibilityState={{ checked: isOn }}
+          accessibilityLabel={cat.label}
+        >
+          <Text style={styles.categoryRowIcon}>{cat.icon}</Text>
+          <Text style={[styles.categoryRowLabel, !isOn && { opacity: 0.4 }]}>{cat.label}</Text>
+          <Ionicons
+            name={isOn ? 'checkmark-circle' : 'ellipse-outline'}
+            size={21}
+            color={isOn ? colors.accent : colors.textTertiary}
+          />
+        </TouchableOpacity>
+        {isCustom && (
+          <TouchableOpacity
+            onPress={() => handleDeleteCustomNonFoodCategory(cat.label)}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityRole="button"
+            accessibilityLabel={`Delete ${cat.label}`}
+            style={styles.categoryDeleteBtn}
+          >
+            <Ionicons name="trash-outline" size={16} color={colors.danger} />
+          </TouchableOpacity>
+        )}
+      </>
+    );
+  };
+
+  const matchesFilter = (cat, term) => cat.label.toLowerCase().includes(term.trim().toLowerCase());
 
   const openAddFinanceCat = (type) => {
     setFinanceCatType(type);
@@ -297,29 +511,79 @@ export default function HouseholdEditScreen({ route, navigation }) {
     setNewUnitInput('');
   };
 
-  const handleSaveAll = async () => {
-    if (!nameInput.trim()) { setNameError('Required'); return; }
+  // Persist staged changes without navigating. Returns true on success (incl. no-op),
+  // false if validation or a write failed. The caller owns navigation.
+  const persistChanges = async () => {
+    if (!nameInput.trim()) { setNameError('Required'); return false; }
+
+    // Only write fields that actually changed — this is a shared household doc,
+    // so blindly rewriting every field clobbers concurrent edits by other members.
+    const snap = snapshot;
+    const base = baselineRef.current ? JSON.parse(baselineRef.current) : {};
+    const changed = (a, b) => JSON.stringify(a) !== JSON.stringify(b);
+
+    const writes = [];
+    if (changed(snap.name, base.name)) {
+      writes.push(updateHouseholdName(hhId, snap.name));
+    }
+    if (changed(snap.enabledCategories, base.enabledCategories)
+      || changed(snap.customCategories, base.customCategories)
+      || changed(snap.foodCategoryOrder, base.foodCategoryOrder)) {
+      writes.push(updateHouseholdPantryCategories(hhId, snap.enabledCategories, snap.customCategories, snap.foodCategoryOrder));
+    }
+    if (changed(snap.enabledNonFoodCategories, base.enabledNonFoodCategories)
+      || changed(snap.customNonFoodCategories, base.customNonFoodCategories)
+      || changed(snap.nonFoodCategoryOrder, base.nonFoodCategoryOrder)) {
+      writes.push(updateHouseholdNonFoodCategories(hhId, snap.enabledNonFoodCategories, snap.customNonFoodCategories, snap.nonFoodCategoryOrder));
+    }
+    if (changed(snap.customBillCats, base.customBillCats) || changed(snap.customExpenseCats, base.customExpenseCats)) {
+      writes.push(updateHouseholdFinanceCategories(hhId, snap.customBillCats, snap.customExpenseCats));
+    }
+    if (changed(snap.goveeApiKey, base.goveeApiKey)) {
+      writes.push(updateHouseholdGoveeApiKey(hhId, snap.goveeApiKey));
+    }
+    if (changed(snap.openRouterApiKey, base.openRouterApiKey)) {
+      writes.push(updateHouseholdOpenRouterApiKey(hhId, snap.openRouterApiKey));
+    }
+    if (changed(snap.aiModel, base.aiModel)) {
+      writes.push(updateHouseholdAiModel(hhId, snap.aiModel));
+    }
+    if (changed(snap.enabledUnits, base.enabledUnits) || changed(snap.customUnits, base.customUnits)) {
+      writes.push(updateHouseholdUnits(hhId, snap.enabledUnits, snap.customUnits));
+    }
+    if (changed(snap.xiaomiCreds, base.xiaomiCreds)) {
+      writes.push(updateHouseholdXiaomiCreds(hhId, snap.xiaomiCreds));
+      writes.push(saveXiaomiCredentials(snap.xiaomiCreds)); // sync to this device's cache
+    }
+    if (changed(snap.goveeEnabled, base.goveeEnabled) || changed(snap.xiaomiEnabled, base.xiaomiEnabled)) {
+      writes.push(updateHouseholdIntegrationFlags(hhId, {
+        goveeEnabled: snap.goveeEnabled, xiaomiEnabled: snap.xiaomiEnabled,
+      }));
+    }
+
+    if (writes.length === 0) return true;
+
     setSaving(true);
     try {
-      await Promise.all([
-        updateHouseholdName(hhId, nameInput.trim()),
-        updateHouseholdPantryCategories(hhId, enabledCategories, customCategories, orderedFoodCats.map((c) => c.label)),
-        updateHouseholdNonFoodCategories(hhId, enabledNonFoodCategories, customNonFoodCategories, orderedNonFoodCats.map((c) => c.label)),
-        updateHouseholdFinanceCategories(hhId, customBillCats, customExpenseCats),
-        updateHouseholdGoveeApiKey(hhId, goveeApiKey),
-        updateHouseholdOpenRouterApiKey(hhId, openRouterApiKey),
-        updateHouseholdAiModel(hhId, aiModel),
-        updateHouseholdUnits(hhId, enabledUnits, customUnits),
-        updateHouseholdXiaomiCreds(hhId, xiaomiCreds),
-        saveXiaomiCredentials(xiaomiCreds), // sync to this device's cache
-      ]);
-      setHousehold((h) => ({ ...h, name: nameInput.trim() }));
+      await Promise.all(writes);
+      baselineRef.current = JSON.stringify(snap);
+      isDirtyRef.current = false;
+      setHousehold((h) => ({ ...h, name: snap.name }));
       notify('Saved', 'Household updated.', { type: 'success' });
-      navigation.goBack();
+      return true;
     } catch (e) {
       showAlert({ title: 'Error', message: e.message, type: 'error' });
+      return false;
     } finally {
       setSaving(false);
+    }
+  };
+  persistRef.current = persistChanges;
+
+  const handleSaveAll = async () => {
+    if (await persistChanges()) {
+      allowLeaveRef.current = true;
+      navigation.goBack();
     }
   };
 
@@ -328,6 +592,43 @@ export default function HouseholdEditScreen({ route, navigation }) {
     await Clipboard.setStringAsync(household.inviteCode);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleRegenerateCode = async () => {
+    const confirmed = await showConfirm({
+      title: 'Regenerate invite code',
+      message: 'The current code will stop working immediately. Anyone using it will need the new code to join.',
+      confirmLabel: 'Regenerate',
+      type: 'danger',
+    });
+    if (!confirmed) return;
+    setRegenerating(true);
+    try {
+      const code = await regenerateInviteCode(hhId);
+      setHousehold((h) => (h ? { ...h, inviteCode: code } : h));
+      notify('Invite code updated', 'A new code is now active.', { type: 'success' });
+    } catch (e) {
+      showAlert({ title: 'Error', message: e.message, type: 'error' });
+    } finally {
+      setRegenerating(false);
+    }
+  };
+
+  const handleTransferOwnership = async (uid, label) => {
+    const confirmed = await showConfirm({
+      title: 'Make owner',
+      message: `Make ${label} the owner of "${household?.name}"? You'll stay a member but lose owner controls.`,
+      confirmLabel: 'Make owner',
+      type: 'warning',
+    });
+    if (!confirmed) return;
+    try {
+      await transferHouseholdOwnership(hhId, uid);
+      setHousehold((h) => (h ? { ...h, createdBy: uid } : h));
+      notify('Ownership transferred', `${label} is now the owner.`, { type: 'success' });
+    } catch (e) {
+      showAlert({ title: 'Error', message: e.message, type: 'error' });
+    }
   };
 
   const handleLeave = async () => {
@@ -342,20 +643,51 @@ export default function HouseholdEditScreen({ route, navigation }) {
       await leaveHousehold(hhId, user.uid);
       await removeHousehold(hhId);
       notify('Left household', `You've left "${household?.name}".`, { type: 'info' });
+      allowLeaveRef.current = true;
       navigation.goBack();
     } catch (e) {
       showAlert({ title: 'Error', message: e.message, type: 'error' });
     }
   };
 
+  const handleRemoveMember = async (uid, label) => {
+    const confirmed = await showConfirm({
+      title: 'Remove member',
+      message: `Remove ${label} from "${household?.name}"? They can rejoin with the invite code.`,
+      confirmLabel: 'Remove',
+      type: 'danger',
+    });
+    if (!confirmed) return;
+    try {
+      await removeHouseholdMember(hhId, uid);
+      setHousehold((h) => {
+        if (!h) return h;
+        const profiles = { ...(h.memberProfiles || {}) };
+        delete profiles[uid];
+        return { ...h, members: (h.members || []).filter((m) => m !== uid), memberProfiles: profiles };
+      });
+      notify('Member removed', `${label} has been removed.`, { type: 'info' });
+    } catch (e) {
+      showAlert({ title: 'Error', message: e.message, type: 'error' });
+    }
+  };
+
   const isCreator = household?.createdBy === user?.uid;
-  const memberCount = household?.members?.length ?? 0;
+  const modalAnim = reduceMotion ? 'fade' : 'slide';
+
+  const foodTerm    = foodFilter.trim();
+  const nonFoodTerm = nonFoodFilter.trim();
+  const filteredFoodCats    = foodTerm    ? orderedFoodCats.filter((c) => matchesFilter(c, foodFilter))       : null;
+  const filteredNonFoodCats = nonFoodTerm ? orderedNonFoodCats.filter((c) => matchesFilter(c, nonFoodFilter)) : null;
 
   return (
     <View style={{ height: windowHeight, backgroundColor: colors.background, marginLeft: isDesktop ? SIDEBAR_WIDTH : 0 }}>
 
       {/* Nav bar */}
-      <View style={styles.navBar}>
+      <View
+        style={[styles.navBar, { paddingTop: insets.top + spacing.sm }]}
+        onLayout={(e) => setNavBarH(e.nativeEvent.layout.height)}
+      >
         <TouchableOpacity
           onPress={() => navigation.goBack()}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -370,16 +702,42 @@ export default function HouseholdEditScreen({ route, navigation }) {
 
       {loading ? (
         <ActivityIndicator color={colors.accent} style={{ marginTop: 60 }} />
+      ) : loadError ? (
+        <View style={styles.errorState}>
+          <Ionicons name="cloud-offline-outline" size={44} color={colors.textTertiary} />
+          <Text style={styles.errorStateTitle}>Couldn't load household</Text>
+          <Text style={styles.errorStateMsg}>
+            {loadError?.message || 'Something went wrong. Check your connection and try again.'}
+          </Text>
+          <TouchableOpacity
+            style={styles.retryButton}
+            onPress={loadHousehold}
+            accessibilityRole="button"
+            accessibilityLabel="Retry loading household"
+          >
+            <Ionicons name="refresh" size={16} color="#fff" />
+            <Text style={styles.retryButtonLabel}>Retry</Text>
+          </TouchableOpacity>
+        </View>
       ) : (
         <ScrollView
           ref={scrollRef}
-          style={{ flex: 1 }}
+          // Web: the ancestor flex chain doesn't reliably bound a flex:1 ScrollView,
+          // so pin it to the viewport minus the fixed nav bar and sticky save bar (web-scroll rule).
+          style={Platform.OS === 'web' ? { height: Math.max(windowHeight - navBarH - footerH, 0) } : { flex: 1 }}
           contentContainerStyle={[
             styles.scrollContent,
             isDesktop && { maxWidth: DESKTOP_MAX_CONTENT, alignSelf: 'center', width: '100%' },
           ]}
           showsVerticalScrollIndicator={false}
         >
+
+          {/* ═══ Household ═══ */}
+          <CollapsibleGroup
+            title="Household" icon="home-outline"
+            open={openGroups.household} onToggle={() => toggleGroup('household')}
+            styles={styles} colors={colors}
+          >
 
           {/* ── Name ── */}
           <Text style={styles.sectionLabel}>Household Name</Text>
@@ -418,6 +776,21 @@ export default function HouseholdEditScreen({ route, navigation }) {
               </TouchableOpacity>
             </View>
             <Text style={styles.inviteHint}>Share this code so others can join your household.</Text>
+            {isCreator && (
+              <TouchableOpacity
+                style={styles.regenerateBtn}
+                onPress={handleRegenerateCode}
+                disabled={regenerating}
+                accessibilityRole="button"
+                accessibilityLabel="Regenerate invite code"
+                accessibilityState={{ disabled: regenerating }}
+              >
+                <Ionicons name="refresh" size={14} color={regenerating ? colors.textTertiary : colors.danger} />
+                <Text style={[styles.regenerateBtnLabel, regenerating && { color: colors.textTertiary }]}>
+                  {regenerating ? 'Regenerating…' : 'Regenerate code'}
+                </Text>
+              </TouchableOpacity>
+            )}
           </View>
 
           {/* ── Members ── */}
@@ -451,11 +824,42 @@ export default function HouseholdEditScreen({ route, navigation }) {
                         <Text style={styles.youBadgeText}>You</Text>
                       </View>
                     )}
+                    {isCreator && !isYou && !isOwner && (
+                      <>
+                        <TouchableOpacity
+                          style={styles.memberActionBtn}
+                          onPress={() => handleTransferOwnership(uid, displayLabel)}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Make ${displayLabel} owner`}
+                        >
+                          <Ionicons name="ribbon-outline" size={18} color={colors.accent} />
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={styles.memberRemoveBtn}
+                          onPress={() => handleRemoveMember(uid, displayLabel)}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Remove ${displayLabel}`}
+                        >
+                          <Ionicons name="close-circle" size={20} color={colors.danger} />
+                        </TouchableOpacity>
+                      </>
+                    )}
                   </View>
                 </View>
               );
             })}
           </View>
+
+          </CollapsibleGroup>
+
+          {/* ═══ Pantry & Groceries ═══ */}
+          <CollapsibleGroup
+            title="Pantry & Groceries" icon="basket-outline"
+            open={openGroups.pantry} onToggle={() => toggleGroup('pantry')}
+            styles={styles} colors={colors}
+          >
 
           {/* ── Pantry Categories ── */}
           <View style={styles.sectionHeaderRow}>
@@ -472,45 +876,47 @@ export default function HouseholdEditScreen({ route, navigation }) {
           </View>
           <View style={[styles.card, { padding: 0 }]}>
             {enabledCategories !== null && (
-              <DraggableCategoryList
-                items={orderedFoodCats}
-                onReorder={reorderFoodCategories}
-                scrollRef={scrollRef}
-                renderItem={(cat) => {
-                  const isOn = enabledCategories.includes(cat.label);
-                  const isCustom = !PANTRY_CATEGORIES.some((c) => c.label === cat.label);
-                  return (
-                    <>
-                      <TouchableOpacity
-                        style={styles.categoryRowToggle}
-                        onPress={() => togglePantryCategory(cat.label)}
-                        accessibilityRole="switch"
-                        accessibilityState={{ checked: isOn }}
-                        accessibilityLabel={cat.label}
-                      >
-                        <Text style={styles.categoryRowIcon}>{cat.icon}</Text>
-                        <Text style={[styles.categoryRowLabel, !isOn && { opacity: 0.4 }]}>{cat.label}</Text>
-                        <Ionicons
-                          name={isOn ? 'checkmark-circle' : 'ellipse-outline'}
-                          size={21}
-                          color={isOn ? colors.accent : colors.textTertiary}
-                        />
-                      </TouchableOpacity>
-                      {isCustom && (
-                        <TouchableOpacity
-                          onPress={() => handleDeleteCustomCategory(cat.label)}
-                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                          accessibilityRole="button"
-                          accessibilityLabel={`Delete ${cat.label}`}
-                          style={styles.categoryDeleteBtn}
-                        >
-                          <Ionicons name="trash-outline" size={16} color={colors.danger} />
-                        </TouchableOpacity>
-                      )}
-                    </>
-                  );
-                }}
-              />
+              <>
+                <View style={styles.catSearchRow}>
+                  <Ionicons name="search-outline" size={16} color={colors.textTertiary} />
+                  <TextInput
+                    style={styles.catSearchInput}
+                    value={foodFilter}
+                    onChangeText={setFoodFilter}
+                    placeholder="Filter food categories…"
+                    placeholderTextColor={colors.textTertiary}
+                    autoCapitalize="none"
+                    accessibilityLabel="Filter food categories"
+                  />
+                  {!!foodTerm && (
+                    <TouchableOpacity
+                      onPress={() => setFoodFilter('')}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      accessibilityRole="button" accessibilityLabel="Clear filter"
+                    >
+                      <Ionicons name="close-circle" size={16} color={colors.textTertiary} />
+                    </TouchableOpacity>
+                  )}
+                </View>
+                {foodTerm ? (
+                  filteredFoodCats.length === 0 ? (
+                    <Text style={[styles.inviteHint, { padding: spacing.lg, textAlign: 'center' }]}>
+                      No categories match “{foodTerm}”.
+                    </Text>
+                  ) : filteredFoodCats.map((cat, i) => (
+                    <View key={cat.label} style={[styles.categoryRow, i > 0 && styles.categoryRowBorder]}>
+                      {renderFoodCatRow(cat)}
+                    </View>
+                  ))
+                ) : (
+                  <DraggableCategoryList
+                    items={orderedFoodCats}
+                    onReorder={reorderFoodCategories}
+                    scrollRef={scrollRef}
+                    renderItem={renderFoodCatRow}
+                  />
+                )}
+              </>
             )}
           </View>
 
@@ -529,45 +935,47 @@ export default function HouseholdEditScreen({ route, navigation }) {
           </View>
           <View style={[styles.card, { padding: 0 }]}>
             {enabledNonFoodCategories !== null && (
-              <DraggableCategoryList
-                items={orderedNonFoodCats}
-                onReorder={reorderNonFoodCategories}
-                scrollRef={scrollRef}
-                renderItem={(cat) => {
-                  const isOn = enabledNonFoodCategories.includes(cat.label);
-                  const isCustom = !NON_FOOD_CATEGORIES.some((c) => c.label === cat.label);
-                  return (
-                    <>
-                      <TouchableOpacity
-                        style={styles.categoryRowToggle}
-                        onPress={() => toggleNonFoodCategory(cat.label)}
-                        accessibilityRole="switch"
-                        accessibilityState={{ checked: isOn }}
-                        accessibilityLabel={cat.label}
-                      >
-                        <Text style={styles.categoryRowIcon}>{cat.icon}</Text>
-                        <Text style={[styles.categoryRowLabel, !isOn && { opacity: 0.4 }]}>{cat.label}</Text>
-                        <Ionicons
-                          name={isOn ? 'checkmark-circle' : 'ellipse-outline'}
-                          size={21}
-                          color={isOn ? colors.accent : colors.textTertiary}
-                        />
-                      </TouchableOpacity>
-                      {isCustom && (
-                        <TouchableOpacity
-                          onPress={() => handleDeleteCustomNonFoodCategory(cat.label)}
-                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                          accessibilityRole="button"
-                          accessibilityLabel={`Delete ${cat.label}`}
-                          style={styles.categoryDeleteBtn}
-                        >
-                          <Ionicons name="trash-outline" size={16} color={colors.danger} />
-                        </TouchableOpacity>
-                      )}
-                    </>
-                  );
-                }}
-              />
+              <>
+                <View style={styles.catSearchRow}>
+                  <Ionicons name="search-outline" size={16} color={colors.textTertiary} />
+                  <TextInput
+                    style={styles.catSearchInput}
+                    value={nonFoodFilter}
+                    onChangeText={setNonFoodFilter}
+                    placeholder="Filter non-food categories…"
+                    placeholderTextColor={colors.textTertiary}
+                    autoCapitalize="none"
+                    accessibilityLabel="Filter non-food categories"
+                  />
+                  {!!nonFoodTerm && (
+                    <TouchableOpacity
+                      onPress={() => setNonFoodFilter('')}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      accessibilityRole="button" accessibilityLabel="Clear filter"
+                    >
+                      <Ionicons name="close-circle" size={16} color={colors.textTertiary} />
+                    </TouchableOpacity>
+                  )}
+                </View>
+                {nonFoodTerm ? (
+                  filteredNonFoodCats.length === 0 ? (
+                    <Text style={[styles.inviteHint, { padding: spacing.lg, textAlign: 'center' }]}>
+                      No categories match “{nonFoodTerm}”.
+                    </Text>
+                  ) : filteredNonFoodCats.map((cat, i) => (
+                    <View key={cat.label} style={[styles.categoryRow, i > 0 && styles.categoryRowBorder]}>
+                      {renderNonFoodCatRow(cat)}
+                    </View>
+                  ))
+                ) : (
+                  <DraggableCategoryList
+                    items={orderedNonFoodCats}
+                    onReorder={reorderNonFoodCategories}
+                    scrollRef={scrollRef}
+                    renderItem={renderNonFoodCatRow}
+                  />
+                )}
+              </>
             )}
           </View>
 
@@ -629,6 +1037,15 @@ export default function HouseholdEditScreen({ route, navigation }) {
             </View>
             {!!unitError && <Text style={styles.errorText}>{unitError}</Text>}
           </View>
+
+          </CollapsibleGroup>
+
+          {/* ═══ Finance ═══ */}
+          <CollapsibleGroup
+            title="Finance" icon="wallet-outline"
+            open={openGroups.finance} onToggle={() => toggleGroup('finance')}
+            styles={styles} colors={colors}
+          >
 
           {/* ── Bill Categories ── */}
           <View style={styles.sectionHeaderRow}>
@@ -704,19 +1121,25 @@ export default function HouseholdEditScreen({ route, navigation }) {
             ))}
           </View>
 
-          {/* ── Emergency Contacts ── */}
-          <View style={styles.sectionHeaderRow}>
-            <Text style={styles.sectionLabel}>Emergency Contacts</Text>
-            <TouchableOpacity
-              style={styles.addContactBtn}
-              onPress={openAddContact}
-              accessibilityRole="button"
-              accessibilityLabel="Add emergency contact"
-            >
-              <Ionicons name="add" size={15} color={colors.accent} />
-              <Text style={styles.addContactBtnLabel}>Add</Text>
-            </TouchableOpacity>
-          </View>
+          </CollapsibleGroup>
+
+          {/* ═══ Emergency ═══ */}
+          <CollapsibleGroup
+            title="Emergency Contacts" icon="medkit-outline"
+            open={openGroups.emergency} onToggle={() => toggleGroup('emergency')}
+            styles={styles} colors={colors}
+            action={(
+              <TouchableOpacity
+                style={styles.addContactBtn}
+                onPress={openAddContact}
+                accessibilityRole="button"
+                accessibilityLabel="Add emergency contact"
+              >
+                <Ionicons name="add" size={15} color={colors.accent} />
+                <Text style={styles.addContactBtnLabel}>Add</Text>
+              </TouchableOpacity>
+            )}
+          >
           <View style={[styles.card, contacts.length === 0 && { paddingVertical: spacing.lg }]}>
             {contacts.length === 0 ? (
               <Text style={[styles.inviteHint, { textAlign: 'center' }]}>No emergency contacts yet.</Text>
@@ -754,6 +1177,15 @@ export default function HouseholdEditScreen({ route, navigation }) {
               ))
             )}
           </View>
+
+          </CollapsibleGroup>
+
+          {/* ═══ Integrations ═══ */}
+          <CollapsibleGroup
+            title="Integrations" icon="hardware-chip-outline"
+            open={openGroups.integrations} onToggle={() => toggleGroup('integrations')}
+            styles={styles} colors={colors}
+          >
 
           {/* ── OpenRouter API Key ── */}
           <Text style={styles.sectionLabel}>OpenRouter API Key</Text>
@@ -832,43 +1264,77 @@ export default function HouseholdEditScreen({ route, navigation }) {
             </Text>
           </View>
 
-          {/* ── Govee API Key ── */}
-          <Text style={styles.sectionLabel}>Govee API Key</Text>
+          {/* ── Govee Smart Lights ── */}
+          <Text style={styles.sectionLabel}>Govee Smart Lights</Text>
           <View style={styles.card}>
-            <View style={styles.goveeKeyRow}>
-              <TextInput
-                style={[styles.textInput, { flex: 1 }]}
-                value={goveeApiKey}
-                onChangeText={setGoveeApiKey}
-                placeholder="Paste your Govee API key…"
-                placeholderTextColor={colors.textTertiary}
-                secureTextEntry={!showGoveeKey}
-                autoCapitalize="none"
-                autoCorrect={false}
-                accessibilityLabel="Govee API key"
+            <View style={styles.integrationToggleRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.integrationToggleTitle}>Enable Govee</Text>
+                <Text style={styles.inviteHint}>Shows the Lights page and enables Govee light control.</Text>
+              </View>
+              <Switch
+                value={goveeEnabled}
+                onValueChange={setGoveeEnabled}
+                trackColor={{ false: colors.muted, true: colors.accent }}
+                thumbColor="#fff"
+                ios_backgroundColor={colors.muted}
+                accessibilityLabel="Enable Govee integration"
               />
-              <TouchableOpacity
-                onPress={() => setShowGoveeKey((v) => !v)}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                accessibilityRole="button"
-                accessibilityLabel={showGoveeKey ? 'Hide API key' : 'Show API key'}
-                style={styles.goveeKeyToggle}
-              >
-                <Ionicons
-                  name={showGoveeKey ? 'eye-off-outline' : 'eye-outline'}
-                  size={20}
-                  color={colors.textTertiary}
-                />
-              </TouchableOpacity>
             </View>
-            <Text style={styles.inviteHint}>
-              Found in the Govee Home app under Profile → About Us → Apply for API key. Stored securely per household.
-            </Text>
+            {goveeEnabled && (
+              <>
+                <View style={styles.goveeKeyRow}>
+                  <TextInput
+                    style={[styles.textInput, { flex: 1 }]}
+                    value={goveeApiKey}
+                    onChangeText={setGoveeApiKey}
+                    placeholder="Paste your Govee API key…"
+                    placeholderTextColor={colors.textTertiary}
+                    secureTextEntry={!showGoveeKey}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    accessibilityLabel="Govee API key"
+                  />
+                  <TouchableOpacity
+                    onPress={() => setShowGoveeKey((v) => !v)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    accessibilityRole="button"
+                    accessibilityLabel={showGoveeKey ? 'Hide API key' : 'Show API key'}
+                    style={styles.goveeKeyToggle}
+                  >
+                    <Ionicons
+                      name={showGoveeKey ? 'eye-off-outline' : 'eye-outline'}
+                      size={20}
+                      color={colors.textTertiary}
+                    />
+                  </TouchableOpacity>
+                </View>
+                <Text style={styles.inviteHint}>
+                  Found in the Govee Home app under Profile → About Us → Apply for API key. Stored securely per household.
+                </Text>
+              </>
+            )}
           </View>
 
-          {/* ── Xiaomi (Mi Home) Credentials ── */}
+          {/* ── Xiaomi (Mi Home) ── */}
           <Text style={styles.sectionLabel}>Xiaomi (Mi Home)</Text>
           <View style={styles.card}>
+            <View style={styles.integrationToggleRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.integrationToggleTitle}>Enable Xiaomi</Text>
+                <Text style={styles.inviteHint}>Shows the Xiaomi page and enables Mi Home device control.</Text>
+              </View>
+              <Switch
+                value={xiaomiEnabled}
+                onValueChange={setXiaomiEnabled}
+                trackColor={{ false: colors.muted, true: colors.accent }}
+                thumbColor="#fff"
+                ios_backgroundColor={colors.muted}
+                accessibilityLabel="Enable Xiaomi integration"
+              />
+            </View>
+            {xiaomiEnabled && (
+              <>
             <Text style={styles.modalLabel}>User ID</Text>
             <TextInput
               style={styles.textInput}
@@ -943,38 +1409,57 @@ export default function HouseholdEditScreen({ route, navigation }) {
             <Text style={styles.inviteHint}>
               Get User ID, Service Token, and ssecurity from the Mi Home app using a token extractor (e.g. xiaomi-cloud-tokens-extractor). Shared with your household and synced to each device.
             </Text>
+              </>
+            )}
           </View>
 
-          {/* ── Danger zone ── */}
-          <Text style={[styles.sectionLabel, { color: colors.danger }]}>Danger Zone</Text>
+          </CollapsibleGroup>
+
+          {/* ═══ Danger Zone ═══ */}
+          <CollapsibleGroup
+            title="Danger Zone" icon="warning-outline"
+            open={openGroups.danger} onToggle={() => toggleGroup('danger')}
+            styles={styles} colors={colors}
+          >
           <View style={styles.card}>
             <TouchableOpacity style={styles.leaveButton} onPress={handleLeave} accessibilityRole="button">
               <Ionicons name="exit-outline" size={18} color={colors.danger} />
               <Text style={styles.leaveButtonLabel}>Leave Household</Text>
             </TouchableOpacity>
           </View>
-
-          {/* ── Save ── */}
-          <TouchableOpacity
-            style={[styles.updateButton, saving && { opacity: 0.5 }]}
-            onPress={handleSaveAll}
-            disabled={saving}
-            accessibilityRole="button"
-          >
-            <Text style={styles.updateButtonLabel}>{saving ? 'Saving…' : 'Update Changes'}</Text>
-          </TouchableOpacity>
+          </CollapsibleGroup>
 
         </ScrollView>
+      )}
+
+      {/* ── Sticky save bar (disabled until there are unsaved changes) ── */}
+      {!loading && !loadError && (
+        <View
+          style={[styles.saveBar, { paddingBottom: insets.bottom + spacing.md }]}
+          onLayout={(e) => setFooterH(e.nativeEvent.layout.height)}
+        >
+          <View style={isDesktop ? { maxWidth: DESKTOP_MAX_CONTENT, alignSelf: 'center', width: '100%' } : null}>
+            <TouchableOpacity
+              style={[styles.updateButton, { marginTop: 0 }, (!isDirty || saving) && styles.updateButtonDisabled]}
+              onPress={handleSaveAll}
+              disabled={!isDirty || saving}
+              accessibilityRole="button"
+              accessibilityState={{ disabled: !isDirty || saving }}
+            >
+              <Text style={styles.updateButtonLabel}>{saving ? 'Saving…' : isDirty ? 'Save Changes' : 'No Changes'}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       )}
 
       {/* ── Finance Category Modal ── */}
       <Modal
         visible={financeCatType !== null}
         transparent
-        animationType="slide"
+        animationType={modalAnim}
         onRequestClose={() => setFinanceCatType(null)}
       >
-        <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={styles.modalSheet}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>
@@ -985,20 +1470,11 @@ export default function HouseholdEditScreen({ route, navigation }) {
               </TouchableOpacity>
             </View>
 
-            <Text style={styles.modalLabel}>Icon</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.iconPicker} contentContainerStyle={styles.iconPickerContent}>
-              {FINANCE_ICONS.map((ic) => (
-                <TouchableOpacity
-                  key={ic}
-                  style={[styles.iconOption, financeCatForm.icon === ic && styles.iconOptionSelected]}
-                  onPress={() => setFinanceCatForm((f) => ({ ...f, icon: ic }))}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Select icon ${ic}`}
-                >
-                  <Text style={styles.iconOptionText}>{ic}</Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
+            <IconPicker
+              icons={FINANCE_ICONS}
+              value={financeCatForm.icon}
+              onChange={(ic) => setFinanceCatForm((f) => ({ ...f, icon: ic }))}
+            />
 
             <Text style={styles.modalLabel}>Category Name *</Text>
             <TextInput
@@ -1023,17 +1499,17 @@ export default function HouseholdEditScreen({ route, navigation }) {
               <Text style={styles.updateButtonLabel}>Add Category</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* ── Add Pantry Category Modal ── */}
       <Modal
         visible={catModal}
         transparent
-        animationType="slide"
+        animationType={modalAnim}
         onRequestClose={() => setCatModal(false)}
       >
-        <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={styles.modalSheet}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>{catModalType === 'non-food' ? 'Add Non-Food Category' : 'Add Food Category'}</Text>
@@ -1042,20 +1518,11 @@ export default function HouseholdEditScreen({ route, navigation }) {
               </TouchableOpacity>
             </View>
 
-            <Text style={styles.modalLabel}>Icon</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.iconPicker} contentContainerStyle={styles.iconPickerContent}>
-              {CATEGORY_ICONS.map((ic) => (
-                <TouchableOpacity
-                  key={ic}
-                  style={[styles.iconOption, catForm.icon === ic && styles.iconOptionSelected]}
-                  onPress={() => setCatForm((f) => ({ ...f, icon: ic }))}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Select icon ${ic}`}
-                >
-                  <Text style={styles.iconOptionText}>{ic}</Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
+            <IconPicker
+              icons={CATEGORY_ICONS}
+              value={catForm.icon}
+              onChange={(ic) => setCatForm((f) => ({ ...f, icon: ic }))}
+            />
 
             <Text style={styles.modalLabel}>Category Name *</Text>
             <TextInput
@@ -1080,17 +1547,17 @@ export default function HouseholdEditScreen({ route, navigation }) {
               <Text style={styles.updateButtonLabel}>Add Category</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* ── Contact Modal ── */}
       <Modal
         visible={!!contactModal}
         transparent
-        animationType="slide"
+        animationType={modalAnim}
         onRequestClose={() => setContactModal(null)}
       >
-        <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={styles.modalSheet}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>
@@ -1102,20 +1569,11 @@ export default function HouseholdEditScreen({ route, navigation }) {
             </View>
 
             {/* Icon picker */}
-            <Text style={styles.modalLabel}>Icon</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.iconPicker} contentContainerStyle={styles.iconPickerContent}>
-              {CONTACT_ICONS.map((ic) => (
-                <TouchableOpacity
-                  key={ic}
-                  style={[styles.iconOption, contactForm.icon === ic && styles.iconOptionSelected]}
-                  onPress={() => setContactForm((f) => ({ ...f, icon: ic }))}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Select icon ${ic}`}
-                >
-                  <Text style={styles.iconOptionText}>{ic}</Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
+            <IconPicker
+              icons={CONTACT_ICONS}
+              value={contactForm.icon}
+              onChange={(ic) => setContactForm((f) => ({ ...f, icon: ic }))}
+            />
 
             {/* Name */}
             <Text style={styles.modalLabel}>Name *</Text>
@@ -1184,7 +1642,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
               <Text style={styles.updateButtonLabel}>{contactSaving ? 'Saving…' : 'Save Contact'}</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
@@ -1193,12 +1651,51 @@ export default function HouseholdEditScreen({ route, navigation }) {
 const makeStyles = (colors) => StyleSheet.create({
   navBar: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: spacing.xl, paddingTop: 56, paddingBottom: spacing.md,
+    paddingHorizontal: spacing.xl, paddingBottom: spacing.md, // paddingTop set inline from safe-area insets
     backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.border,
   },
   navTitle: { ...type.h4, color: colors.textPrimary },
 
-  scrollContent: { padding: spacing.xl, paddingBottom: 200, gap: spacing.md },
+  scrollContent: { padding: spacing.xl, paddingBottom: spacing.xl, gap: spacing.md },
+
+  group: {
+    backgroundColor: colors.surface, borderRadius: radius.xl,
+    borderWidth: 1, borderColor: colors.border, overflow: 'hidden',
+  },
+  groupHeader: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: spacing.lg, paddingVertical: spacing.md,
+  },
+  groupHeaderMain: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, flex: 1 },
+  groupHeaderRight: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  groupIconRing: {
+    width: 32, height: 32, borderRadius: radius.full,
+    backgroundColor: colors.accentSoft, alignItems: 'center', justifyContent: 'center',
+  },
+  groupTitle: { ...type.bodyMed, color: colors.textPrimary, fontWeight: '700' },
+  groupBody: {
+    paddingHorizontal: spacing.lg, paddingBottom: spacing.lg, gap: spacing.md,
+    borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.md,
+  },
+
+  saveBar: {
+    paddingHorizontal: spacing.xl, paddingTop: spacing.md,
+    backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border,
+  },
+  updateButtonDisabled: { backgroundColor: colors.muted, opacity: Platform.OS === 'web' ? 0.6 : 1 },
+
+  errorState: {
+    flex: 1, alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: spacing.xxl, gap: spacing.sm,
+  },
+  errorStateTitle: { ...type.h4, color: colors.textPrimary, marginTop: spacing.sm },
+  errorStateMsg:   { ...type.body, color: colors.textTertiary, textAlign: 'center' },
+  retryButton: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+    backgroundColor: colors.accent, borderRadius: radius.md,
+    paddingHorizontal: spacing.xl, paddingVertical: spacing.md, marginTop: spacing.md,
+  },
+  retryButtonLabel: { ...type.bodyMed, color: '#fff', fontWeight: '700' },
 
   sectionLabel: {
     ...type.label, color: colors.textSecondary,
@@ -1221,6 +1718,9 @@ const makeStyles = (colors) => StyleSheet.create({
     alignItems: 'center', justifyContent: 'center', marginTop: spacing.sm,
   },
   updateButtonLabel: { ...type.bodyMed, color: '#fff', fontWeight: '700' },
+
+  integrationToggleRow:   { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  integrationToggleTitle: { ...type.body, color: colors.textPrimary, fontWeight: '600' },
 
   goveeKeyRow:    { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   goveeKeyToggle: { padding: spacing.sm },
@@ -1247,6 +1747,11 @@ const makeStyles = (colors) => StyleSheet.create({
   },
   copyButtonLabel: { ...type.label, color: colors.accent, fontWeight: '700' },
   inviteHint: { ...type.caption, color: colors.textTertiary },
+  regenerateBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start',
+    paddingVertical: 4,
+  },
+  regenerateBtnLabel: { ...type.label, color: colors.danger, fontWeight: '600' },
 
   memberRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingVertical: 4 },
   memberRowBorder: { borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.md, marginTop: 0 },
@@ -1257,7 +1762,9 @@ const makeStyles = (colors) => StyleSheet.create({
   },
   memberName:   { ...type.bodySm, color: colors.textPrimary, fontWeight: '600' },
   memberEmail:  { ...type.caption, color: colors.textTertiary, marginTop: 1 },
-  memberBadges: { flexDirection: 'row', gap: 6 },
+  memberBadges: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  memberRemoveBtn: { padding: 2 },
+  memberActionBtn: { padding: 2 },
   ownerBadge: {
     backgroundColor: colors.amberSoft, borderRadius: radius.sm,
     paddingHorizontal: 8, paddingVertical: 3,
@@ -1311,6 +1818,12 @@ const makeStyles = (colors) => StyleSheet.create({
   categoryRowIcon:   { fontSize: 18, width: 24, textAlign: 'center' },
   categoryRowLabel:  { ...type.bodyMed, color: colors.textPrimary, flex: 1 },
   categoryDeleteBtn: { paddingLeft: spacing.sm },
+  catSearchRow: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+    paddingHorizontal: spacing.lg, paddingVertical: spacing.sm,
+    borderBottomWidth: 1, borderBottomColor: colors.border,
+  },
+  catSearchInput: { flex: 1, ...type.body, color: colors.textPrimary, paddingVertical: 4 },
 
   leaveButton: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.md,
@@ -1375,18 +1888,6 @@ const makeStyles = (colors) => StyleSheet.create({
   modalInputMulti: {
     height: 80, paddingTop: spacing.md, textAlignVertical: 'top',
   },
-  iconPicker:        { marginVertical: 4 },
-  iconPickerContent: { gap: 8, paddingVertical: 4 },
-  iconOption: {
-    width: 44, height: 44, borderRadius: radius.md,
-    borderWidth: 1, borderColor: colors.border,
-    backgroundColor: colors.surfaceElevated,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  iconOptionSelected: {
-    borderColor: colors.accent, backgroundColor: colors.accentSoft,
-  },
-  iconOptionText: { fontSize: 22 },
 
   chipRow:        { marginVertical: 4 },
   chipRowContent: { gap: 8, paddingVertical: 4 },

@@ -41,6 +41,9 @@ import {
   getHouseholdPrivate,
   getHouseholdWithPrivate,
   migrateHouseholdSecrets,
+  removeHouseholdMember,
+  regenerateInviteCode,
+  transferHouseholdOwnership,
   joinHousehold,
   upsertMemberProfile,
   updateHouseholdUnits,
@@ -48,7 +51,10 @@ import {
   updateHouseholdOpenRouterApiKey,
   updateHouseholdAiModel,
   updateHouseholdXiaomiCreds,
+  updateHouseholdIntegrationFlags,
+  subscribeHouseholdPrivate,
 } from '../services/firestore';
+import { onSnapshot } from 'firebase/firestore';
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -338,6 +344,38 @@ describe('migrateHouseholdSecrets', () => {
   });
 });
 
+// ── removeHouseholdMember ─────────────────────────────────────────────────────
+
+describe('removeHouseholdMember', () => {
+  it('removes the member from the array and deletes their profile', async () => {
+    mockGetDoc.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ createdBy: 'owner', members: ['owner', 'u2'] }),
+    });
+    await removeHouseholdMember('hh1', 'u2');
+    expect(mockUpdateDoc).toHaveBeenCalledWith('households/hh1', { members: ['owner'] });
+    expect(mockUpdateDoc).toHaveBeenCalledWith(
+      'households/hh1/private/data',
+      { 'memberProfiles.u2': 'DELETE_FIELD' },
+    );
+  });
+
+  it('refuses to remove the owner', async () => {
+    mockGetDoc.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ createdBy: 'owner', members: ['owner', 'u2'] }),
+    });
+    await expect(removeHouseholdMember('hh1', 'owner')).rejects.toThrow('owner cannot be removed');
+    expect(mockUpdateDoc).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when the household is missing', async () => {
+    mockGetDoc.mockResolvedValue({ exists: () => false });
+    await removeHouseholdMember('hh1', 'u2');
+    expect(mockUpdateDoc).not.toHaveBeenCalled();
+  });
+});
+
 // ── updateHouseholdUnits ──────────────────────────────────────────────────────
 
 describe('updateHouseholdUnits', () => {
@@ -467,5 +505,89 @@ describe('updateHouseholdXiaomiCreds', () => {
       { xiaomiCreds: 'DELETE_FIELD' },
       { merge: true },
     );
+  });
+});
+
+// ── updateHouseholdIntegrationFlags ───────────────────────────────────────────
+
+describe('updateHouseholdIntegrationFlags', () => {
+  it('merges the enabled flags into the private doc', async () => {
+    await updateHouseholdIntegrationFlags('hh1', { goveeEnabled: true, xiaomiEnabled: false });
+    expect(mockSetDoc).toHaveBeenCalledWith(
+      'households/hh1/private/data',
+      { goveeEnabled: true, xiaomiEnabled: false },
+      { merge: true },
+    );
+  });
+});
+
+// ── subscribeHouseholdPrivate ─────────────────────────────────────────────────
+
+describe('subscribeHouseholdPrivate', () => {
+  it('subscribes to the private doc and returns the unsubscribe fn', () => {
+    const unsub = jest.fn();
+    const cb = jest.fn();
+    onSnapshot.mockImplementation((ref, handler) => {
+      handler({ exists: () => true, data: () => ({ goveeEnabled: true }) });
+      return unsub;
+    });
+    const result = subscribeHouseholdPrivate('hh1', cb);
+    expect(onSnapshot).toHaveBeenCalledWith('households/hh1/private/data', expect.any(Function));
+    expect(cb).toHaveBeenCalledWith({ goveeEnabled: true });
+    expect(result).toBe(unsub);
+  });
+
+  it('calls back with an empty object when the doc is missing', () => {
+    const cb = jest.fn();
+    onSnapshot.mockImplementation((ref, handler) => {
+      handler({ exists: () => false });
+      return jest.fn();
+    });
+    subscribeHouseholdPrivate('hh1', cb);
+    expect(cb).toHaveBeenCalledWith({});
+  });
+});
+
+// ── regenerateInviteCode ──────────────────────────────────────────────────────
+
+describe('regenerateInviteCode', () => {
+  beforeEach(() => {
+    // Deterministic bytes so we can assert the shape without a real CSPRNG.
+    global.crypto = { getRandomValues: (arr) => { for (let i = 0; i < arr.length; i++) arr[i] = i; return arr; } };
+  });
+
+  it('writes a fresh 6-char uppercase code and returns it', async () => {
+    const code = await regenerateInviteCode('hh1');
+    expect(code).toHaveLength(6);
+    expect(code).toMatch(/^[A-Z0-9]{6}$/);
+    expect(mockUpdateDoc).toHaveBeenCalledWith('households/hh1', { inviteCode: code });
+  });
+});
+
+// ── transferHouseholdOwnership ────────────────────────────────────────────────
+
+describe('transferHouseholdOwnership', () => {
+  it('sets createdBy to the new owner when they are a member', async () => {
+    mockGetDoc.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ createdBy: 'owner', members: ['owner', 'u2'] }),
+    });
+    await transferHouseholdOwnership('hh1', 'u2');
+    expect(mockUpdateDoc).toHaveBeenCalledWith('households/hh1', { createdBy: 'u2' });
+  });
+
+  it('rejects when the new owner is not a member', async () => {
+    mockGetDoc.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ createdBy: 'owner', members: ['owner'] }),
+    });
+    await expect(transferHouseholdOwnership('hh1', 'stranger')).rejects.toThrow('must be a household member');
+    expect(mockUpdateDoc).not.toHaveBeenCalled();
+  });
+
+  it('rejects when the household is missing', async () => {
+    mockGetDoc.mockResolvedValue({ exists: () => false });
+    await expect(transferHouseholdOwnership('hh1', 'u2')).rejects.toThrow('not found');
+    expect(mockUpdateDoc).not.toHaveBeenCalled();
   });
 });
