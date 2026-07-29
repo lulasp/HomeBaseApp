@@ -51,7 +51,10 @@ import {
   updateHouseholdOpenRouterApiKey,
   updateHouseholdAiModel,
   updateHouseholdXiaomiCreds,
+  updateHouseholdIntegrationFlags,
+  subscribeHouseholdPrivate,
 } from '../services/firestore';
+import { onSnapshot } from 'firebase/firestore';
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -502,6 +505,46 @@ describe('updateHouseholdXiaomiCreds', () => {
       { xiaomiCreds: 'DELETE_FIELD' },
       { merge: true },
     );
+  });
+});
+
+// ── updateHouseholdIntegrationFlags ───────────────────────────────────────────
+
+describe('updateHouseholdIntegrationFlags', () => {
+  it('merges the enabled flags into the private doc', async () => {
+    await updateHouseholdIntegrationFlags('hh1', { goveeEnabled: true, xiaomiEnabled: false });
+    expect(mockSetDoc).toHaveBeenCalledWith(
+      'households/hh1/private/data',
+      { goveeEnabled: true, xiaomiEnabled: false },
+      { merge: true },
+    );
+  });
+});
+
+// ── subscribeHouseholdPrivate ─────────────────────────────────────────────────
+
+describe('subscribeHouseholdPrivate', () => {
+  it('subscribes to the private doc and returns the unsubscribe fn', () => {
+    const unsub = jest.fn();
+    const cb = jest.fn();
+    onSnapshot.mockImplementation((ref, handler) => {
+      handler({ exists: () => true, data: () => ({ goveeEnabled: true }) });
+      return unsub;
+    });
+    const result = subscribeHouseholdPrivate('hh1', cb);
+    expect(onSnapshot).toHaveBeenCalledWith('households/hh1/private/data', expect.any(Function));
+    expect(cb).toHaveBeenCalledWith({ goveeEnabled: true });
+    expect(result).toBe(unsub);
+  });
+
+  it('calls back with an empty object when the doc is missing', () => {
+    const cb = jest.fn();
+    onSnapshot.mockImplementation((ref, handler) => {
+      handler({ exists: () => false });
+      return jest.fn();
+    });
+    subscribeHouseholdPrivate('hh1', cb);
+    expect(cb).toHaveBeenCalledWith({});
   });
 });
 

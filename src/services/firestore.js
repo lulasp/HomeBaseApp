@@ -251,6 +251,16 @@ export const updateHouseholdXiaomiCreds = (householdId, creds = {}) => {
   }, { merge: true });
 };
 
+// Per-integration on/off flags, stored alongside the keys in the private doc so a
+// single subscription resolves enabled-state. Absent flag ⇒ enabled if configured.
+export const updateHouseholdIntegrationFlags = (householdId, { goveeEnabled, xiaomiEnabled }) =>
+  setDoc(privateRef(householdId), { goveeEnabled, xiaomiEnabled }, { merge: true });
+
+// Live members-only private doc (secrets, member profiles, integration flags).
+// Calls back with the doc data (or {}); returns the unsubscribe fn.
+export const subscribeHouseholdPrivate = (householdId, callback) =>
+  onSnapshot(privateRef(householdId), (snap) => callback(snap.exists() ? snap.data() : {}));
+
 export const updateHouseholdAiModel = (householdId, aiModel) =>
   updateDoc(doc(db, 'households', householdId), { aiModel });
 

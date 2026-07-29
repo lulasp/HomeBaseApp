@@ -5,6 +5,7 @@ import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, initialWindowMetrics } from 'react-native-safe-area-context';
 import { AuthProvider } from './src/context/AuthContext';
+import { HouseholdProvider } from './src/context/HouseholdContext';
 import { ThemeProvider, useTheme } from './src/context/ThemeContext';
 import { AlertProvider } from './src/context/AlertContext';
 import { NotificationProvider } from './src/context/NotificationContext';
@@ -27,6 +28,7 @@ export default function App() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider initialMetrics={initialWindowMetrics}>
         <AuthProvider>
+          <HouseholdProvider>
           <ThemeProvider>
             <AlertProvider>
               <NotificationProvider>
@@ -38,6 +40,7 @@ export default function App() {
               </NotificationProvider>
             </AlertProvider>
           </ThemeProvider>
+          </HouseholdProvider>
         </AuthProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

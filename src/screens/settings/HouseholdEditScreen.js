@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet,
-  ActivityIndicator, Platform, Modal, KeyboardAvoidingView, AccessibilityInfo,
+  ActivityIndicator, Platform, Modal, KeyboardAvoidingView, AccessibilityInfo, Switch,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
@@ -15,7 +15,7 @@ import {
   regenerateInviteCode, transferHouseholdOwnership, updateHouseholdPantryCategories,
   updateHouseholdNonFoodCategories, updateHouseholdFinanceCategories, updateHouseholdGoveeApiKey,
   updateHouseholdOpenRouterApiKey, updateHouseholdAiModel,
-  updateHouseholdUnits, upsertMemberProfile, updateHouseholdXiaomiCreds,
+  updateHouseholdUnits, upsertMemberProfile, updateHouseholdXiaomiCreds, updateHouseholdIntegrationFlags,
   subscribeEmergencyContacts, addEmergencyContact, updateEmergencyContact, deleteEmergencyContact,
 } from '../../services/firestore';
 import { saveCredentials as saveXiaomiCredentials } from '../../services/xiaomi';
@@ -140,6 +140,8 @@ export default function HouseholdEditScreen({ route, navigation }) {
   const [contactSaving, setContactSaving]         = useState(false);
   const [goveeApiKey, setGoveeApiKey]             = useState('');
   const [showGoveeKey, setShowGoveeKey]           = useState(false);
+  const [goveeEnabled, setGoveeEnabled]           = useState(false);
+  const [xiaomiEnabled, setXiaomiEnabled]         = useState(false);
   const [openRouterApiKey, setOpenRouterApiKey]   = useState('');
   const [showOpenRouterKey, setShowOpenRouterKey] = useState(false);
   const [xiaomiCreds, setXiaomiCreds]             = useState(BLANK_XIAOMI);
@@ -218,7 +220,11 @@ export default function HouseholdEditScreen({ route, navigation }) {
         setCustomExpenseCats(hh?.expenseCustomCategories ?? []);
         setGoveeApiKey(hh?.goveeApiKey ?? '');
         setOpenRouterApiKey(hh?.openRouterApiKey ?? '');
-        setXiaomiCreds({ ...BLANK_XIAOMI, ...(hh?.xiaomiCreds ?? {}) });
+        const xc = hh?.xiaomiCreds ?? {};
+        setXiaomiCreds({ ...BLANK_XIAOMI, ...xc });
+        // Absent flag ⇒ enabled if already configured (see HouseholdContext).
+        setGoveeEnabled(hh?.goveeEnabled ?? !!hh?.goveeApiKey);
+        setXiaomiEnabled(hh?.xiaomiEnabled ?? !!(xc.userId || xc.serviceToken || xc.ssecurity));
         setAiModel(hh?.aiModel ?? DEFAULT_AI_MODEL);
         setEnabledUnits(hh?.enabledUnits ?? UNITS);
         setCustomUnits(hh?.customUnits ?? []);
@@ -356,11 +362,13 @@ export default function HouseholdEditScreen({ route, navigation }) {
     enabledUnits,
     customUnits,
     xiaomiCreds,
+    goveeEnabled,
+    xiaomiEnabled,
   }), [
     nameInput, enabledCategories, customCategories, orderedFoodCats,
     enabledNonFoodCategories, customNonFoodCategories, orderedNonFoodCats,
     customBillCats, customExpenseCats, goveeApiKey, openRouterApiKey,
-    aiModel, enabledUnits, customUnits, xiaomiCreds,
+    aiModel, enabledUnits, customUnits, xiaomiCreds, goveeEnabled, xiaomiEnabled,
   ]);
 
   // Capture the baseline once the household has loaded.
@@ -546,6 +554,11 @@ export default function HouseholdEditScreen({ route, navigation }) {
     if (changed(snap.xiaomiCreds, base.xiaomiCreds)) {
       writes.push(updateHouseholdXiaomiCreds(hhId, snap.xiaomiCreds));
       writes.push(saveXiaomiCredentials(snap.xiaomiCreds)); // sync to this device's cache
+    }
+    if (changed(snap.goveeEnabled, base.goveeEnabled) || changed(snap.xiaomiEnabled, base.xiaomiEnabled)) {
+      writes.push(updateHouseholdIntegrationFlags(hhId, {
+        goveeEnabled: snap.goveeEnabled, xiaomiEnabled: snap.xiaomiEnabled,
+      }));
     }
 
     if (writes.length === 0) return true;
@@ -1251,43 +1264,77 @@ export default function HouseholdEditScreen({ route, navigation }) {
             </Text>
           </View>
 
-          {/* ── Govee API Key ── */}
-          <Text style={styles.sectionLabel}>Govee API Key</Text>
+          {/* ── Govee Smart Lights ── */}
+          <Text style={styles.sectionLabel}>Govee Smart Lights</Text>
           <View style={styles.card}>
-            <View style={styles.goveeKeyRow}>
-              <TextInput
-                style={[styles.textInput, { flex: 1 }]}
-                value={goveeApiKey}
-                onChangeText={setGoveeApiKey}
-                placeholder="Paste your Govee API key…"
-                placeholderTextColor={colors.textTertiary}
-                secureTextEntry={!showGoveeKey}
-                autoCapitalize="none"
-                autoCorrect={false}
-                accessibilityLabel="Govee API key"
+            <View style={styles.integrationToggleRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.integrationToggleTitle}>Enable Govee</Text>
+                <Text style={styles.inviteHint}>Shows the Lights page and enables Govee light control.</Text>
+              </View>
+              <Switch
+                value={goveeEnabled}
+                onValueChange={setGoveeEnabled}
+                trackColor={{ false: colors.muted, true: colors.accent }}
+                thumbColor="#fff"
+                ios_backgroundColor={colors.muted}
+                accessibilityLabel="Enable Govee integration"
               />
-              <TouchableOpacity
-                onPress={() => setShowGoveeKey((v) => !v)}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                accessibilityRole="button"
-                accessibilityLabel={showGoveeKey ? 'Hide API key' : 'Show API key'}
-                style={styles.goveeKeyToggle}
-              >
-                <Ionicons
-                  name={showGoveeKey ? 'eye-off-outline' : 'eye-outline'}
-                  size={20}
-                  color={colors.textTertiary}
-                />
-              </TouchableOpacity>
             </View>
-            <Text style={styles.inviteHint}>
-              Found in the Govee Home app under Profile → About Us → Apply for API key. Stored securely per household.
-            </Text>
+            {goveeEnabled && (
+              <>
+                <View style={styles.goveeKeyRow}>
+                  <TextInput
+                    style={[styles.textInput, { flex: 1 }]}
+                    value={goveeApiKey}
+                    onChangeText={setGoveeApiKey}
+                    placeholder="Paste your Govee API key…"
+                    placeholderTextColor={colors.textTertiary}
+                    secureTextEntry={!showGoveeKey}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    accessibilityLabel="Govee API key"
+                  />
+                  <TouchableOpacity
+                    onPress={() => setShowGoveeKey((v) => !v)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    accessibilityRole="button"
+                    accessibilityLabel={showGoveeKey ? 'Hide API key' : 'Show API key'}
+                    style={styles.goveeKeyToggle}
+                  >
+                    <Ionicons
+                      name={showGoveeKey ? 'eye-off-outline' : 'eye-outline'}
+                      size={20}
+                      color={colors.textTertiary}
+                    />
+                  </TouchableOpacity>
+                </View>
+                <Text style={styles.inviteHint}>
+                  Found in the Govee Home app under Profile → About Us → Apply for API key. Stored securely per household.
+                </Text>
+              </>
+            )}
           </View>
 
-          {/* ── Xiaomi (Mi Home) Credentials ── */}
+          {/* ── Xiaomi (Mi Home) ── */}
           <Text style={styles.sectionLabel}>Xiaomi (Mi Home)</Text>
           <View style={styles.card}>
+            <View style={styles.integrationToggleRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.integrationToggleTitle}>Enable Xiaomi</Text>
+                <Text style={styles.inviteHint}>Shows the Xiaomi page and enables Mi Home device control.</Text>
+              </View>
+              <Switch
+                value={xiaomiEnabled}
+                onValueChange={setXiaomiEnabled}
+                trackColor={{ false: colors.muted, true: colors.accent }}
+                thumbColor="#fff"
+                ios_backgroundColor={colors.muted}
+                accessibilityLabel="Enable Xiaomi integration"
+              />
+            </View>
+            {xiaomiEnabled && (
+              <>
             <Text style={styles.modalLabel}>User ID</Text>
             <TextInput
               style={styles.textInput}
@@ -1362,6 +1409,8 @@ export default function HouseholdEditScreen({ route, navigation }) {
             <Text style={styles.inviteHint}>
               Get User ID, Service Token, and ssecurity from the Mi Home app using a token extractor (e.g. xiaomi-cloud-tokens-extractor). Shared with your household and synced to each device.
             </Text>
+              </>
+            )}
           </View>
 
           </CollapsibleGroup>
@@ -1669,6 +1718,9 @@ const makeStyles = (colors) => StyleSheet.create({
     alignItems: 'center', justifyContent: 'center', marginTop: spacing.sm,
   },
   updateButtonLabel: { ...type.bodyMed, color: '#fff', fontWeight: '700' },
+
+  integrationToggleRow:   { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  integrationToggleTitle: { ...type.body, color: colors.textPrimary, fontWeight: '600' },
 
   goveeKeyRow:    { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   goveeKeyToggle: { padding: spacing.sm },
