@@ -20,6 +20,7 @@ import {
   subscribeEmergencyContacts, addEmergencyContact, updateEmergencyContact, deleteEmergencyContact,
 } from '../../services/firestore';
 import { saveCredentials as saveXiaomiCredentials } from '../../services/xiaomi';
+import { Rise } from '../../components/Motion';
 import { PANTRY_CATEGORIES, NON_FOOD_CATEGORIES, UNITS } from '../../utils/categories';
 import { AI_MODELS, DEFAULT_AI_MODEL } from '../../utils/aiModels';
 import DraggableCategoryList from '../../components/DraggableCategoryList';
@@ -741,6 +742,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
         >
 
           {/* ═══ Household ═══ */}
+          <Rise index={0}>
           <CollapsibleGroup
             title="Household" icon="home-outline"
             open={openGroups.household} onToggle={() => toggleGroup('household')}
@@ -882,8 +884,10 @@ export default function HouseholdEditScreen({ route, navigation }) {
           </View>
 
           </CollapsibleGroup>
+          </Rise>
 
           {/* ═══ Pantry & Groceries ═══ */}
+          <Rise index={1}>
           <CollapsibleGroup
             title="Pantry & Groceries" icon="basket-outline"
             open={openGroups.pantry} onToggle={() => toggleGroup('pantry')}
@@ -1068,8 +1072,10 @@ export default function HouseholdEditScreen({ route, navigation }) {
           </View>
 
           </CollapsibleGroup>
+          </Rise>
 
           {/* ═══ Finance ═══ */}
+          <Rise index={2}>
           <CollapsibleGroup
             title="Finance" icon="wallet-outline"
             open={openGroups.finance} onToggle={() => toggleGroup('finance')}
@@ -1151,8 +1157,10 @@ export default function HouseholdEditScreen({ route, navigation }) {
           </View>
 
           </CollapsibleGroup>
+          </Rise>
 
           {/* ═══ Emergency ═══ */}
+          <Rise index={3}>
           <CollapsibleGroup
             title="Emergency Contacts" icon="medkit-outline"
             open={openGroups.emergency} onToggle={() => toggleGroup('emergency')}
@@ -1208,8 +1216,10 @@ export default function HouseholdEditScreen({ route, navigation }) {
           </View>
 
           </CollapsibleGroup>
+          </Rise>
 
           {/* ═══ Integrations ═══ */}
+          <Rise index={4}>
           <CollapsibleGroup
             title="Integrations" icon="hardware-chip-outline"
             open={openGroups.integrations} onToggle={() => toggleGroup('integrations')}
@@ -1443,8 +1453,10 @@ export default function HouseholdEditScreen({ route, navigation }) {
           </View>
 
           </CollapsibleGroup>
+          </Rise>
 
           {/* ═══ Danger Zone ═══ */}
+          <Rise index={5}>
           <CollapsibleGroup
             title="Danger Zone" icon="warning-outline"
             open={openGroups.danger} onToggle={() => toggleGroup('danger')}
@@ -1457,6 +1469,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
             </TouchableOpacity>
           </View>
           </CollapsibleGroup>
+          </Rise>
 
         </ScrollView>
       )}

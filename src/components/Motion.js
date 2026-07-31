@@ -67,6 +67,29 @@ export function RiseItem({ index = 0, threshold = 10, style, children }) {
   return <Rise index={index} style={style}>{children}</Rise>;
 }
 
+// Reveals its children (fade + slide + scale in) when `visible` flips true —
+// for virtualized lists (FlatList) where items should animate as they scroll
+// INTO view, not when they mount off-screen. Drive `visible` from the list's
+// onViewableItemsChanged. Always shown when motion is disabled.
+export function Reveal({ visible, delay = 0, style, children }) {
+  const shown = visible || !useAnimationsEnabled();
+  return (
+    <M
+      style={style}
+      animate={{
+        opacity: shown ? 1 : 0,
+        translateY: shown ? 0 : 18,
+        scale: shown ? 1 : 0.97,
+      }}
+      transition={shown
+        ? { type: 'spring', damping: 16, stiffness: 160, mass: 0.9, delay }
+        : { type: 'timing', duration: 0 }}
+    >
+      {children}
+    </M>
+  );
+}
+
 // Returns a key that bumps on every screen focus (skipping the first, since the
 // mount already animates) so a keyed container remounts and replays its entrance
 // animations. No-ops when motion is disabled. Same pattern proven on Home.

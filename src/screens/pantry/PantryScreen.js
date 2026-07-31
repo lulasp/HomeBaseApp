@@ -207,21 +207,27 @@ export default function PantryScreen() {
   const headerAnim = useRef(new Animated.Value(0)).current;
   const fabAnim    = useRef(new Animated.Value(0)).current;
 
-  useEffect(() => {
-    if (!animationsEnabled) {
-      headerAnim.setValue(1);
-      fabAnim.setValue(1);
-      return;
-    }
-    Animated.parallel([
-      Animated.timing(headerAnim, {
-        toValue: 1, duration: 380, useNativeDriver: true,
-      }),
-      Animated.spring(fabAnim, {
-        toValue: 1, delay: 250, friction: 6, tension: 130, useNativeDriver: true,
-      }),
-    ]).start();
-  }, [animationsEnabled]);
+  // Replay the entrance on every focus (tab stays mounted, so a mount effect
+  // would only fire once). Reset to 0 then animate in.
+  useFocusEffect(
+    useCallback(() => {
+      if (!animationsEnabled) {
+        headerAnim.setValue(1);
+        fabAnim.setValue(1);
+        return;
+      }
+      headerAnim.setValue(0);
+      fabAnim.setValue(0);
+      Animated.parallel([
+        Animated.timing(headerAnim, {
+          toValue: 1, duration: 380, useNativeDriver: true,
+        }),
+        Animated.spring(fabAnim, {
+          toValue: 1, delay: 250, friction: 6, tension: 130, useNativeDriver: true,
+        }),
+      ]).start();
+    }, [animationsEnabled]),
+  );
 
   const filteredItems = items.filter((item) => {
     const matchesSearch   = item.name.toLowerCase().includes(searchQuery.toLowerCase());
