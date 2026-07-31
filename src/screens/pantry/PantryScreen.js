@@ -9,6 +9,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useIsDesktop, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
+import { useHousehold } from '../../context/HouseholdContext';
 import { useNavScroll } from '../../context/NavScrollContext';
 import { useAlert } from '../../context/AlertContext';
 import { useNotification } from '../../context/NotificationContext';
@@ -73,6 +74,7 @@ const PantryItemRow = memo(({ item, onEdit, onDelete }) => {
 export default function PantryScreen() {
   const { householdId, user } = useAuth();
   const { colors } = useTheme();
+  const { animationsEnabled } = useHousehold();
   const { handleScroll } = useNavScroll();
   const { showAlert, showConfirm } = useAlert();
   const { notify } = useNotification();
@@ -206,6 +208,11 @@ export default function PantryScreen() {
   const fabAnim    = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
+    if (!animationsEnabled) {
+      headerAnim.setValue(1);
+      fabAnim.setValue(1);
+      return;
+    }
     Animated.parallel([
       Animated.timing(headerAnim, {
         toValue: 1, duration: 380, useNativeDriver: true,
@@ -214,7 +221,7 @@ export default function PantryScreen() {
         toValue: 1, delay: 250, friction: 6, tension: 130, useNativeDriver: true,
       }),
     ]).start();
-  }, []);
+  }, [animationsEnabled]);
 
   const filteredItems = items.filter((item) => {
     const matchesSearch   = item.name.toLowerCase().includes(searchQuery.toLowerCase());

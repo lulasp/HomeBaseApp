@@ -16,6 +16,7 @@ import {
   updateHouseholdNonFoodCategories, updateHouseholdFinanceCategories, updateHouseholdGoveeApiKey,
   updateHouseholdOpenRouterApiKey, updateHouseholdAiModel,
   updateHouseholdUnits, upsertMemberProfile, updateHouseholdXiaomiCreds, updateHouseholdIntegrationFlags,
+  updateHouseholdReduceMotion,
   subscribeEmergencyContacts, addEmergencyContact, updateEmergencyContact, deleteEmergencyContact,
 } from '../../services/firestore';
 import { saveCredentials as saveXiaomiCredentials } from '../../services/xiaomi';
@@ -142,6 +143,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
   const [showGoveeKey, setShowGoveeKey]           = useState(false);
   const [goveeEnabled, setGoveeEnabled]           = useState(false);
   const [xiaomiEnabled, setXiaomiEnabled]         = useState(false);
+  const [reduceMotionPref, setReduceMotionPref]   = useState(false);
   const [openRouterApiKey, setOpenRouterApiKey]   = useState('');
   const [showOpenRouterKey, setShowOpenRouterKey] = useState(false);
   const [xiaomiCreds, setXiaomiCreds]             = useState(BLANK_XIAOMI);
@@ -225,6 +227,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
         // Absent flag ⇒ enabled if already configured (see HouseholdContext).
         setGoveeEnabled(hh?.goveeEnabled ?? !!hh?.goveeApiKey);
         setXiaomiEnabled(hh?.xiaomiEnabled ?? !!(xc.userId || xc.serviceToken || xc.ssecurity));
+        setReduceMotionPref(hh?.reduceMotion ?? false);
         setAiModel(hh?.aiModel ?? DEFAULT_AI_MODEL);
         setEnabledUnits(hh?.enabledUnits ?? UNITS);
         setCustomUnits(hh?.customUnits ?? []);
@@ -364,11 +367,13 @@ export default function HouseholdEditScreen({ route, navigation }) {
     xiaomiCreds,
     goveeEnabled,
     xiaomiEnabled,
+    reduceMotion: reduceMotionPref,
   }), [
     nameInput, enabledCategories, customCategories, orderedFoodCats,
     enabledNonFoodCategories, customNonFoodCategories, orderedNonFoodCats,
     customBillCats, customExpenseCats, goveeApiKey, openRouterApiKey,
     aiModel, enabledUnits, customUnits, xiaomiCreds, goveeEnabled, xiaomiEnabled,
+    reduceMotionPref,
   ]);
 
   // Capture the baseline once the household has loaded.
@@ -559,6 +564,9 @@ export default function HouseholdEditScreen({ route, navigation }) {
       writes.push(updateHouseholdIntegrationFlags(hhId, {
         goveeEnabled: snap.goveeEnabled, xiaomiEnabled: snap.xiaomiEnabled,
       }));
+    }
+    if (changed(snap.reduceMotion, base.reduceMotion)) {
+      writes.push(updateHouseholdReduceMotion(hhId, snap.reduceMotion));
     }
 
     if (writes.length === 0) return true;
@@ -850,6 +858,27 @@ export default function HouseholdEditScreen({ route, navigation }) {
                 </View>
               );
             })}
+          </View>
+
+          {/* ── Appearance ── */}
+          <Text style={styles.sectionLabel}>Appearance</Text>
+          <View style={styles.card}>
+            <View style={styles.integrationToggleRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.integrationToggleTitle}>Reduce motion</Text>
+                <Text style={styles.inviteHint}>
+                  Turns off entrance, chart and list animations across the app. Applies to everyone in the household.
+                </Text>
+              </View>
+              <Switch
+                value={reduceMotionPref}
+                onValueChange={setReduceMotionPref}
+                trackColor={{ false: colors.muted, true: colors.accent }}
+                thumbColor="#fff"
+                ios_backgroundColor={colors.muted}
+                accessibilityLabel="Reduce motion"
+              />
+            </View>
           </View>
 
           </CollapsibleGroup>

@@ -10,6 +10,7 @@ import { useNavScroll } from '../../context/NavScrollContext';
 import { subscribeEmergencyContacts } from '../../services/firestore';
 import { spacing, radius, type } from '../../theme/colors';
 import { useIsDesktop, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
+import { Rise, useEntranceReplay } from '../../components/Motion';
 
 export default function EmergencyContactsScreen() {
   const { householdId } = useAuth();
@@ -19,6 +20,7 @@ export default function EmergencyContactsScreen() {
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
   const [contacts, setContacts] = useState([]);
+  const contentKey = useEntranceReplay();
 
   useEffect(() => {
     if (!householdId) return;
@@ -35,6 +37,7 @@ export default function EmergencyContactsScreen() {
   return (
     <SafeAreaView style={[styles.root, Platform.OS === 'android' && { paddingTop: 24 }]}>
       <ScrollView
+        key={contentKey}
         style={{ flex: 1 }}
         onScroll={handleScroll}
         scrollEventThrottle={16}
@@ -45,6 +48,7 @@ export default function EmergencyContactsScreen() {
         showsVerticalScrollIndicator={false}
       >
         {/* Header — same pattern as HomeLightsScreen */}
+        <Rise index={0}>
         <View style={styles.header}>
           <View>
             <Text style={styles.title}>Emergency Contacts</Text>
@@ -59,6 +63,7 @@ export default function EmergencyContactsScreen() {
             <Text style={styles.headerBadgeText}>Emergency</Text>
           </View>
         </View>
+        </Rise>
 
         {contacts.length === 0 ? (
           <View style={styles.emptyState}>
@@ -70,8 +75,8 @@ export default function EmergencyContactsScreen() {
           </View>
         ) : (
           <View style={styles.list}>
-            {contacts.map((contact) => (
-              <View key={contact.id} style={styles.card}>
+            {contacts.map((contact, i) => (
+              <Rise key={contact.id} index={Math.min(i + 1, 8)} style={styles.card}>
                 <View style={styles.iconWrap}>
                   <Text style={styles.contactIcon}>{contact.icon}</Text>
                 </View>
@@ -105,7 +110,7 @@ export default function EmergencyContactsScreen() {
                     <Ionicons name="call" size={18} color="#fff" />
                   </TouchableOpacity>
                 )}
-              </View>
+              </Rise>
             ))}
           </View>
         )}

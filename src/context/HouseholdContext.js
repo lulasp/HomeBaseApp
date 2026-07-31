@@ -24,6 +24,8 @@ export const HouseholdProvider = ({ children }) => {
     privateData: priv,
     goveeEnabled:  priv.goveeEnabled  ?? !!priv.goveeApiKey,
     xiaomiEnabled: priv.xiaomiEnabled ?? hasXiaomiCreds(priv.xiaomiCreds),
+    reduceMotion:      !!priv.reduceMotion,
+    animationsEnabled: !priv.reduceMotion, // absent ⇒ animations on
   }), [priv]);
 
   return <HouseholdContext.Provider value={value}>{children}</HouseholdContext.Provider>;

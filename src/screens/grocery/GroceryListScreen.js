@@ -6,6 +6,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
+import { useHousehold } from '../../context/HouseholdContext';
 import { useNavScroll } from '../../context/NavScrollContext';
 import { useAlert } from '../../context/AlertContext';
 import { useNotification } from '../../context/NotificationContext';
@@ -75,6 +76,7 @@ const GroceryItemRow = memo(({ item, onToggle, onEdit, onDelete }) => {
 export default function GroceryListScreen() {
   const { householdId, user } = useAuth();
   const { colors } = useTheme();
+  const { animationsEnabled } = useHousehold();
   const { handleScroll } = useNavScroll();
   const { showAlert, showConfirm } = useAlert();
   const { notify } = useNotification();
@@ -323,6 +325,11 @@ export default function GroceryListScreen() {
   const progressAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
+    if (!animationsEnabled) {
+      headerAnim.setValue(1);
+      fabAnim.setValue(1);
+      return;
+    }
     Animated.parallel([
       Animated.timing(headerAnim, {
         toValue: 1, duration: 380, useNativeDriver: true,
@@ -331,16 +338,20 @@ export default function GroceryListScreen() {
         toValue: 1, delay: 250, friction: 6, tension: 130, useNativeDriver: true,
       }),
     ]).start();
-  }, []);
+  }, [animationsEnabled]);
 
   useEffect(() => {
+    if (!animationsEnabled) {
+      progressAnim.setValue(progressRatio);
+      return;
+    }
     Animated.spring(progressAnim, {
       toValue: progressRatio,
       friction: 9,
       tension: 45,
       useNativeDriver: false,
     }).start();
-  }, [progressRatio]);
+  }, [progressRatio, animationsEnabled]);
 
   return (
     <SafeAreaView style={styles.screenRoot}>

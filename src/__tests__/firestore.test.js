@@ -52,6 +52,7 @@ import {
   updateHouseholdAiModel,
   updateHouseholdXiaomiCreds,
   updateHouseholdIntegrationFlags,
+  updateHouseholdReduceMotion,
   subscribeHouseholdPrivate,
 } from '../services/firestore';
 import { onSnapshot } from 'firebase/firestore';
@@ -516,6 +517,19 @@ describe('updateHouseholdIntegrationFlags', () => {
     expect(mockSetDoc).toHaveBeenCalledWith(
       'households/hh1/private/data',
       { goveeEnabled: true, xiaomiEnabled: false },
+      { merge: true },
+    );
+  });
+});
+
+// ── updateHouseholdReduceMotion ───────────────────────────────────────────────
+
+describe('updateHouseholdReduceMotion', () => {
+  it('merges the reduce-motion flag into the private doc', async () => {
+    await updateHouseholdReduceMotion('hh1', true);
+    expect(mockSetDoc).toHaveBeenCalledWith(
+      'households/hh1/private/data',
+      { reduceMotion: true },
       { merge: true },
     );
   });

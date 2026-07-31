@@ -4,8 +4,11 @@ import {
   SafeAreaView, ActivityIndicator, RefreshControl, TextInput,
 } from 'react-native';
 import Animated, {
-  useSharedValue, useAnimatedStyle, withSpring, withTiming, withDelay,
+  useSharedValue, useAnimatedStyle, withSpring, withTiming, Easing,
 } from 'react-native-reanimated';
+import { M, Presence } from '../../components/Motion';
+import { useFocusEffect } from '@react-navigation/native';
+import { useHousehold } from '../../context/HouseholdContext';
 import { Ionicons } from '@expo/vector-icons';
 import { format, startOfWeek } from 'date-fns';
 import { useAuth } from '../../context/AuthContext';
@@ -102,35 +105,38 @@ async function fetchWeather() {
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
-// Staggered entrance: slides up 22px and fades in, delayed by index * 65ms
+// Staggered entrance: springs up + scales + fades in, delayed by index * 60ms.
+// Driven by focus (not mount): the tab navigator keeps this screen mounted, so
+// on each focus we snap back to hidden then animate in — guaranteeing a replay
+// every visit, not just the first mount.
 function AnimatedCard({ index, style, children }) {
-  const opacity = useSharedValue(0);
-  const translateY = useSharedValue(22);
-
-  useEffect(() => {
-    const delay = index * 65;
-    opacity.value = withDelay(delay, withTiming(1, { duration: 280 }));
-    translateY.value = withDelay(delay, withSpring(0, { damping: 18, stiffness: 180 }));
-  }, []);
-
-  const animStyle = useAnimatedStyle(() => ({
-    opacity: opacity.value,
-    transform: [{ translateY: translateY.value }],
-  }));
-
-  return <Animated.View style={[animStyle, style]}>{children}</Animated.View>;
+  const delay = index * 60;
+  return (
+    <M
+      from={{ opacity: 0, translateY: 28, scale: 0.95 }}
+      animate={{ opacity: 1, translateY: 0, scale: 1 }}
+      transition={{ type: 'spring', damping: 15, stiffness: 140, mass: 0.9, delay }}
+      style={style}
+    >
+      {children}
+    </M>
+  );
 }
 
 // Animated grocery progress bar using pixel width so Reanimated can interpolate it
 function AnimatedProgressBar({ progress, color, mutedColor }) {
+  const { animationsEnabled } = useHousehold();
   const [trackWidth, setTrackWidth] = useState(0);
   const animWidth = useSharedValue(0);
 
   useEffect(() => {
     if (trackWidth > 0) {
-      animWidth.value = withSpring(progress * trackWidth, { damping: 20, stiffness: 100 });
+      const target = progress * trackWidth;
+      animWidth.value = animationsEnabled
+        ? withSpring(target, { damping: 20, stiffness: 100 })
+        : target;
     }
-  }, [progress, trackWidth]);
+  }, [progress, trackWidth, animationsEnabled]);
 
   const fillStyle = useAnimatedStyle(() => ({
     width: animWidth.value,
@@ -148,6 +154,7 @@ function AnimatedProgressBar({ progress, color, mutedColor }) {
 
 // Card wrapper: non-interactive renders as Animated.View; interactive adds spring press-scale
 function WidgetCard({ style, children, onPress }) {
+  const { animationsEnabled } = useHousehold();
   const scale = useSharedValue(1);
 
   const animStyle = useAnimatedStyle(() => ({
@@ -155,12 +162,14 @@ function WidgetCard({ style, children, onPress }) {
   }));
 
   const handlePressIn = useCallback(() => {
+    if (!animationsEnabled) return;
     scale.value = withSpring(0.97, { damping: 15, stiffness: 300 });
-  }, []);
+  }, [animationsEnabled]);
 
   const handlePressOut = useCallback(() => {
+    if (!animationsEnabled) return;
     scale.value = withSpring(1, { damping: 15, stiffness: 300 });
-  }, []);
+  }, [animationsEnabled]);
 
   if (!onPress) {
     return (
@@ -189,6 +198,7 @@ function WidgetLabel({ icon, label, color }) {
 }
 
 function StatPill({ value, label, icon, color, soft, onPress }) {
+  const { animationsEnabled } = useHousehold();
   const scale = useSharedValue(1);
 
   const animStyle = useAnimatedStyle(() => ({
@@ -199,12 +209,19 @@ function StatPill({ value, label, icon, color, soft, onPress }) {
     <Pressable
       style={{ flex: 1 }}
       onPress={onPress}
-      onPressIn={() => { scale.value = withSpring(0.92, { damping: 14, stiffness: 300 }); }}
-      onPressOut={() => { scale.value = withSpring(1, { damping: 14, stiffness: 300 }); }}
+      onPressIn={() => { if (animationsEnabled) scale.value = withSpring(0.92, { damping: 14, stiffness: 300 }); }}
+      onPressOut={() => { if (animationsEnabled) scale.value = withSpring(1, { damping: 14, stiffness: 300 }); }}
     >
       <Animated.View style={[styles.statPill, { backgroundColor: soft }, animStyle]}>
         <Ionicons name={icon} size={18} color={color} />
-        <Text style={[styles.statValue, { color }]}>{value}</Text>
+        <M
+          key={value}
+          from={{ scale: 1.5, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={{ type: 'spring', damping: 13, stiffness: 220 }}
+        >
+          <Text style={[styles.statValue, { color }]}>{value}</Text>
+        </M>
         <Text style={styles.statLabel}>{label}</Text>
       </Animated.View>
     </Pressable>
@@ -262,33 +279,39 @@ function WeeklyCalendar({ householdId, weekKey, todayFull, colors }) {
           const isSelected = full === selectedDay;
           const pending = todos.filter((t) => t.day === full && !t.done).length;
           return (
-            <TouchableOpacity
+            <Pressable
               key={full}
-              style={[
-                styles.dayTab,
-                { backgroundColor: colors.muted },
-                isToday && !isSelected && { borderWidth: 1.5, borderColor: colors.accent },
-                isSelected && { backgroundColor: colors.accent },
-              ]}
+              style={{ flex: 1 }}
               onPress={() => setSelectedDay(full)}
               accessibilityRole="button"
               accessibilityLabel={full}
               accessibilityState={{ selected: isSelected }}
             >
-              <Text style={[
-                styles.dayTabText,
-                { color: isSelected ? '#fff' : colors.textSecondary },
-                isToday && !isSelected && { color: colors.accent },
-              ]}>
-                {short}
-              </Text>
-              {pending > 0 && (
-                <View style={[
-                  styles.dayTabDot,
-                  { backgroundColor: isSelected ? 'rgba(255,255,255,0.6)' : colors.accent },
-                ]} />
-              )}
-            </TouchableOpacity>
+              <M
+                style={[
+                  styles.dayTab,
+                  { backgroundColor: colors.muted },
+                  isToday && !isSelected && { borderWidth: 1.5, borderColor: colors.accent },
+                  isSelected && { backgroundColor: colors.accent },
+                ]}
+                animate={{ scale: isSelected ? 1.08 : 1 }}
+                transition={{ type: 'spring', damping: 13, stiffness: 260 }}
+              >
+                <Text style={[
+                  styles.dayTabText,
+                  { color: isSelected ? '#fff' : colors.textSecondary },
+                  isToday && !isSelected && { color: colors.accent },
+                ]}>
+                  {short}
+                </Text>
+                {pending > 0 && (
+                  <View style={[
+                    styles.dayTabDot,
+                    { backgroundColor: isSelected ? 'rgba(255,255,255,0.6)' : colors.accent },
+                  ]} />
+                )}
+              </M>
+            </Pressable>
           );
         })}
       </View>
@@ -299,36 +322,50 @@ function WeeklyCalendar({ householdId, weekKey, todayFull, colors }) {
           No tasks for {selectedDay}
         </Text>
       )}
-      {dayTodos.map((todo) => (
-        <View key={todo.id} style={[styles.todoRow, { borderBottomColor: colors.border }]}>
-          <TouchableOpacity
-            onPress={() => toggleWeeklyTodo(householdId, todo.id, !todo.done).catch(console.error)}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+      <Presence>
+        {dayTodos.map((todo) => (
+          <M
+            key={todo.id}
+            style={[styles.todoRow, { borderBottomColor: colors.border }]}
+            from={{ opacity: 0, translateX: -12 }}
+            animate={{ opacity: 1, translateX: 0 }}
+            exit={{ opacity: 0, translateX: 12, scale: 0.95 }}
+            transition={{ type: 'timing', duration: 260, easing: Easing.out(Easing.cubic) }}
           >
-            <Ionicons
-              name={todo.done ? 'checkmark-circle' : 'ellipse-outline'}
-              size={20}
-              color={todo.done ? colors.sage : colors.textTertiary}
-            />
-          </TouchableOpacity>
-          <Text
-            style={[
-              styles.todoText,
-              { color: todo.done ? colors.textTertiary : colors.textPrimary },
-              todo.done && styles.todoDone,
-            ]}
-            numberOfLines={2}
-          >
-            {todo.text}
-          </Text>
-          <TouchableOpacity
-            onPress={() => deleteWeeklyTodo(householdId, todo.id).catch(console.error)}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            <Ionicons name="close" size={15} color={colors.textTertiary} />
-          </TouchableOpacity>
-        </View>
-      ))}
+            <TouchableOpacity
+              onPress={() => toggleWeeklyTodo(householdId, todo.id, !todo.done).catch(console.error)}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <M
+                animate={{ scale: todo.done ? [1, 1.25, 1] : 1 }}
+                transition={{ type: 'timing', duration: 260 }}
+              >
+                <Ionicons
+                  name={todo.done ? 'checkmark-circle' : 'ellipse-outline'}
+                  size={20}
+                  color={todo.done ? colors.sage : colors.textTertiary}
+                />
+              </M>
+            </TouchableOpacity>
+            <Text
+              style={[
+                styles.todoText,
+                { color: todo.done ? colors.textTertiary : colors.textPrimary },
+                todo.done && styles.todoDone,
+              ]}
+              numberOfLines={2}
+            >
+              {todo.text}
+            </Text>
+            <TouchableOpacity
+              onPress={() => deleteWeeklyTodo(householdId, todo.id).catch(console.error)}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Ionicons name="close" size={15} color={colors.textTertiary} />
+            </TouchableOpacity>
+          </M>
+        ))}
+      </Presence>
 
       {/* Add row */}
       {adding ? (
@@ -372,6 +409,7 @@ export default function HomeScreen({ navigation }) {
   const { colors } = useTheme();
   const { handleScroll } = useNavScroll();
   const isDesktop = useIsDesktop();
+  const { animationsEnabled } = useHousehold();
 
   const today       = new Date();
   const todayFull   = FULL_DAYS[today.getDay() === 0 ? 6 : today.getDay() - 1]; // Mon=0 offset
@@ -391,6 +429,20 @@ export default function HomeScreen({ navigation }) {
   const [weather,      setWeather]      = useState(null);
   const [weatherError, setWeatherError] = useState(false);
   const [refreshing,   setRefreshing]   = useState(false);
+
+  // ── Entrance replay ───────────────────────────────────────────────────────────
+  // Remount the scroll content on every focus so all mount animations replay
+  // identically to first load. Skip the initial focus (the mount already plays
+  // them) to avoid a double. Firestore subscriptions live outside this subtree,
+  // so remounting doesn't touch them.
+  const [contentKey, setContentKey] = useState(0);
+  const firstFocus = useRef(true);
+  useFocusEffect(
+    useCallback(() => {
+      if (firstFocus.current) { firstFocus.current = false; return; }
+      if (animationsEnabled) setContentKey((k) => k + 1);
+    }, [animationsEnabled]),
+  );
 
   // ── Data loading ────────────────────────────────────────────────────────────
 
@@ -465,6 +517,7 @@ export default function HomeScreen({ navigation }) {
   return (
     <SafeAreaView style={[styles.root, { backgroundColor: colors.background }]}>
       <ScrollView
+        key={contentKey}
         style={{ flex: 1 }}
         contentContainerStyle={[styles.content, isDesktop && styles.contentDesktop]}
         showsVerticalScrollIndicator={false}
@@ -565,10 +618,21 @@ export default function HomeScreen({ navigation }) {
               <WidgetLabel icon="cloud-outline" label="WEATHER" color={colors.textTertiary} />
               {weather ? (
                 <>
-                  <View style={styles.weatherMain}>
-                    <Ionicons name={weatherIcon(weather.code)} size={30} color={colors.amber} />
+                  <M
+                    style={styles.weatherMain}
+                    from={{ opacity: 0, scale: 0.9 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    transition={{ type: 'spring', damping: 20, stiffness: 180 }}
+                  >
+                    <M
+                      from={{ translateY: -2.5 }}
+                      animate={{ translateY: 2.5 }}
+                      transition={{ loop: true, repeatReverse: true, type: 'timing', duration: 2200, easing: Easing.inOut(Easing.ease) }}
+                    >
+                      <Ionicons name={weatherIcon(weather.code)} size={30} color={colors.amber} />
+                    </M>
                     <Text style={[styles.weatherTemp, { color: colors.textPrimary }]}>{weather.temp}°</Text>
-                  </View>
+                  </M>
                   <Text style={[styles.weatherDesc, { color: colors.textSecondary }]}>{weatherDesc(weather.code)}</Text>
                   {weather.city ? (
                     <Text style={[styles.weatherCity, { color: colors.textTertiary }]} numberOfLines={1}>{weather.city}</Text>
@@ -689,15 +753,24 @@ export default function HomeScreen({ navigation }) {
                 <WidgetLabel icon="warning-outline" label="RUNNING LOW" color={colors.amber} />
                 <Text style={[styles.viewAllLink, { color: colors.accent }]}>View pantry →</Text>
               </View>
-              {lowPantry.slice(0, 4).map((item) => (
-                <View key={item.id} style={[styles.lowItem, { borderBottomColor: colors.border }]}>
-                  <View style={[styles.lowItemDot, { backgroundColor: item.quantity <= 1 ? colors.danger : colors.amber }]} />
-                  <Text style={[styles.lowItemName, { color: colors.textPrimary }]} numberOfLines={1}>{item.name}</Text>
-                  <Text style={[styles.lowItemQty, { color: colors.textTertiary }]}>
-                    {item.quantity} {item.unit || ''}
-                  </Text>
-                </View>
-              ))}
+              <Presence>
+                {lowPantry.slice(0, 4).map((item, i) => (
+                  <M
+                    key={item.id}
+                    style={[styles.lowItem, { borderBottomColor: colors.border }]}
+                    from={{ opacity: 0, translateX: -10 }}
+                    animate={{ opacity: 1, translateX: 0 }}
+                    exit={{ opacity: 0, translateX: 10 }}
+                    transition={{ type: 'timing', duration: 260, delay: i * 45, easing: Easing.out(Easing.cubic) }}
+                  >
+                    <View style={[styles.lowItemDot, { backgroundColor: item.quantity <= 1 ? colors.danger : colors.amber }]} />
+                    <Text style={[styles.lowItemName, { color: colors.textPrimary }]} numberOfLines={1}>{item.name}</Text>
+                    <Text style={[styles.lowItemQty, { color: colors.textTertiary }]}>
+                      {item.quantity} {item.unit || ''}
+                    </Text>
+                  </M>
+                ))}
+              </Presence>
               {lowPantry.length > 4 && (
                 <Text style={[styles.moreItems, { color: colors.textTertiary }]}>
                   +{lowPantry.length - 4} more items
@@ -728,13 +801,22 @@ export default function HomeScreen({ navigation }) {
                     {checkedGrocery}/{groceryItems.length} done
                   </Text>
                 </View>
-                {groceryItems.filter((i) => !i.checked).slice(0, 3).map((item) => (
-                  <View key={item.id} style={[styles.groceryItem, { borderBottomColor: colors.border }]}>
-                    <View style={[styles.groceryDot, { borderColor: colors.border }]} />
-                    <Text style={[styles.groceryItemName, { color: colors.textPrimary }]} numberOfLines={1}>{item.name}</Text>
-                    <Text style={[styles.groceryItemQty, { color: colors.textTertiary }]}>{item.quantity} {item.unit || ''}</Text>
-                  </View>
-                ))}
+                <Presence>
+                  {groceryItems.filter((i) => !i.checked).slice(0, 3).map((item, i) => (
+                    <M
+                      key={item.id}
+                      style={[styles.groceryItem, { borderBottomColor: colors.border }]}
+                      from={{ opacity: 0, translateX: -10 }}
+                      animate={{ opacity: 1, translateX: 0 }}
+                      exit={{ opacity: 0, translateX: 10 }}
+                      transition={{ type: 'timing', duration: 260, delay: i * 45, easing: Easing.out(Easing.cubic) }}
+                    >
+                      <View style={[styles.groceryDot, { borderColor: colors.border }]} />
+                      <Text style={[styles.groceryItemName, { color: colors.textPrimary }]} numberOfLines={1}>{item.name}</Text>
+                      <Text style={[styles.groceryItemQty, { color: colors.textTertiary }]}>{item.quantity} {item.unit || ''}</Text>
+                    </M>
+                  ))}
+                </Presence>
                 {pendingGrocery > 3 && (
                   <Text style={[styles.moreItems, { color: colors.textTertiary }]}>+{pendingGrocery - 3} more</Text>
                 )}

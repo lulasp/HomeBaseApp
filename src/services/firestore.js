@@ -256,6 +256,11 @@ export const updateHouseholdXiaomiCreds = (householdId, creds = {}) => {
 export const updateHouseholdIntegrationFlags = (householdId, { goveeEnabled, xiaomiEnabled }) =>
   setDoc(privateRef(householdId), { goveeEnabled, xiaomiEnabled }, { merge: true });
 
+// UI preference (not a secret) kept in the private doc so it rides the same
+// subscription as the integration flags. Absent ⇒ animations on.
+export const updateHouseholdReduceMotion = (householdId, reduceMotion) =>
+  setDoc(privateRef(householdId), { reduceMotion }, { merge: true });
+
 // Live members-only private doc (secrets, member profiles, integration flags).
 // Calls back with the doc data (or {}); returns the unsubscribe fn.
 export const subscribeHouseholdPrivate = (householdId, callback) =>
