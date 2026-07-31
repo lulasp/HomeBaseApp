@@ -12,6 +12,7 @@ import { useAlert } from '../../context/AlertContext';
 import { useNotification } from '../../context/NotificationContext';
 import { spacing, radius, type } from '../../theme/colors';
 import { useIsDesktop, SIDEBAR_WIDTH } from '../../navigation/TabBar';
+import { Rise, useEntranceReplay } from '../../components/Motion';
 
 // ── Ingredient row with pantry autocomplete ────────────────────────────────────
 const IngredientInput = memo(({ ingredient, index, pantryItems, colors, onUpdate, onRemove, showRemove }) => {
@@ -130,6 +131,7 @@ export default function AddRecipeScreen({ navigation, route, onClose }) {
   const { showAlert } = useAlert();
   const { notify } = useNotification();
   const styles = useMemo(() => makeStyles(colors), [colors]);
+  const contentKey = useEntranceReplay();
   const isDesktop = useIsDesktop();
   const { height: windowHeight } = useWindowDimensions();
 
@@ -266,6 +268,7 @@ export default function AddRecipeScreen({ navigation, route, onClose }) {
       </View>
 
       <ScrollView
+        key={contentKey}
         style={{ flex: 1 }}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
@@ -273,7 +276,7 @@ export default function AddRecipeScreen({ navigation, route, onClose }) {
       >
 
         {/* ── Details ── */}
-        <View style={styles.formSection}>
+        <Rise index={0} style={styles.formSection}>
           <Text style={styles.sectionTitle}>Details</Text>
           <View>
             <TextInput
@@ -321,10 +324,10 @@ export default function AddRecipeScreen({ navigation, route, onClose }) {
               </View>
             ))}
           </View>
-        </View>
+        </Rise>
 
         {/* ── Ingredients ── */}
-        <View style={styles.formSection}>
+        <Rise index={1} style={styles.formSection}>
           <View style={styles.sectionHeaderRow}>
             <Text style={styles.sectionTitle}>Ingredients</Text>
             <TouchableOpacity
@@ -349,10 +352,10 @@ export default function AddRecipeScreen({ navigation, route, onClose }) {
               showRemove={ingredients.length > 1}
             />
           ))}
-        </View>
+        </Rise>
 
         {/* ── Instructions ── */}
-        <View style={styles.formSection}>
+        <Rise index={2} style={styles.formSection}>
           <View style={styles.sectionHeaderRow}>
             <Text style={styles.sectionTitle}>Instructions</Text>
             <TouchableOpacity
@@ -392,7 +395,7 @@ export default function AddRecipeScreen({ navigation, route, onClose }) {
               )}
             </View>
           ))}
-        </View>
+        </Rise>
 
       </ScrollView>
     </KeyboardAvoidingView>

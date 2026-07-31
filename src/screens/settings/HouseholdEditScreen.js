@@ -16,9 +16,11 @@ import {
   updateHouseholdNonFoodCategories, updateHouseholdFinanceCategories, updateHouseholdGoveeApiKey,
   updateHouseholdOpenRouterApiKey, updateHouseholdAiModel,
   updateHouseholdUnits, upsertMemberProfile, updateHouseholdXiaomiCreds, updateHouseholdIntegrationFlags,
+  updateHouseholdReduceMotion,
   subscribeEmergencyContacts, addEmergencyContact, updateEmergencyContact, deleteEmergencyContact,
 } from '../../services/firestore';
 import { saveCredentials as saveXiaomiCredentials } from '../../services/xiaomi';
+import { Rise } from '../../components/Motion';
 import { PANTRY_CATEGORIES, NON_FOOD_CATEGORIES, UNITS } from '../../utils/categories';
 import { AI_MODELS, DEFAULT_AI_MODEL } from '../../utils/aiModels';
 import DraggableCategoryList from '../../components/DraggableCategoryList';
@@ -142,6 +144,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
   const [showGoveeKey, setShowGoveeKey]           = useState(false);
   const [goveeEnabled, setGoveeEnabled]           = useState(false);
   const [xiaomiEnabled, setXiaomiEnabled]         = useState(false);
+  const [reduceMotionPref, setReduceMotionPref]   = useState(false);
   const [openRouterApiKey, setOpenRouterApiKey]   = useState('');
   const [showOpenRouterKey, setShowOpenRouterKey] = useState(false);
   const [xiaomiCreds, setXiaomiCreds]             = useState(BLANK_XIAOMI);
@@ -225,6 +228,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
         // Absent flag ⇒ enabled if already configured (see HouseholdContext).
         setGoveeEnabled(hh?.goveeEnabled ?? !!hh?.goveeApiKey);
         setXiaomiEnabled(hh?.xiaomiEnabled ?? !!(xc.userId || xc.serviceToken || xc.ssecurity));
+        setReduceMotionPref(hh?.reduceMotion ?? false);
         setAiModel(hh?.aiModel ?? DEFAULT_AI_MODEL);
         setEnabledUnits(hh?.enabledUnits ?? UNITS);
         setCustomUnits(hh?.customUnits ?? []);
@@ -364,11 +368,13 @@ export default function HouseholdEditScreen({ route, navigation }) {
     xiaomiCreds,
     goveeEnabled,
     xiaomiEnabled,
+    reduceMotion: reduceMotionPref,
   }), [
     nameInput, enabledCategories, customCategories, orderedFoodCats,
     enabledNonFoodCategories, customNonFoodCategories, orderedNonFoodCats,
     customBillCats, customExpenseCats, goveeApiKey, openRouterApiKey,
     aiModel, enabledUnits, customUnits, xiaomiCreds, goveeEnabled, xiaomiEnabled,
+    reduceMotionPref,
   ]);
 
   // Capture the baseline once the household has loaded.
@@ -560,6 +566,9 @@ export default function HouseholdEditScreen({ route, navigation }) {
         goveeEnabled: snap.goveeEnabled, xiaomiEnabled: snap.xiaomiEnabled,
       }));
     }
+    if (changed(snap.reduceMotion, base.reduceMotion)) {
+      writes.push(updateHouseholdReduceMotion(hhId, snap.reduceMotion));
+    }
 
     if (writes.length === 0) return true;
 
@@ -733,6 +742,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
         >
 
           {/* ═══ Household ═══ */}
+          <Rise index={0}>
           <CollapsibleGroup
             title="Household" icon="home-outline"
             open={openGroups.household} onToggle={() => toggleGroup('household')}
@@ -852,9 +862,32 @@ export default function HouseholdEditScreen({ route, navigation }) {
             })}
           </View>
 
+          {/* ── Appearance ── */}
+          <Text style={styles.sectionLabel}>Appearance</Text>
+          <View style={styles.card}>
+            <View style={styles.integrationToggleRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.integrationToggleTitle}>Reduce motion</Text>
+                <Text style={styles.inviteHint}>
+                  Turns off entrance, chart and list animations across the app. Applies to everyone in the household.
+                </Text>
+              </View>
+              <Switch
+                value={reduceMotionPref}
+                onValueChange={setReduceMotionPref}
+                trackColor={{ false: colors.muted, true: colors.accent }}
+                thumbColor="#fff"
+                ios_backgroundColor={colors.muted}
+                accessibilityLabel="Reduce motion"
+              />
+            </View>
+          </View>
+
           </CollapsibleGroup>
+          </Rise>
 
           {/* ═══ Pantry & Groceries ═══ */}
+          <Rise index={1}>
           <CollapsibleGroup
             title="Pantry & Groceries" icon="basket-outline"
             open={openGroups.pantry} onToggle={() => toggleGroup('pantry')}
@@ -1039,8 +1072,10 @@ export default function HouseholdEditScreen({ route, navigation }) {
           </View>
 
           </CollapsibleGroup>
+          </Rise>
 
           {/* ═══ Finance ═══ */}
+          <Rise index={2}>
           <CollapsibleGroup
             title="Finance" icon="wallet-outline"
             open={openGroups.finance} onToggle={() => toggleGroup('finance')}
@@ -1122,8 +1157,10 @@ export default function HouseholdEditScreen({ route, navigation }) {
           </View>
 
           </CollapsibleGroup>
+          </Rise>
 
           {/* ═══ Emergency ═══ */}
+          <Rise index={3}>
           <CollapsibleGroup
             title="Emergency Contacts" icon="medkit-outline"
             open={openGroups.emergency} onToggle={() => toggleGroup('emergency')}
@@ -1179,8 +1216,10 @@ export default function HouseholdEditScreen({ route, navigation }) {
           </View>
 
           </CollapsibleGroup>
+          </Rise>
 
           {/* ═══ Integrations ═══ */}
+          <Rise index={4}>
           <CollapsibleGroup
             title="Integrations" icon="hardware-chip-outline"
             open={openGroups.integrations} onToggle={() => toggleGroup('integrations')}
@@ -1414,8 +1453,10 @@ export default function HouseholdEditScreen({ route, navigation }) {
           </View>
 
           </CollapsibleGroup>
+          </Rise>
 
           {/* ═══ Danger Zone ═══ */}
+          <Rise index={5}>
           <CollapsibleGroup
             title="Danger Zone" icon="warning-outline"
             open={openGroups.danger} onToggle={() => toggleGroup('danger')}
@@ -1428,6 +1469,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
             </TouchableOpacity>
           </View>
           </CollapsibleGroup>
+          </Rise>
 
         </ScrollView>
       )}

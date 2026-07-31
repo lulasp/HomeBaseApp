@@ -11,6 +11,7 @@ import { useAuth } from '../../context/AuthContext';
 import { spacing, radius, type } from '../../theme/colors';
 import { useIsDesktop, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
 import { getHouseholdWithPrivate, updateHouseholdXiaomiCreds } from '../../services/firestore';
+import { Rise, useEntranceReplay } from '../../components/Motion';
 import {
   getCredentials, saveCredentials, hasCredentials, syncCredentialsFromHousehold,
   getDevices, getDeviceType,
@@ -446,6 +447,7 @@ export default function XiaomiScreen() {
   const { householdId } = useAuth();
   const styles    = useMemo(() => makeStyles(colors), [colors]);
   const isDesktop = useIsDesktop();
+  const contentKey = useEntranceReplay();
 
   const [configured, setConfigured]   = useState(false);
   const [showSetup, setShowSetup]     = useState(false);
@@ -610,6 +612,7 @@ export default function XiaomiScreen() {
       />
 
       <ScrollView
+        key={contentKey}
         style={{ flex: 1 }}
         contentContainerStyle={[styles.container, innerStyle]}
         showsVerticalScrollIndicator={false}
@@ -617,6 +620,7 @@ export default function XiaomiScreen() {
         scrollEventThrottle={16}
       >
         {/* Header */}
+        <Rise index={0}>
         <View style={styles.header}>
           <View>
             <Text style={styles.title}>Xiaomi</Text>
@@ -656,6 +660,7 @@ export default function XiaomiScreen() {
             </View>
           </View>
         </View>
+        </Rise>
 
         {/* Not configured */}
         {!configured && (
@@ -680,6 +685,7 @@ export default function XiaomiScreen() {
         {/* Fans section */}
         {fans.length > 0 && (
           <>
+          <Rise index={1}>
             <View style={styles.sectionLabelRow}>
               <Text style={[styles.sectionLabel, { marginTop: 0, marginBottom: 0 }]}>FANS</Text>
               {fans.filter(f => fanStates[f.did]?.on).length > 0 && (
@@ -724,12 +730,14 @@ export default function XiaomiScreen() {
                 />
               </>
             )}
+          </Rise>
           </>
         )}
 
         {/* Vacuum section */}
         {vacuums.length > 0 && (
           <>
+          <Rise index={2}>
             <View style={[styles.sectionLabelRow, { marginTop: fans.length > 0 ? spacing.xl : 0 }]}>
               <Text style={[styles.sectionLabel, { marginTop: 0, marginBottom: 0 }]}>VACUUM</Text>
               {selectedVacuumState.status === 1 && (
@@ -774,6 +782,7 @@ export default function XiaomiScreen() {
                 colors={colors}
               />
             )}
+          </Rise>
           </>
         )}
 

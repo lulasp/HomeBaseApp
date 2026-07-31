@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo, memo } from 'react';
+import React, { useEffect, useState, useMemo, useRef, memo } from 'react';
 import {
   View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet,
   Image, ActivityIndicator, ScrollView,
@@ -14,6 +14,7 @@ import { subscribeRecipes, saveRecipe, deleteRecipe } from '../../services/fires
 import { searchRecipes, getRandomRecipes, spoonacularRecipeToLocal, ApiLimitError } from '../../services/spoonacular';
 import { spacing, radius, type } from '../../theme/colors';
 import { useIsDesktop, SIDEBAR_WIDTH, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
+import { Rise, Reveal, useEntranceReplay } from '../../components/Motion';
 import AddRecipeScreen from './AddRecipeScreen';
 
 // ── Filter option definitions ─────────────────────────────────────────────────
@@ -207,6 +208,7 @@ export default function RecipesScreen({ navigation }) {
   const { notify } = useNotification();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const isDesktop = useIsDesktop();
+  const contentKey = useEntranceReplay();
   const { width, height: windowHeight } = useWindowDimensions();
 
   const [activeTab,      setActiveTab]      = useState('saved');
@@ -226,6 +228,24 @@ export default function RecipesScreen({ navigation }) {
 
   const columnCount           = isDesktop ? (width >= 1440 ? 4 : 3) : 2;
   const activeFilterCount     = (filters.type ? 1 : 0) + (filters.diet ? 1 : 0) + filters.cuisine.length + (filters.maxReadyTime ? 1 : 0);
+
+  // Track which grid slots have scrolled into view so each RecipeCard animates
+  // as it appears (FlatList mounts off-screen rows early, so a mount-based
+  // stagger only shows for the first screenful). Reset when the list resets.
+  const listKey = `${activeTab}-${columnCount}-${contentKey}`;
+  const [seen, setSeen] = useState(() => ({ key: listKey, set: new Set() }));
+  if (seen.key !== listKey) setSeen({ key: listKey, set: new Set() });
+  const onViewableItemsChanged = useRef(({ viewableItems }) => {
+    setSeen((prev) => {
+      let added = false;
+      const set = new Set(prev.set);
+      viewableItems.forEach((vi) => {
+        if (vi.index != null && !set.has(vi.index)) { set.add(vi.index); added = true; }
+      });
+      return added ? { key: prev.key, set } : prev;
+    });
+  }).current;
+  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 15 }).current;
   const savedSpoonacularIds   = useMemo(
     () => new Set(savedRecipes.map(r => r.spoonacularId).filter(Boolean)),
     [savedRecipes],
@@ -369,6 +389,7 @@ export default function RecipesScreen({ navigation }) {
 
   const listHeader = (
     <View>
+      <Rise index={0}>
       <View style={styles.headerSection}>
         <Text style={styles.screenTitle}>Recipes</Text>
         <TouchableOpacity style={styles.addRecipeButton} onPress={() => setShowAddModal(true)} accessibilityRole="button">
@@ -376,6 +397,7 @@ export default function RecipesScreen({ navigation }) {
           <Text style={styles.addRecipeButtonLabel}>New</Text>
         </TouchableOpacity>
       </View>
+      </Rise>
 
       <View style={styles.tabRow}>
         {[
@@ -466,7 +488,7 @@ export default function RecipesScreen({ navigation }) {
     <View style={[styles.screenRoot, { marginLeft: isDesktop ? SIDEBAR_WIDTH : 0 }]}>
       <View style={[styles.contentWrapper, isDesktop && styles.contentWrapperDesktop]}>
         <FlatList
-          key={columnCount}
+          key={listKey}
           style={{ height: windowHeight }}
           data={activeTab === 'saved' ? savedRecipes : searchResults}
           keyExtractor={(_, i) => String(i)}
@@ -476,6 +498,8 @@ export default function RecipesScreen({ navigation }) {
           numColumns={columnCount}
           columnWrapperStyle={columnCount > 1 ? { gap: 12 } : undefined}
           showsVerticalScrollIndicator={false}
+          onViewableItemsChanged={onViewableItemsChanged}
+          viewabilityConfig={viewabilityConfig}
           ListHeaderComponent={listHeader}
           onEndReached={handleLoadMore}
           onEndReachedThreshold={0.3}
@@ -497,19 +521,21 @@ export default function RecipesScreen({ navigation }) {
               </View>
             ) : null
           }
-          renderItem={({ item: recipe }) => {
+          renderItem={({ item: recipe, index }) => {
             const isSaved = activeTab === 'search'
               && recipe.spoonacularId != null
               && savedSpoonacularIds.has(recipe.spoonacularId);
             return (
-              <RecipeCard
-                recipe={recipe}
-                onPress={() => navigation.navigate('RecipeDetail', { recipe, isSearch: activeTab === 'search' })}
-                onSave={activeTab === 'search' && !isSaved ? () => handleSaveRecipe(recipe) : null}
-                onUnsave={isSaved ? () => handleUnsaveRecipe(recipe) : null}
-                isSaved={isSaved}
-                onDelete={activeTab === 'saved' ? () => handleDeleteRecipe(recipe) : null}
-              />
+              <Reveal visible={seen.set.has(index)} delay={(index % columnCount) * 60} style={{ flex: 1 }}>
+                <RecipeCard
+                  recipe={recipe}
+                  onPress={() => navigation.navigate('RecipeDetail', { recipe, isSearch: activeTab === 'search' })}
+                  onSave={activeTab === 'search' && !isSaved ? () => handleSaveRecipe(recipe) : null}
+                  onUnsave={isSaved ? () => handleUnsaveRecipe(recipe) : null}
+                  isSaved={isSaved}
+                  onDelete={activeTab === 'saved' ? () => handleDeleteRecipe(recipe) : null}
+                />
+              </Reveal>
             );
           }}
         />

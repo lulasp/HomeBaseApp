@@ -6,6 +6,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
+import { useHousehold } from '../../context/HouseholdContext';
 import { useNavScroll } from '../../context/NavScrollContext';
 import { useAlert } from '../../context/AlertContext';
 import { useNotification } from '../../context/NotificationContext';
@@ -75,6 +76,7 @@ const GroceryItemRow = memo(({ item, onToggle, onEdit, onDelete }) => {
 export default function GroceryListScreen() {
   const { householdId, user } = useAuth();
   const { colors } = useTheme();
+  const { animationsEnabled } = useHousehold();
   const { handleScroll } = useNavScroll();
   const { showAlert, showConfirm } = useAlert();
   const { notify } = useNotification();
@@ -322,25 +324,40 @@ export default function GroceryListScreen() {
   const fabAnim      = useRef(new Animated.Value(0)).current;
   const progressAnim = useRef(new Animated.Value(0)).current;
 
-  useEffect(() => {
-    Animated.parallel([
-      Animated.timing(headerAnim, {
-        toValue: 1, duration: 380, useNativeDriver: true,
-      }),
-      Animated.spring(fabAnim, {
-        toValue: 1, delay: 250, friction: 6, tension: 130, useNativeDriver: true,
-      }),
-    ]).start();
-  }, []);
+  // Replay the entrance on every focus (tab stays mounted, so a mount effect
+  // would only fire once). Reset to 0 then animate in.
+  useFocusEffect(
+    useCallback(() => {
+      if (!animationsEnabled) {
+        headerAnim.setValue(1);
+        fabAnim.setValue(1);
+        return;
+      }
+      headerAnim.setValue(0);
+      fabAnim.setValue(0);
+      Animated.parallel([
+        Animated.timing(headerAnim, {
+          toValue: 1, duration: 380, useNativeDriver: true,
+        }),
+        Animated.spring(fabAnim, {
+          toValue: 1, delay: 250, friction: 6, tension: 130, useNativeDriver: true,
+        }),
+      ]).start();
+    }, [animationsEnabled]),
+  );
 
   useEffect(() => {
+    if (!animationsEnabled) {
+      progressAnim.setValue(progressRatio);
+      return;
+    }
     Animated.spring(progressAnim, {
       toValue: progressRatio,
       friction: 9,
       tension: 45,
       useNativeDriver: false,
     }).start();
-  }, [progressRatio]);
+  }, [progressRatio, animationsEnabled]);
 
   return (
     <SafeAreaView style={styles.screenRoot}>
