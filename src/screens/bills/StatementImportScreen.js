@@ -25,6 +25,7 @@ import { DEFAULT_AI_MODEL } from '../../utils/aiModels';
 import { BILL_CATS, EXPENSE_CATS, withCustomCats } from '../../utils/financeCategories';
 import { spacing, radius, type } from '../../theme/colors';
 import { useIsDesktop, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
+import { Rise, useEntranceReplay } from '../../components/Motion';
 
 function fmtCurrency(n) {
   return `$${Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -191,6 +192,7 @@ export default function StatementImportScreen({ navigation }) {
   const isDesktop = useIsDesktop();
   const { height: windowHeight } = useWindowDimensions();
   const styles = useMemo(() => makeStyles(colors), [colors]);
+  const contentKey = useEntranceReplay();
 
   const [customBillCats, setCustomBillCats] = useState([]);
   const [customExpCats, setCustomExpCats] = useState([]);
@@ -353,12 +355,14 @@ export default function StatementImportScreen({ navigation }) {
       <ScrollView
         // Web: explicit pixel height (not flex:1) so the scroll container has a
         // real, bounded height regardless of the ancestor flex chain.
+        key={contentKey}
         style={Platform.OS === 'web' ? { height: windowHeight } : { flex: 1 }}
         contentContainerStyle={[styles.container, contentWidth]}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
         {/* Header */}
+        <Rise index={0}>
         <View style={styles.header}>
           <TouchableOpacity
             onPress={() => navigation.goBack()}
@@ -371,8 +375,10 @@ export default function StatementImportScreen({ navigation }) {
           <Text style={styles.title}>Import statement</Text>
           <View style={{ width: 26 }} />
         </View>
+        </Rise>
 
         {/* Pick + analyze */}
+        <Rise index={1}>
         <View style={styles.pickCard}>
           <TouchableOpacity style={styles.pickBtn} onPress={pickFile} accessibilityRole="button">
             <Ionicons name={file ? 'document-text' : 'cloud-upload-outline'} size={22} color={colors.accent} />
@@ -402,6 +408,7 @@ export default function StatementImportScreen({ navigation }) {
             </TouchableOpacity>
           )}
         </View>
+        </Rise>
 
         {/* Empty / loading hint */}
         {rows === null && !analyzing && (
@@ -417,7 +424,7 @@ export default function StatementImportScreen({ navigation }) {
         {/* Review list */}
         {rows !== null && rows.length > 0 && (
           <>
-            <View style={styles.summaryRow}>
+            <Rise index={2} style={styles.summaryRow}>
               <View style={styles.summaryCard}>
                 <Text style={styles.summaryValue}>{selected.length}</Text>
                 <Text style={styles.summaryLabel}>To import</Text>
@@ -430,20 +437,21 @@ export default function StatementImportScreen({ navigation }) {
                 <Text style={[styles.summaryValue, { color: colors.sage }]}>{counts.income}</Text>
                 <Text style={styles.summaryLabel}>Income</Text>
               </View>
-            </View>
+            </Rise>
 
             <View style={styles.list}>
               {rows.map((row, i) => (
-                <ReviewRow
-                  key={i}
-                  row={row}
-                  index={i}
-                  onChange={updateRow}
-                  expenseCats={expenseCats}
-                  billCats={billCats}
-                  colors={colors}
-                  styles={styles}
-                />
+                <Rise key={i} index={Math.min(i + 3, 10)}>
+                  <ReviewRow
+                    row={row}
+                    index={i}
+                    onChange={updateRow}
+                    expenseCats={expenseCats}
+                    billCats={billCats}
+                    colors={colors}
+                    styles={styles}
+                  />
+                </Rise>
               ))}
             </View>
 

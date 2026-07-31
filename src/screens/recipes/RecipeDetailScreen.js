@@ -12,6 +12,7 @@ import { useNotification } from '../../context/NotificationContext';
 import { saveRecipe, deleteRecipe, getRecipe, getPantryItems, getGroceryItems, addGroceryItem } from '../../services/firestore';
 import { spacing, radius, type } from '../../theme/colors';
 import { useIsDesktop, SIDEBAR_WIDTH, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
+import { Rise, useEntranceReplay } from '../../components/Motion';
 
 export default function RecipeDetailScreen({ route, navigation }) {
   const { isSearch } = route.params;
@@ -31,6 +32,7 @@ export default function RecipeDetailScreen({ route, navigation }) {
   const { showAlert, showConfirm } = useAlert();
   const { notify } = useNotification();
   const styles = useMemo(() => makeStyles(colors), [colors]);
+  const contentKey = useEntranceReplay();
   const isDesktop = useIsDesktop();
   const { height: windowHeight } = useWindowDimensions();
   const isOwnCustomRecipe = !isSearch && recipe.sourceType === 'custom' && recipe.createdBy === user?.uid;
@@ -117,7 +119,7 @@ export default function RecipeDetailScreen({ route, navigation }) {
 
   return (
     <View style={{ height: windowHeight, backgroundColor: colors.background, marginLeft: isDesktop ? SIDEBAR_WIDTH : 0 }}>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 120 }}>
+      <ScrollView key={contentKey} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 120 }}>
 
         {/* Back button — first item in scroll content, always visible, no z-index issues */}
         <View style={styles.navHeader}>
@@ -131,7 +133,7 @@ export default function RecipeDetailScreen({ route, navigation }) {
           </TouchableOpacity>
         </View>
 
-        <View style={styles.heroImage}>
+        <Rise index={0} style={styles.heroImage}>
           {recipe.imageUrl
             ? <Image source={{ uri: recipe.imageUrl }} style={styles.heroImageFill} />
             : (
@@ -140,12 +142,12 @@ export default function RecipeDetailScreen({ route, navigation }) {
               </View>
             )
           }
-        </View>
+        </Rise>
 
         <View style={[styles.recipeBody, isDesktop && { maxWidth: DESKTOP_MAX_CONTENT, alignSelf: 'center', width: '100%' }]}>
-          <Text style={styles.recipeTitle}>{recipe.title}</Text>
+          <Rise index={1}><Text style={styles.recipeTitle}>{recipe.title}</Text></Rise>
 
-          <View style={styles.statsRow}>
+          <Rise index={2} style={styles.statsRow}>
             {[
               recipe.prepTime > 0  && { icon: 'cut-outline',         value: `${recipe.prepTime}m`,  label: 'Prep',   color: colors.accent },
               recipe.cookTime > 0  && { icon: 'flame-outline',       value: `${recipe.cookTime}m`,  label: 'Cook',   color: colors.amber  },
@@ -158,17 +160,17 @@ export default function RecipeDetailScreen({ route, navigation }) {
                 <Text style={styles.statLabel}>{stat.label}</Text>
               </View>
             ))}
-          </View>
+          </Rise>
 
           {recipe.summary ? (
-            <View style={styles.recipeSection}>
+            <Rise index={3} style={styles.recipeSection}>
               <Text style={styles.recipeSectionTitle}>About</Text>
               <Text style={styles.recipeSummaryText}>{recipe.summary}</Text>
-            </View>
+            </Rise>
           ) : null}
 
           {recipe.ingredients?.length > 0 && (
-            <View style={styles.recipeSection}>
+            <Rise index={4} style={styles.recipeSection}>
               <Text style={styles.recipeSectionTitle}>Ingredients</Text>
               <View style={styles.ingredientList}>
                 {recipe.ingredients.map((ingredient, index) => (
@@ -181,11 +183,11 @@ export default function RecipeDetailScreen({ route, navigation }) {
                   </View>
                 ))}
               </View>
-            </View>
+            </Rise>
           )}
 
           {recipe.instructions?.length > 0 && (
-            <View style={styles.recipeSection}>
+            <Rise index={5} style={styles.recipeSection}>
               <Text style={styles.recipeSectionTitle}>Instructions</Text>
               <View style={styles.instructionList}>
                 {recipe.instructions.map((step, index) => (
@@ -197,7 +199,7 @@ export default function RecipeDetailScreen({ route, navigation }) {
                   </View>
                 ))}
               </View>
-            </View>
+            </Rise>
           )}
         </View>
       </ScrollView>

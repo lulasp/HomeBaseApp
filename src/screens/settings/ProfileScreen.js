@@ -15,6 +15,7 @@ import {
 } from '../../services/firestore';
 import { spacing, radius, type } from '../../theme/colors';
 import { useIsDesktop, SIDEBAR_WIDTH, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
+import { Rise, useEntranceReplay } from '../../components/Motion';
 
 export default function ProfileScreen({ navigation }) {
   const {
@@ -23,6 +24,7 @@ export default function ProfileScreen({ navigation }) {
   } = useAuth();
   const { colors, theme, toggleTheme } = useTheme();
   const { handleScroll } = useNavScroll();
+  const contentKey = useEntranceReplay();
   const { showAlert, showConfirm } = useAlert();
   const { notify } = useNotification();
   const styles  = useMemo(() => makeStyles(colors), [colors]);
@@ -96,6 +98,7 @@ export default function ProfileScreen({ navigation }) {
   return (
     <View style={{ height: windowHeight, backgroundColor: colors.background }}>
       <ScrollView
+        key={contentKey}
         style={{ flex: 1, marginLeft: isDesktop ? SIDEBAR_WIDTH : 0 }}
         onScroll={handleScroll}
         scrollEventThrottle={16}
@@ -105,6 +108,7 @@ export default function ProfileScreen({ navigation }) {
         ]}
         showsVerticalScrollIndicator
       >
+        <Rise index={0}>
         {/* ── Header ── */}
         <Text style={styles.screenTitle}>Profile</Text>
 
@@ -145,7 +149,9 @@ export default function ProfileScreen({ navigation }) {
             </View>
           </View>
         </View>
+        </Rise>
 
+        <Rise index={1}>
         {/* ── Households ── */}
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Households</Text>
@@ -201,7 +207,9 @@ export default function ProfileScreen({ navigation }) {
             })
           )}
         </View>
+        </Rise>
 
+        <Rise index={2}>
         {/* ── App ── */}
         <Text style={[styles.sectionTitle, { marginTop: spacing.xl }]}>App</Text>
 
@@ -238,6 +246,7 @@ export default function ProfileScreen({ navigation }) {
             <Text style={[styles.settingsLabel, { flex: 1, color: colors.danger }]}>Sign Out</Text>
           </TouchableOpacity>
         </View>
+        </Rise>
 
       </ScrollView>
 
