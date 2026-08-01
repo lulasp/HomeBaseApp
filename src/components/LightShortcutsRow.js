@@ -25,14 +25,27 @@ function ShortcutCard({ shortcut, isRunning, onRun, onOptions }) {
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const visual = SHORTCUT_VISUALS[shortcut.visual % SHORTCUT_VISUALS.length];
   return (
-    <TouchableOpacity
-      style={styles.shortcutCard}
-      onPress={onRun}
-      onLongPress={onOptions}
-      disabled={isRunning}
-      accessibilityRole="button"
-      accessibilityLabel={`Run ${shortcut.name} shortcut`}
-    >
+    // Options button is a sibling, not a child, of the card: nesting one
+    // TouchableOpacity inside another renders as nested <button>s on web (invalid HTML).
+    <View style={styles.shortcutCardWrap}>
+      <TouchableOpacity
+        style={styles.shortcutCard}
+        onPress={onRun}
+        onLongPress={onOptions}
+        disabled={isRunning}
+        accessibilityRole="button"
+        accessibilityLabel={`Run ${shortcut.name} shortcut`}
+      >
+        <View style={[styles.shortcutIcon, { backgroundColor: visual.color + '33' }]}>
+          {isRunning
+            ? <ActivityIndicator size="small" color={visual.color} />
+            : <Ionicons name={visual.icon} size={26} color={visual.color} />}
+        </View>
+        <Text style={styles.shortcutName} numberOfLines={1}>{shortcut.name}</Text>
+        <Text style={styles.shortcutMeta}>
+          {shortcut.deviceIds.length} {shortcut.deviceIds.length === 1 ? 'light' : 'lights'}
+        </Text>
+      </TouchableOpacity>
       {onOptions && (
         <TouchableOpacity
           style={styles.shortcutOptionsBtn}
@@ -44,16 +57,7 @@ function ShortcutCard({ shortcut, isRunning, onRun, onOptions }) {
           <Ionicons name="ellipsis-horizontal" size={14} color={colors.textTertiary} />
         </TouchableOpacity>
       )}
-      <View style={[styles.shortcutIcon, { backgroundColor: visual.color + '33' }]}>
-        {isRunning
-          ? <ActivityIndicator size="small" color={visual.color} />
-          : <Ionicons name={visual.icon} size={26} color={visual.color} />}
-      </View>
-      <Text style={styles.shortcutName} numberOfLines={1}>{shortcut.name}</Text>
-      <Text style={styles.shortcutMeta}>
-        {shortcut.deviceIds.length} {shortcut.deviceIds.length === 1 ? 'light' : 'lights'}
-      </Text>
-    </TouchableOpacity>
+    </View>
   );
 }
 
@@ -155,6 +159,7 @@ export default function LightShortcutsRow({
 
 const makeStyles = (colors) => StyleSheet.create({
   shortcutsRow: { flexDirection: 'row', gap: 10, paddingBottom: 2 },
+  shortcutCardWrap: { position: 'relative' },
   shortcutCard: {
     width: 124,
     backgroundColor: colors.surface,
