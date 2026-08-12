@@ -1,8 +1,9 @@
 import React, { useEffect, useState, useMemo, useCallback, useRef, memo } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, StyleSheet,
-  Modal, TextInput, KeyboardAvoidingView, Platform, useWindowDimensions,
+  Modal, TextInput, KeyboardAvoidingView, Platform, useWindowDimensions, Animated,
 } from 'react-native';
+import useFabHideOnScroll from '../../hooks/useFabHideOnScroll';
 import { M } from '../../components/Motion';
 import { Easing } from 'react-native-reanimated';
 import { useFocusEffect } from '@react-navigation/native';
@@ -415,6 +416,7 @@ export default function BillsExpensesScreen({ navigation }) {
   const { showConfirm } = useAlert();
   const isDesktop     = useIsDesktop();
   const { height: windowHeight } = useWindowDimensions();
+  const fab           = useFabHideOnScroll();
   const styles        = useMemo(() => makeStyles(colors), [colors]);
   const { animationsEnabled } = useHousehold();
 
@@ -701,6 +703,8 @@ export default function BillsExpensesScreen({ navigation }) {
           styles.container,
           isDesktop && { maxWidth: DESKTOP_MAX_CONTENT, alignSelf: 'center', width: '100%' },
         ]}
+        onScroll={fab.onScroll}
+        scrollEventThrottle={16}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
@@ -945,18 +949,23 @@ export default function BillsExpensesScreen({ navigation }) {
         )}
 
         </View>
-        <View style={{ height: 180 }} />
+        <View style={{ height: 230 }} />
       </ScrollView>
 
       {/* FAB */}
-      <TouchableOpacity
-        style={[styles.fab, { backgroundColor: colors.accent }]}
-        onPress={openNew}
-        accessibilityRole="button"
-        accessibilityLabel={`Add ${activeTab === 'bills' ? 'bill' : activeTab === 'budgets' ? 'budget' : 'expense'}`}
+      <Animated.View
+        style={[styles.fabWrapper, fab.animatedStyle]}
+        pointerEvents={fab.pointerEvents}
       >
-        <Ionicons name="add" size={28} color="#fff" />
-      </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.fab, { backgroundColor: colors.accent }]}
+          onPress={openNew}
+          accessibilityRole="button"
+          accessibilityLabel={`Add ${activeTab === 'bills' ? 'bill' : activeTab === 'budgets' ? 'budget' : 'expense'}`}
+        >
+          <Ionicons name="add" size={28} color="#fff" />
+        </TouchableOpacity>
+      </Animated.View>
 
       {/* Add / Edit modal */}
       <Modal
@@ -1394,8 +1403,10 @@ const makeStyles = (colors) => StyleSheet.create({
     borderTopWidth: 1, borderTopColor: colors.border,
   },
 
-  fab: {
+  fabWrapper: {
     position: 'absolute', right: spacing.xl, bottom: 160,
+  },
+  fab: {
     width: 56, height: 56, borderRadius: 28,
     alignItems: 'center', justifyContent: 'center',
     shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 10,

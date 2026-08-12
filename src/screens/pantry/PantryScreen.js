@@ -11,6 +11,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { useHousehold } from '../../context/HouseholdContext';
 import { useNavScroll } from '../../context/NavScrollContext';
+import useFabHideOnScroll from '../../hooks/useFabHideOnScroll';
 import { useAlert } from '../../context/AlertContext';
 import { useNotification } from '../../context/NotificationContext';
 import { subscribePantryItems, addPantryItem, updatePantryItem, deletePantryItem, getHousehold } from '../../services/firestore';
@@ -206,6 +207,7 @@ export default function PantryScreen() {
   // ── Animations ────────────────────────────────────────────────────────────
   const headerAnim = useRef(new Animated.Value(0)).current;
   const fabAnim    = useRef(new Animated.Value(0)).current;
+  const fab        = useFabHideOnScroll(fabAnim);
 
   // Replay the entrance on every focus (tab stays mounted, so a mount effect
   // would only fire once). Reset to 0 then animate in.
@@ -326,7 +328,7 @@ export default function PantryScreen() {
           data={groupedCategories}
           keyExtractor={(row) => row.id ?? row.label}
           contentContainerStyle={styles.listContent}
-          onScroll={handleScroll}
+          onScroll={(e) => { handleScroll(e); fab.onScroll(e); }}
           scrollEventThrottle={16}
           showsVerticalScrollIndicator={false}
           ListEmptyComponent={
@@ -384,10 +386,10 @@ export default function PantryScreen() {
           }}
         />
 
-        <Animated.View style={[styles.fabWrapper, {
-          transform: [{ scale: fabAnim }],
-          opacity: fabAnim,
-        }]}>
+        <Animated.View
+          style={[styles.fabWrapper, fab.animatedStyle]}
+          pointerEvents={fab.pointerEvents}
+        >
           <TouchableOpacity
             style={styles.floatingAddButton}
             onPress={openAddModal}
@@ -555,7 +557,7 @@ const makeStyles = (colors) => StyleSheet.create({
   categoryFilterPillLabel:       { ...type.label, color: colors.textSecondary },
   categoryFilterPillLabelActive: { color: colors.accent },
 
-  listContent: { paddingHorizontal: spacing.xl, paddingBottom: 160 },
+  listContent: { paddingHorizontal: spacing.xl, paddingBottom: 230 },
 
   emptyStateContainer: { alignItems: 'center', paddingTop: 80, gap: 12 },
   emptyStateIcon: {
