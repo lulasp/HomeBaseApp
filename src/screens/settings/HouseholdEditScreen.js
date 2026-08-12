@@ -27,7 +27,7 @@ import DraggableCategoryList from '../../components/DraggableCategoryList';
 import IconPicker from '../../components/IconPicker';
 import { spacing, radius, type } from '../../theme/colors';
 import { useIsDesktop, SIDEBAR_WIDTH, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
-import { useWindowDimensions } from 'react-native';
+import useVisualViewportHeight from '../../hooks/useVisualViewportHeight';
 
 const CONTACT_ICONS  = ['🚑','🏥','👨‍⚕️','🚒','🚓','👮','💊','🧑‍🚒','👨‍👩‍👧','👴','🏠','🔑','🌐','📞','⚡','🐾'];
 const RELATIONSHIPS  = ['Doctor','Hospital','Police','Fire Dept','Family','Neighbor','Vet','Electrician','Plumber','Other'];
@@ -96,7 +96,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
   const styles    = useMemo(() => makeStyles(colors), [colors]);
   const isDesktop = useIsDesktop();
   const insets    = useSafeAreaInsets();
-  const { height: windowHeight } = useWindowDimensions();
+  const windowHeight = useVisualViewportHeight();
 
   const [household, setHousehold]           = useState(null);
   const [loading, setLoading]               = useState(true);

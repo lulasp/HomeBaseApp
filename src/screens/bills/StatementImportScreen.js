@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, TextInput,
-  StyleSheet, ActivityIndicator, Platform, useWindowDimensions,
+  StyleSheet, ActivityIndicator, Platform,
 } from 'react-native';
+import useVisualViewportHeight from '../../hooks/useVisualViewportHeight';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { format } from 'date-fns';
@@ -190,7 +191,7 @@ export default function StatementImportScreen({ navigation }) {
   const { showAlert } = useAlert();
   const { notify } = useNotification();
   const isDesktop = useIsDesktop();
-  const { height: windowHeight } = useWindowDimensions();
+  const windowHeight = useVisualViewportHeight();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const contentKey = useEntranceReplay();
 

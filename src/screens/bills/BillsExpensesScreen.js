@@ -1,9 +1,10 @@
 import React, { useEffect, useState, useMemo, useCallback, useRef, memo } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, StyleSheet,
-  Modal, TextInput, KeyboardAvoidingView, Platform, useWindowDimensions, Animated,
+  Modal, TextInput, KeyboardAvoidingView, Platform, Animated,
 } from 'react-native';
 import useFabHideOnScroll from '../../hooks/useFabHideOnScroll';
+import useVisualViewportHeight from '../../hooks/useVisualViewportHeight';
 import { M } from '../../components/Motion';
 import { Easing } from 'react-native-reanimated';
 import { useFocusEffect } from '@react-navigation/native';
@@ -415,7 +416,7 @@ export default function BillsExpensesScreen({ navigation }) {
   const { colors }    = useTheme();
   const { showConfirm } = useAlert();
   const isDesktop     = useIsDesktop();
-  const { height: windowHeight } = useWindowDimensions();
+  const windowHeight = useVisualViewportHeight();
   const fab           = useFabHideOnScroll();
   const styles        = useMemo(() => makeStyles(colors), [colors]);
   const { animationsEnabled } = useHousehold();

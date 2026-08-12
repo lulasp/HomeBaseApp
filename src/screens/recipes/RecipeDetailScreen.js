@@ -1,8 +1,9 @@
 import React, { useMemo, useState, useCallback } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, StyleSheet, Image,
-  useWindowDimensions, Modal, ActivityIndicator,
+  Modal, ActivityIndicator,
 } from 'react-native';
+import useVisualViewportHeight from '../../hooks/useVisualViewportHeight';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../../context/AuthContext';
@@ -34,7 +35,7 @@ export default function RecipeDetailScreen({ route, navigation }) {
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const contentKey = useEntranceReplay();
   const isDesktop = useIsDesktop();
-  const { height: windowHeight } = useWindowDimensions();
+  const windowHeight = useVisualViewportHeight();
   const isOwnCustomRecipe = !isSearch && recipe.sourceType === 'custom' && recipe.createdBy === user?.uid;
 
   const [groceryModal, setGroceryModal]     = useState(false);

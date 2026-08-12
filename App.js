@@ -1,6 +1,6 @@
 import 'react-native-get-random-values';
 import 'react-native-gesture-handler';
-import React from 'react';
+import React, { useEffect } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, initialWindowMetrics } from 'react-native-safe-area-context';
@@ -12,6 +12,7 @@ import { NotificationProvider } from './src/context/NotificationContext';
 import { LightTimerProvider } from './src/context/LightTimerContext';
 import { NavScrollProvider } from './src/context/NavScrollContext';
 import AppNavigator from './src/navigation/index';
+import { installWebViewportFix } from './src/utils/webViewportFix';
 
 function AppContent() {
   const { theme } = useTheme();
@@ -24,6 +25,8 @@ function AppContent() {
 }
 
 export default function App() {
+  useEffect(() => installWebViewportFix(), []);
+
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider initialMetrics={initialWindowMetrics}>
