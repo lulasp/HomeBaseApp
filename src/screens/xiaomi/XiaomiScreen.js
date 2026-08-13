@@ -7,10 +7,14 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../context/ThemeContext';
 import { useNavScroll } from '../../context/NavScrollContext';
+import { useAuth } from '../../context/AuthContext';
 import { spacing, radius, type } from '../../theme/colors';
 import { useIsDesktop, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
+import { getHouseholdWithPrivate, updateHouseholdXiaomiCreds } from '../../services/firestore';
+import { Rise, useEntranceReplay } from '../../components/Motion';
 import {
-  getCredentials, saveCredentials, hasCredentials, getDevices, getDeviceType,
+  getCredentials, saveCredentials, hasCredentials, syncCredentialsFromHousehold,
+  getDevices, getDeviceType,
   fanStateFromProps, vacuumStateFromProps,
   getFanState, setFanPower, setFanLevel, setFanMode, setFanOscillation,
   getVacuumState, startCleaning, pauseCleaning, returnToDock,
@@ -59,7 +63,7 @@ const REGIONS = [
 
 // ── CredentialsModal ──────────────────────────────────────────────────────────
 
-function CredentialsModal({ visible, onClose, onSaved, colors }) {
+function CredentialsModal({ visible, onClose, onSaved, colors, householdId }) {
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const [form, setForm] = useState({ userId: '', serviceToken: '', ssecurity: '', region: 'cn' });
   const [saving, setSaving] = useState(false);
@@ -77,6 +81,8 @@ function CredentialsModal({ visible, onClose, onSaved, colors }) {
     setSaving(true);
     try {
       await saveCredentials(form);
+      // Share with the household so other devices/members pick them up.
+      if (householdId) await updateHouseholdXiaomiCreds(householdId, form).catch(() => {});
       onSaved();
       onClose();
     } finally {
@@ -438,8 +444,10 @@ function VacuumCard({ device, state, onStart, onPause, onDock, onFind, onSetSuct
 export default function XiaomiScreen() {
   const { colors } = useTheme();
   const { handleScroll } = useNavScroll();
+  const { householdId } = useAuth();
   const styles    = useMemo(() => makeStyles(colors), [colors]);
   const isDesktop = useIsDesktop();
+  const contentKey = useEntranceReplay();
 
   const [configured, setConfigured]   = useState(false);
   const [showSetup, setShowSetup]     = useState(false);
@@ -458,6 +466,14 @@ export default function XiaomiScreen() {
 
   const loadDevices = useCallback(async () => {
     try {
+      // Household credentials are the source of truth — pull them into this
+      // device's cache before reading, so shared creds work across devices.
+      if (householdId) {
+        try {
+          const hh = await getHouseholdWithPrivate(householdId);
+          await syncCredentialsFromHousehold(hh?.xiaomiCreds);
+        } catch { /* offline — fall back to whatever's cached locally */ }
+      }
       const creds = await getCredentials();
       setConfigured(hasCredentials(creds));
       if (!hasCredentials(creds)) { setLoading(false); return; }
@@ -496,9 +512,9 @@ export default function XiaomiScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [selectedFan, selectedVacuum]);
+  }, [selectedFan, selectedVacuum, householdId]);
 
-  useEffect(() => { loadDevices(); }, []);
+  useEffect(() => { loadDevices(); }, [householdId]);
 
   const handleRefresh = () => { setRefreshing(true); loadDevices(); };
 
@@ -590,11 +606,13 @@ export default function XiaomiScreen() {
       <CredentialsModal
         visible={showSetup}
         colors={colors}
+        householdId={householdId}
         onClose={() => setShowSetup(false)}
         onSaved={() => { setLoading(true); loadDevices(); }}
       />
 
       <ScrollView
+        key={contentKey}
         style={{ flex: 1 }}
         contentContainerStyle={[styles.container, innerStyle]}
         showsVerticalScrollIndicator={false}
@@ -602,6 +620,7 @@ export default function XiaomiScreen() {
         scrollEventThrottle={16}
       >
         {/* Header */}
+        <Rise index={0}>
         <View style={styles.header}>
           <View>
             <Text style={styles.title}>Xiaomi</Text>
@@ -641,6 +660,7 @@ export default function XiaomiScreen() {
             </View>
           </View>
         </View>
+        </Rise>
 
         {/* Not configured */}
         {!configured && (
@@ -665,6 +685,7 @@ export default function XiaomiScreen() {
         {/* Fans section */}
         {fans.length > 0 && (
           <>
+          <Rise index={1}>
             <View style={styles.sectionLabelRow}>
               <Text style={[styles.sectionLabel, { marginTop: 0, marginBottom: 0 }]}>FANS</Text>
               {fans.filter(f => fanStates[f.did]?.on).length > 0 && (
@@ -709,12 +730,14 @@ export default function XiaomiScreen() {
                 />
               </>
             )}
+          </Rise>
           </>
         )}
 
         {/* Vacuum section */}
         {vacuums.length > 0 && (
           <>
+          <Rise index={2}>
             <View style={[styles.sectionLabelRow, { marginTop: fans.length > 0 ? spacing.xl : 0 }]}>
               <Text style={[styles.sectionLabel, { marginTop: 0, marginBottom: 0 }]}>VACUUM</Text>
               {selectedVacuumState.status === 1 && (
@@ -759,6 +782,7 @@ export default function XiaomiScreen() {
                 colors={colors}
               />
             )}
+          </Rise>
           </>
         )}
 

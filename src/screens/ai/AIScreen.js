@@ -7,8 +7,9 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
+import { useHousehold } from '../../context/HouseholdContext';
 import { useAlert } from '../../context/AlertContext';
-import { subscribePantryItems, saveRecipe, getHousehold } from '../../services/firestore';
+import { subscribePantryItems, saveRecipe, getHouseholdWithPrivate } from '../../services/firestore';
 import { sendChatMessage, suggestRecipes } from '../../services/openrouter';
 import { DEFAULT_AI_MODEL } from '../../utils/aiModels';
 import { useNotification } from '../../context/NotificationContext';
@@ -456,6 +457,7 @@ const TABS = [
 export default function AIScreen() {
   const { colors }      = useTheme();
   const { householdId } = useAuth();
+  const { animationsEnabled } = useHousehold();
   const isDesktop       = useIsDesktop();
   const styles          = useMemo(() => makeStyles(colors), [colors]);
   const [tab, setTab]   = useState('chat');
@@ -464,12 +466,13 @@ export default function AIScreen() {
   const fadeAnim        = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
+    if (!animationsEnabled) { fadeAnim.setValue(1); return; }
     Animated.timing(fadeAnim, { toValue: 1, duration: 350, useNativeDriver: true }).start();
-  }, []);
+  }, [animationsEnabled]);
 
   useEffect(() => {
     if (!householdId) return;
-    getHousehold(householdId).then((hh) => {
+    getHouseholdWithPrivate(householdId).then((hh) => {
       setApiKey(hh?.openRouterApiKey ?? '');
       setAiModel(hh?.aiModel ?? DEFAULT_AI_MODEL);
     });

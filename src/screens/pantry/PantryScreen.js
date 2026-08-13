@@ -9,7 +9,10 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useIsDesktop, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
+import { useHousehold } from '../../context/HouseholdContext';
 import { useNavScroll } from '../../context/NavScrollContext';
+import useFabHideOnScroll from '../../hooks/useFabHideOnScroll';
+import FloatingActionButton from '../../components/FloatingActionButton';
 import { useAlert } from '../../context/AlertContext';
 import { useNotification } from '../../context/NotificationContext';
 import { subscribePantryItems, addPantryItem, updatePantryItem, deletePantryItem, getHousehold } from '../../services/firestore';
@@ -73,6 +76,7 @@ const PantryItemRow = memo(({ item, onEdit, onDelete }) => {
 export default function PantryScreen() {
   const { householdId, user } = useAuth();
   const { colors } = useTheme();
+  const { animationsEnabled } = useHousehold();
   const { handleScroll } = useNavScroll();
   const { showAlert, showConfirm } = useAlert();
   const { notify } = useNotification();
@@ -204,17 +208,29 @@ export default function PantryScreen() {
   // ── Animations ────────────────────────────────────────────────────────────
   const headerAnim = useRef(new Animated.Value(0)).current;
   const fabAnim    = useRef(new Animated.Value(0)).current;
+  const fab        = useFabHideOnScroll(fabAnim);
 
-  useEffect(() => {
-    Animated.parallel([
-      Animated.timing(headerAnim, {
-        toValue: 1, duration: 380, useNativeDriver: true,
-      }),
-      Animated.spring(fabAnim, {
-        toValue: 1, delay: 250, friction: 6, tension: 130, useNativeDriver: true,
-      }),
-    ]).start();
-  }, []);
+  // Replay the entrance on every focus (tab stays mounted, so a mount effect
+  // would only fire once). Reset to 0 then animate in.
+  useFocusEffect(
+    useCallback(() => {
+      if (!animationsEnabled) {
+        headerAnim.setValue(1);
+        fabAnim.setValue(1);
+        return;
+      }
+      headerAnim.setValue(0);
+      fabAnim.setValue(0);
+      Animated.parallel([
+        Animated.timing(headerAnim, {
+          toValue: 1, duration: 380, useNativeDriver: true,
+        }),
+        Animated.spring(fabAnim, {
+          toValue: 1, delay: 250, friction: 6, tension: 130, useNativeDriver: true,
+        }),
+      ]).start();
+    }, [animationsEnabled]),
+  );
 
   const filteredItems = items.filter((item) => {
     const matchesSearch   = item.name.toLowerCase().includes(searchQuery.toLowerCase());
@@ -313,7 +329,7 @@ export default function PantryScreen() {
           data={groupedCategories}
           keyExtractor={(row) => row.id ?? row.label}
           contentContainerStyle={styles.listContent}
-          onScroll={handleScroll}
+          onScroll={(e) => { handleScroll(e); fab.onScroll(e); }}
           scrollEventThrottle={16}
           showsVerticalScrollIndicator={false}
           ListEmptyComponent={
@@ -371,19 +387,13 @@ export default function PantryScreen() {
           }}
         />
 
-        <Animated.View style={[styles.fabWrapper, {
-          transform: [{ scale: fabAnim }],
-          opacity: fabAnim,
-        }]}>
-          <TouchableOpacity
-            style={styles.floatingAddButton}
-            onPress={openAddModal}
-            accessibilityRole="button"
-            accessibilityLabel="Add pantry item"
-          >
-            <Ionicons name="add" size={28} color="#fff" />
-          </TouchableOpacity>
-        </Animated.View>
+        <FloatingActionButton
+          onPress={openAddModal}
+          accessibilityLabel="Add pantry item"
+          enterAnim={fabAnim}
+          hideAnim={fab.hideAnim}
+          interactive={fab.interactive}
+        />
       </View>
 
       <Modal visible={modalVisible} animationType="slide" transparent statusBarTranslucent>
@@ -542,7 +552,7 @@ const makeStyles = (colors) => StyleSheet.create({
   categoryFilterPillLabel:       { ...type.label, color: colors.textSecondary },
   categoryFilterPillLabelActive: { color: colors.accent },
 
-  listContent: { paddingHorizontal: spacing.xl, paddingBottom: 160 },
+  listContent: { paddingHorizontal: spacing.xl, paddingBottom: 230 },
 
   emptyStateContainer: { alignItems: 'center', paddingTop: 80, gap: 12 },
   emptyStateIcon: {
@@ -601,19 +611,6 @@ const makeStyles = (colors) => StyleSheet.create({
   },
   expiryTagText: { ...type.caption, fontWeight: '700' },
 
-  fabWrapper: {
-    position: 'absolute', bottom: 160, right: spacing.xl,
-  },
-  floatingAddButton: {
-    width: 58, height: 58, borderRadius: radius.full,
-    backgroundColor: colors.accent,
-    alignItems: 'center', justifyContent: 'center',
-    shadowColor: colors.accent,
-    shadowOpacity: 0.55,
-    shadowRadius: 24,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 12,
-  },
 
   modalOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: colors.overlay },
   bottomSheetScroll: {

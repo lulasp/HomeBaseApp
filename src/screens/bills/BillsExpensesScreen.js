@@ -1,8 +1,15 @@
-import React, { useEffect, useState, useMemo, useCallback, memo } from 'react';
+import React, { useEffect, useState, useMemo, useCallback, useRef, memo } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, StyleSheet,
-  Modal, TextInput, KeyboardAvoidingView, Platform, useWindowDimensions,
+  Modal, TextInput, KeyboardAvoidingView, Platform,
 } from 'react-native';
+import useFabHideOnScroll from '../../hooks/useFabHideOnScroll';
+import useVisualViewportHeight from '../../hooks/useVisualViewportHeight';
+import FloatingActionButton from '../../components/FloatingActionButton';
+import { M } from '../../components/Motion';
+import { Easing } from 'react-native-reanimated';
+import { useFocusEffect } from '@react-navigation/native';
+import { useHousehold } from '../../context/HouseholdContext';
 import { Ionicons } from '@expo/vector-icons';
 import { format } from 'date-fns';
 import { useAuth } from '../../context/AuthContext';
@@ -58,6 +65,39 @@ const blankExpense  = () => ({
   title: '', category: 'other', amount: '',
   date: format(new Date(), 'yyyy-MM-dd'), paidBy: '', notes: '',
 });
+
+// ── Animation helpers ────────────────────────────────────────────────────────────
+
+// Staggered entrance — springs up + fades in, delayed by index. Replays whenever
+// remounted (tab switch / screen focus, see contentKey below).
+function Rise({ index = 0, style, children }) {
+  return (
+    <M
+      from={{ opacity: 0, translateY: 22, scale: 0.98 }}
+      animate={{ opacity: 1, translateY: 0, scale: 1 }}
+      transition={{ type: 'spring', damping: 16, stiffness: 150, mass: 0.9, delay: index * 55 }}
+      style={style}
+    >
+      {children}
+    </M>
+  );
+}
+
+// Progress bar that grows from 0 to `ratio` of its measured track width.
+function AnimatedBar({ ratio, color, trackStyle, fillStyle, delay = 0 }) {
+  const [w, setW] = useState(0);
+  const r = Math.min(1, Math.max(0, ratio));
+  return (
+    <View style={trackStyle} onLayout={(e) => setW(e.nativeEvent.layout.width)}>
+      <M
+        style={[fillStyle, { backgroundColor: color }]}
+        from={{ width: 0 }}
+        animate={{ width: w * r }}
+        transition={{ type: 'timing', duration: 700, delay, easing: Easing.out(Easing.cubic) }}
+      />
+    </View>
+  );
+}
 
 // ── Category chip ──────────────────────────────────────────────────────────────
 
@@ -299,7 +339,7 @@ const TrendChart = memo(function TrendChart({ data, colors, styles }) {
         <Text style={styles.cardHint}>Last {data.length} months</Text>
       </View>
       <View style={styles.chartBars}>
-        {data.map((d) => {
+        {data.map((d, i) => {
           const isCur = d.key === currentKey;
           const h     = d.spending > 0 ? Math.max(3, Math.round((d.spending / max) * CHART_H)) : 0;
           return (
@@ -308,7 +348,12 @@ const TrendChart = memo(function TrendChart({ data, colors, styles }) {
                 {d.spending > 0 ? fmtCompact(d.spending) : ''}
               </Text>
               <View style={styles.chartTrack}>
-                <View style={[styles.chartBar, { height: h, backgroundColor: isCur ? colors.accent : colors.muted }]} />
+                <M
+                  style={[styles.chartBar, { backgroundColor: isCur ? colors.accent : colors.muted }]}
+                  from={{ height: 0 }}
+                  animate={{ height: h }}
+                  transition={{ type: 'spring', damping: 15, stiffness: 130, mass: 0.8, delay: 150 + i * 45 }}
+                />
               </View>
               <Text style={[styles.chartLabel, isCur && { color: colors.textPrimary, fontWeight: '700' }]}>
                 {d.label}
@@ -344,9 +389,13 @@ const BudgetRow = memo(function BudgetRow({ row, cat, colors, styles, onEdit, on
         </Text>
       </View>
 
-      <View style={styles.progressTrack}>
-        <View style={[styles.progressFill, { width: `${pct * 100}%`, backgroundColor: barColor }]} />
-      </View>
+      <AnimatedBar
+        ratio={pct}
+        color={barColor}
+        trackStyle={styles.progressTrack}
+        fillStyle={styles.progressFill}
+        delay={120}
+      />
 
       <View style={styles.budgetActions}>
         <View style={{ flex: 1 }} />
@@ -368,8 +417,10 @@ export default function BillsExpensesScreen({ navigation }) {
   const { colors }    = useTheme();
   const { showConfirm } = useAlert();
   const isDesktop     = useIsDesktop();
-  const { height: windowHeight } = useWindowDimensions();
+  const windowHeight = useVisualViewportHeight();
+  const fab           = useFabHideOnScroll();
   const styles        = useMemo(() => makeStyles(colors), [colors]);
+  const { animationsEnabled } = useHousehold();
 
   const [activeTab,       setActiveTab]       = useState('overview');
   const [bills,           setBills]           = useState([]);
@@ -385,6 +436,17 @@ export default function BillsExpensesScreen({ navigation }) {
   const [budgetForm,    setBudgetForm]    = useState({ category: 'other', amount: '' });
   const [errors,        setErrors]        = useState({});
   const [saving,        setSaving]        = useState(false);
+
+  // Bump on every focus (skip the first — the mount already animates) to remount
+  // the tab content and replay entrance animations. Same pattern as HomeScreen.
+  const [contentKey, setContentKey] = useState(0);
+  const firstFocus = useRef(true);
+  useFocusEffect(
+    useCallback(() => {
+      if (firstFocus.current) { firstFocus.current = false; return; }
+      if (animationsEnabled) setContentKey((k) => k + 1);
+    }, [animationsEnabled]),
+  );
 
   const monthKey = useMemo(() => getMonthKey(), []);
 
@@ -643,6 +705,8 @@ export default function BillsExpensesScreen({ navigation }) {
           styles.container,
           isDesktop && { maxWidth: DESKTOP_MAX_CONTENT, alignSelf: 'center', width: '100%' },
         ]}
+        onScroll={fab.onScroll}
+        scrollEventThrottle={16}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
@@ -680,6 +744,8 @@ export default function BillsExpensesScreen({ navigation }) {
           ))}
         </View>
 
+        {/* Tab content — keyed so it remounts and replays entrance anims on focus */}
+        <View key={contentKey}>
         {/* ── Overview tab ──────────────────────────────────────────────── */}
         {activeTab === 'overview' && expenses.length === 0 && (
           <View style={styles.emptyState}>
@@ -692,6 +758,7 @@ export default function BillsExpensesScreen({ navigation }) {
         {activeTab === 'overview' && expenses.length > 0 && (
           <>
             {/* Cash-flow hero */}
+            <Rise index={0}>
             <View style={styles.flowCard}>
               <Text style={styles.flowLabel}>Net this month</Text>
               <Text style={[styles.flowNet, { color: flow.net >= 0 ? colors.sage : colors.danger }]}>
@@ -725,9 +792,12 @@ export default function BillsExpensesScreen({ navigation }) {
                 </View>
               </View>
             </View>
+            </Rise>
 
             {/* Spending trend */}
-            <TrendChart data={trend} colors={colors} styles={styles} />
+            <Rise index={1}>
+              <TrendChart data={trend} colors={colors} styles={styles} />
+            </Rise>
           </>
         )}
 
@@ -735,7 +805,7 @@ export default function BillsExpensesScreen({ navigation }) {
         {activeTab === 'bills' && (
           <>
             {bills.length > 0 && (
-              <View style={styles.summaryRow}>
+              <Rise index={0} style={styles.summaryRow}>
                 <View style={styles.summaryCard}>
                   <Text style={styles.summaryValue}>{fmtCurrency(monthlyTotal)}</Text>
                   <Text style={styles.summaryLabel}>Monthly</Text>
@@ -750,7 +820,7 @@ export default function BillsExpensesScreen({ navigation }) {
                   </Text>
                   <Text style={styles.summaryLabel}>Outstanding</Text>
                 </View>
-              </View>
+              </Rise>
             )}
 
             {bills.length === 0 ? (
@@ -761,18 +831,19 @@ export default function BillsExpensesScreen({ navigation }) {
               </View>
             ) : (
               <View style={styles.list}>
-                {bills.map(bill => (
-                  <BillCard
-                    key={bill.id}
-                    bill={bill}
-                    cats={allBillCats}
-                    monthKey={monthKey}
-                    onEdit={openEditBill}
-                    onDelete={handleDeleteBill}
-                    onTogglePaid={handleTogglePaid}
-                    colors={colors}
-                    styles={styles}
-                  />
+                {bills.map((bill, i) => (
+                  <Rise key={bill.id} index={Math.min(i + 1, 8)}>
+                    <BillCard
+                      bill={bill}
+                      cats={allBillCats}
+                      monthKey={monthKey}
+                      onEdit={openEditBill}
+                      onDelete={handleDeleteBill}
+                      onTogglePaid={handleTogglePaid}
+                      colors={colors}
+                      styles={styles}
+                    />
+                  </Rise>
                 ))}
               </View>
             )}
@@ -783,7 +854,7 @@ export default function BillsExpensesScreen({ navigation }) {
         {activeTab === 'expenses' && (
           <>
             {expenses.length > 0 && (
-              <View style={[styles.summaryRow, { gap: spacing.md }]}>
+              <Rise index={0} style={[styles.summaryRow, { gap: spacing.md }]}>
                 <View style={[styles.summaryCard, { flex: 1 }]}>
                   <Text style={[styles.summaryValue, { color: colors.amber }]}>{fmtCurrency(thisMonthTotal)}</Text>
                   <Text style={styles.summaryLabel}>This month</Text>
@@ -792,7 +863,7 @@ export default function BillsExpensesScreen({ navigation }) {
                   <Text style={styles.summaryValue}>{fmtCurrency(thisYearTotal)}</Text>
                   <Text style={styles.summaryLabel}>This year</Text>
                 </View>
-              </View>
+              </Rise>
             )}
 
             {groupedExpenses.length === 0 ? (
@@ -811,16 +882,17 @@ export default function BillsExpensesScreen({ navigation }) {
                         {fmtCurrency(items.reduce((s, e) => s + spentAmount(e), 0))}
                       </Text>
                     </View>
-                    {items.map(expense => (
-                      <ExpenseCard
-                        key={expense.id}
-                        expense={expense}
-                        cats={allExpenseCats}
-                        onEdit={openEditExpense}
-                        onDelete={handleDeleteExpense}
-                        colors={colors}
-                        styles={styles}
-                      />
+                    {items.map((expense, i) => (
+                      <Rise key={expense.id} index={Math.min(i + 1, 8)}>
+                        <ExpenseCard
+                          expense={expense}
+                          cats={allExpenseCats}
+                          onEdit={openEditExpense}
+                          onDelete={handleDeleteExpense}
+                          colors={colors}
+                          styles={styles}
+                        />
+                      </Rise>
                     ))}
                   </View>
                 ))}
@@ -833,7 +905,7 @@ export default function BillsExpensesScreen({ navigation }) {
         {activeTab === 'budgets' && (
           <>
             {budgetRows.length > 0 && (
-              <View style={styles.summaryRow}>
+              <Rise index={0} style={styles.summaryRow}>
                 <View style={styles.summaryCard}>
                   <Text style={styles.summaryValue}>{fmtCurrency(budgetTotals.budgeted)}</Text>
                   <Text style={styles.summaryLabel}>Budgeted</Text>
@@ -850,7 +922,7 @@ export default function BillsExpensesScreen({ navigation }) {
                     {budgetTotals.overCount > 0 ? `${budgetTotals.overCount} over` : 'Left'}
                   </Text>
                 </View>
-              </View>
+              </Rise>
             )}
 
             {budgetRows.length === 0 ? (
@@ -861,34 +933,34 @@ export default function BillsExpensesScreen({ navigation }) {
               </View>
             ) : (
               <View style={styles.list}>
-                {budgetRows.map(row => (
-                  <BudgetRow
-                    key={row.category}
-                    row={row}
-                    cat={budgetCatById[row.category] || { key: row.category, label: row.category, icon: 'cash', colorKey: 'textSecondary' }}
-                    colors={colors}
-                    styles={styles}
-                    onEdit={openEditBudget}
-                    onDelete={handleDeleteBudget}
-                  />
+                {budgetRows.map((row, i) => (
+                  <Rise key={row.category} index={Math.min(i + 1, 8)}>
+                    <BudgetRow
+                      row={row}
+                      cat={budgetCatById[row.category] || { key: row.category, label: row.category, icon: 'cash', colorKey: 'textSecondary' }}
+                      colors={colors}
+                      styles={styles}
+                      onEdit={openEditBudget}
+                      onDelete={handleDeleteBudget}
+                    />
+                  </Rise>
                 ))}
               </View>
             )}
           </>
         )}
 
-        <View style={{ height: 180 }} />
+        </View>
+        <View style={{ height: 230 }} />
       </ScrollView>
 
       {/* FAB */}
-      <TouchableOpacity
-        style={[styles.fab, { backgroundColor: colors.accent }]}
+      <FloatingActionButton
         onPress={openNew}
-        accessibilityRole="button"
         accessibilityLabel={`Add ${activeTab === 'bills' ? 'bill' : activeTab === 'budgets' ? 'budget' : 'expense'}`}
-      >
-        <Ionicons name="add" size={28} color="#fff" />
-      </TouchableOpacity>
+        hideAnim={fab.hideAnim}
+        interactive={fab.interactive}
+      />
 
       {/* Add / Edit modal */}
       <Modal
@@ -1326,13 +1398,6 @@ const makeStyles = (colors) => StyleSheet.create({
     borderTopWidth: 1, borderTopColor: colors.border,
   },
 
-  fab: {
-    position: 'absolute', right: spacing.xl, bottom: 160,
-    width: 56, height: 56, borderRadius: 28,
-    alignItems: 'center', justifyContent: 'center',
-    shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 }, elevation: 8,
-  },
 
   modalBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.6)' },
   sheet: {

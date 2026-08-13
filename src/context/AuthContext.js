@@ -3,7 +3,7 @@ import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { onAuthStateChanged, getRedirectResult, updateProfile, signOut as firebaseSignOut } from 'firebase/auth';
 import { auth } from '../config/firebase';
-import { getHouseholdsForUser } from '../services/firestore';
+import { getHouseholdsForUser, upsertMemberProfile, migrateHouseholdSecrets } from '../services/firestore';
 
 const HOUSEHOLD_KEY     = '@homebase_household_id';
 const HOUSEHOLD_IDS_KEY = '@homebase_household_ids';
@@ -39,6 +39,16 @@ export const AuthProvider = ({ children }) => {
         try {
           const households = await getHouseholdsForUser(firebaseUser.uid);
           ids = households.map((h) => h.id);
+
+          // Move any legacy secrets/profiles off the world-readable parent doc,
+          // then keep this member's name/email current in the private doc so
+          // member lists show real identities instead of UIDs across devices.
+          const p = { name: (firebaseUser.displayName || '').trim(), email: (firebaseUser.email || '').trim() };
+          households.forEach((h) => {
+            migrateHouseholdSecrets(h.id)
+              .catch(() => {})
+              .finally(() => upsertMemberProfile(h.id, firebaseUser.uid, p).catch(() => {}));
+          });
         } catch (e) {
           const hidsRaw = await AsyncStorage.getItem(HOUSEHOLD_IDS_KEY);
           ids = hidsRaw ? JSON.parse(hidsRaw) : (storedActive ? [storedActive] : []);
@@ -90,6 +100,10 @@ export const AuthProvider = ({ children }) => {
     const trimmed = name.trim();
     if (auth.currentUser) {
       await updateProfile(auth.currentUser, { displayName: trimmed });
+      // Sync the new name to every household's member profile so member lists
+      // reflect the edit immediately, not only after the next login.
+      const p = { name: trimmed, email: (auth.currentUser.email || '').trim() };
+      householdIds.forEach((id) => upsertMemberProfile(id, auth.currentUser.uid, p).catch(() => {}));
     }
     setDisplayName(trimmed);
   };

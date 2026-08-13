@@ -13,8 +13,9 @@ import { useAlert } from '../../context/AlertContext';
 import { spacing, radius, type } from '../../theme/colors';
 import { useIsDesktop, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
 import { useLightTimer } from '../../context/LightTimerContext';
+import { Rise, useEntranceReplay } from '../../components/Motion';
 import {
-  getHousehold, subscribeLightShortcuts,
+  getHouseholdWithPrivate, subscribeLightShortcuts,
   addLightShortcut, updateLightShortcut,
 } from '../../services/firestore';
 import {
@@ -141,6 +142,7 @@ export default function HomeLightsScreen({ route }) {
   const { householdId } = useAuth();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const isDesktop = useIsDesktop();
+  const contentKey = useEntranceReplay();
 
   const { showAlert } = useAlert();
 
@@ -172,7 +174,7 @@ export default function HomeLightsScreen({ route }) {
     let cancelled = false;
     async function load() {
       try {
-        const hh = await getHousehold(householdId);
+        const hh = await getHouseholdWithPrivate(householdId);
         const apiKey = hh?.goveeApiKey ?? null;
         if (!cancelled) setGoveeApiKey(apiKey);
         if (!apiKey) { if (!cancelled) setLoading(false); return; }
@@ -447,6 +449,7 @@ export default function HomeLightsScreen({ route }) {
   return (
     <SafeAreaView style={[styles.root, Platform.OS === 'android' && { paddingTop: 24 }]}>
       <ScrollView
+        key={contentKey}
         style={{ flex: 1 }}
         contentContainerStyle={[styles.container, innerStyle]}
         onScroll={handleScroll}
@@ -454,6 +457,7 @@ export default function HomeLightsScreen({ route }) {
         showsVerticalScrollIndicator={false}
       >
         {/* Header */}
+        <Rise index={0}>
         <View style={styles.header}>
           <View>
             <Text style={styles.title}>Home Lights</Text>
@@ -466,8 +470,10 @@ export default function HomeLightsScreen({ route }) {
             <Text style={styles.headerBadgeText}>Govee</Text>
           </View>
         </View>
+        </Rise>
 
         {/* Shortcuts */}
+        <Rise index={1}>
         <View style={styles.sectionLabelRow}>
           <Text style={[styles.sectionLabel, styles.sectionLabelFlat]}>SHORTCUTS</Text>
         </View>
@@ -480,8 +486,10 @@ export default function HomeLightsScreen({ route }) {
           onCreateNew={openNewShortcut}
           onEdit={openEditShortcut}
         />
+        </Rise>
 
         {/* Devices */}
+        <Rise index={2}>
         <View style={styles.sectionLabelRow}>
           <Text style={[styles.sectionLabel, styles.sectionLabelFlat]}>DEVICES</Text>
           {(() => {
@@ -510,6 +518,7 @@ export default function HomeLightsScreen({ route }) {
             </React.Fragment>
           ))}
         </View>
+        </Rise>
 
         {/* Controls header */}
         <View style={styles.controlsHeader}>

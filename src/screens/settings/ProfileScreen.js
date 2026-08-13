@@ -2,8 +2,8 @@ import React, { useEffect, useState, useMemo } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet,
   Modal, KeyboardAvoidingView, Platform, ActivityIndicator,
-  useWindowDimensions,
 } from 'react-native';
+import useVisualViewportHeight from '../../hooks/useVisualViewportHeight';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
@@ -15,6 +15,7 @@ import {
 } from '../../services/firestore';
 import { spacing, radius, type } from '../../theme/colors';
 import { useIsDesktop, SIDEBAR_WIDTH, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
+import { Rise, useEntranceReplay } from '../../components/Motion';
 
 export default function ProfileScreen({ navigation }) {
   const {
@@ -23,11 +24,12 @@ export default function ProfileScreen({ navigation }) {
   } = useAuth();
   const { colors, theme, toggleTheme } = useTheme();
   const { handleScroll } = useNavScroll();
+  const contentKey = useEntranceReplay();
   const { showAlert, showConfirm } = useAlert();
   const { notify } = useNotification();
   const styles  = useMemo(() => makeStyles(colors), [colors]);
   const isDesktop = useIsDesktop();
-  const { height: windowHeight } = useWindowDimensions();
+  const windowHeight = useVisualViewportHeight();
 
   const [households, setHouseholds]   = useState([]);
   const [loadingHH, setLoadingHH]     = useState(true);
@@ -65,7 +67,7 @@ export default function ProfileScreen({ navigation }) {
     if (!hhName.trim()) { setSheetErrors({ hhName: 'Required' }); return; }
     setSheetLoading(true);
     try {
-      const id = await createHousehold(user.uid, hhName.trim());
+      const id = await createHousehold(user.uid, hhName.trim(), { name: user.displayName || '', email: user.email || '' });
       await saveHouseholdId(id);
       notify('Household created', `"${hhName.trim()}" is ready.`, { type: 'success' });
       closeSheet();
@@ -80,7 +82,7 @@ export default function ProfileScreen({ navigation }) {
     if (!inviteCode.trim()) { setSheetErrors({ inviteCode: 'Required' }); return; }
     setSheetLoading(true);
     try {
-      const id = await joinHousehold(user.uid, inviteCode.trim());
+      const id = await joinHousehold(user.uid, inviteCode.trim(), { name: user.displayName || '', email: user.email || '' });
       await saveHouseholdId(id);
       notify('Joined household', "You've been added to the household.", { type: 'success' });
       closeSheet();
@@ -96,6 +98,7 @@ export default function ProfileScreen({ navigation }) {
   return (
     <View style={{ height: windowHeight, backgroundColor: colors.background }}>
       <ScrollView
+        key={contentKey}
         style={{ flex: 1, marginLeft: isDesktop ? SIDEBAR_WIDTH : 0 }}
         onScroll={handleScroll}
         scrollEventThrottle={16}
@@ -105,6 +108,7 @@ export default function ProfileScreen({ navigation }) {
         ]}
         showsVerticalScrollIndicator
       >
+        <Rise index={0}>
         {/* ── Header ── */}
         <Text style={styles.screenTitle}>Profile</Text>
 
@@ -145,7 +149,9 @@ export default function ProfileScreen({ navigation }) {
             </View>
           </View>
         </View>
+        </Rise>
 
+        <Rise index={1}>
         {/* ── Households ── */}
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Households</Text>
@@ -201,7 +207,9 @@ export default function ProfileScreen({ navigation }) {
             })
           )}
         </View>
+        </Rise>
 
+        <Rise index={2}>
         {/* ── App ── */}
         <Text style={[styles.sectionTitle, { marginTop: spacing.xl }]}>App</Text>
 
@@ -238,6 +246,7 @@ export default function ProfileScreen({ navigation }) {
             <Text style={[styles.settingsLabel, { flex: 1, color: colors.danger }]}>Sign Out</Text>
           </TouchableOpacity>
         </View>
+        </Rise>
 
       </ScrollView>
 

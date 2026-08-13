@@ -14,6 +14,7 @@ import { subscribeMealPlan, setMealSlot, clearMealSlot, subscribeRecipes, getRec
 import { spacing, radius, type } from '../../theme/colors';
 import { DAYS_OF_WEEK, FULL_DAYS, MEAL_TYPES } from '../../utils/categories';
 import { useIsDesktop, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
+import { Rise, useEntranceReplay } from '../../components/Motion';
 import AddRecipeScreen from '../recipes/AddRecipeScreen';
 
 const getWeekKey = (date) => format(startOfWeek(date, { weekStartsOn: 1 }), 'yyyy-MM-dd');
@@ -65,6 +66,7 @@ export default function NutritionScreen({ navigation }) {
   const { notify } = useNotification();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const isDesktop = useIsDesktop();
+  const contentKey = useEntranceReplay();
 
   const [currentWeek, setCurrentWeek]     = useState(new Date());
   const [mealPlan, setMealPlan]           = useState({});
@@ -580,7 +582,7 @@ export default function NutritionScreen({ navigation }) {
     const isToday     = dateKey === todayDateKey;
     const dayCalories = getDayCalories(day);
     return (
-      <View key={day} style={[styles.dayCard, isToday && styles.dayCardToday]}>
+      <Rise key={day} index={dayIndex + 1} style={[styles.dayCard, isToday && styles.dayCardToday]}>
         <View style={[styles.dayCardHeader, isToday && styles.dayCardHeaderToday]}>
           <View>
             <Text style={[styles.dayName, isToday && styles.dayNameToday]}>
@@ -632,15 +634,16 @@ export default function NutritionScreen({ navigation }) {
             );
           })}
         </View>
-      </View>
+      </Rise>
     );
   });
 
   return (
     <SafeAreaView style={styles.screenRoot}>
       {isDesktop ? (
-        <View style={desktopContentWrapper}>
-          {header}
+        <View key={contentKey} style={desktopContentWrapper}>
+          <Rise index={0}>{header}</Rise>
+          <Rise index={1}>
           <View style={styles.desktopGrid}>
             <View style={styles.desktopGridRow}>
               <View style={styles.desktopCornerCell} />
@@ -706,10 +709,11 @@ export default function NutritionScreen({ navigation }) {
               );
             })}
           </View>
+          </Rise>
         </View>
       ) : (
-        <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.mobileContent} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" onScroll={handleScroll} scrollEventThrottle={16}>
-          {header}
+        <ScrollView key={contentKey} style={{ flex: 1 }} contentContainerStyle={styles.mobileContent} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" onScroll={handleScroll} scrollEventThrottle={16}>
+          <Rise index={0}>{header}</Rise>
           <View style={styles.dayGrid}>
             {mobileDayCards}
           </View>

@@ -9,6 +9,7 @@ import { useTheme } from '../../context/ThemeContext';
 import { useAlert } from '../../context/AlertContext';
 import { createHousehold, joinHousehold } from '../../services/firestore';
 import { spacing, radius, type } from '../../theme/colors';
+import { Rise } from '../../components/Motion';
 
 export default function HouseholdScreen() {
   const { user, saveHouseholdId, signOut } = useAuth();
@@ -35,7 +36,8 @@ export default function HouseholdScreen() {
     if (!householdName.trim()) { showAlert({ title: 'Missing name', message: 'Enter a household name to continue.', type: 'info' }); return; }
     setLoading(true);
     try {
-      const id = await withTimeout(createHousehold(user.uid, householdName.trim()));
+      const profile = { name: user.displayName || '', email: user.email || '' };
+      const id = await withTimeout(createHousehold(user.uid, householdName.trim(), profile));
       await saveHouseholdId(id);
     } catch (e) {
       showAlert({ title: 'Error', message: e.message, type: 'error' });
@@ -48,7 +50,8 @@ export default function HouseholdScreen() {
     if (!inviteCode.trim()) { showAlert({ title: 'Missing code', message: 'Enter an invite code to continue.', type: 'info' }); return; }
     setLoading(true);
     try {
-      const id = await withTimeout(joinHousehold(user.uid, inviteCode.trim()));
+      const profile = { name: user.displayName || '', email: user.email || '' };
+      const id = await withTimeout(joinHousehold(user.uid, inviteCode.trim(), profile));
       await saveHouseholdId(id);
     } catch (e) {
       showAlert({ title: 'Error', message: e.message, type: 'error' });
@@ -62,7 +65,7 @@ export default function HouseholdScreen() {
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
 
-          <View style={styles.heroSection}>
+          <Rise index={0} style={styles.heroSection}>
             <View style={styles.logoRing}>
               <View style={styles.logoIcon}>
                 <Ionicons name="home" size={30} color="#fff" />
@@ -70,9 +73,9 @@ export default function HouseholdScreen() {
             </View>
             <Text style={styles.appName}>HomeBase</Text>
             <Text style={styles.tagline}>Your family's home hub</Text>
-          </View>
+          </Rise>
 
-          <View style={styles.authCard}>
+          <Rise index={1} style={styles.authCard}>
             <View style={styles.tabRow}>
               {[
                 { id: 'create', icon: 'add-circle-outline', label: 'Create' },
@@ -145,8 +148,9 @@ export default function HouseholdScreen() {
                 </TouchableOpacity>
               </View>
             )}
-          </View>
+          </Rise>
 
+          <Rise index={2}>
           <TouchableOpacity
             style={styles.logoutButton}
             onPress={signOut}
@@ -156,6 +160,7 @@ export default function HouseholdScreen() {
             <Ionicons name="log-out-outline" size={17} color={colors.textSecondary} />
             <Text style={styles.logoutLabel}>Log out</Text>
           </TouchableOpacity>
+          </Rise>
 
         </ScrollView>
       </KeyboardAvoidingView>

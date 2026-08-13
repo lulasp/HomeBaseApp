@@ -18,11 +18,26 @@ import {
 import { db } from '../config/firebase';
 
 // ── Households ───────────────────────────────────────────
-export const createHousehold = async (uid, name) => {
+const sanitizeProfile = ({ name, email } = {}) => ({
+  name:  (name  || '').trim(),
+  email: (email || '').trim(),
+});
+
+// Sensitive per-household data (integration secrets + member emails) lives in a
+// members-only subcollection doc, NOT the parent household doc — the parent is
+// world-readable to any authenticated user so join-by-invite-code can query it.
+const privateRef = (householdId) => doc(db, 'households', householdId, 'private', 'data');
+
+// Invite codes: 6 random chars, uppercase alphanumeric.
+const INVITE_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+const genInviteCode = () => {
   const bytes = new Uint8Array(6);
   crypto.getRandomValues(bytes);
-  const CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  const inviteCode = Array.from(bytes, (b) => CHARS[b % CHARS.length]).join('');
+  return Array.from(bytes, (b) => INVITE_CHARS[b % INVITE_CHARS.length]).join('');
+};
+
+export const createHousehold = async (uid, name, profile = {}) => {
+  const inviteCode = genInviteCode();
   const ref = await addDoc(collection(db, 'households'), {
     name,
     members: [uid],
@@ -30,10 +45,11 @@ export const createHousehold = async (uid, name) => {
     createdBy: uid,
     createdAt: serverTimestamp(),
   });
+  await setDoc(privateRef(ref.id), { memberProfiles: { [uid]: sanitizeProfile(profile) } });
   return ref.id;
 };
 
-export const joinHousehold = async (uid, inviteCode) => {
+export const joinHousehold = async (uid, inviteCode, profile = {}) => {
   const q = query(collection(db, 'households'), where('inviteCode', '==', inviteCode.toUpperCase()));
   const snap = await getDocs(q);
   if (snap.empty) throw new Error('Invalid invite code.');
@@ -44,12 +60,53 @@ export const joinHousehold = async (uid, inviteCode) => {
       members: [...members, uid],
     });
   }
+  // Second write (now a member) records the joiner's name/email in the private doc.
+  await setDoc(privateRef(householdDoc.id),
+    { memberProfiles: { [uid]: sanitizeProfile(profile) } }, { merge: true });
   return householdDoc.id;
 };
+
+// Store/refresh a member's display name + email so member lists show real
+// identities instead of raw UIDs. Caller must already be a household member.
+export const upsertMemberProfile = (householdId, uid, profile) =>
+  setDoc(privateRef(householdId),
+    { memberProfiles: { [uid]: sanitizeProfile(profile) } }, { merge: true });
 
 export const getHousehold = async (householdId) => {
   const snap = await getDoc(doc(db, 'households', householdId));
   return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+};
+
+// Members-only private data (secrets + member profiles). Empty object if none.
+export const getHouseholdPrivate = async (householdId) => {
+  const snap = await getDoc(privateRef(householdId));
+  return snap.exists() ? snap.data() : {};
+};
+
+// Parent doc + private doc merged (private wins). Use this wherever a screen
+// needs a secret or member profile; private overrides any legacy parent copy.
+export const getHouseholdWithPrivate = async (householdId) => {
+  const [hh, priv] = await Promise.all([getHousehold(householdId), getHouseholdPrivate(householdId)]);
+  if (!hh) return null;
+  return { ...hh, ...priv };
+};
+
+// One-time migration: lift legacy secret/profile fields off the world-readable
+// parent doc into the members-only private doc, then delete them from the parent.
+// Idempotent — a no-op once the parent has been cleaned.
+export const migrateHouseholdSecrets = async (householdId) => {
+  const snap = await getDoc(doc(db, 'households', householdId));
+  if (!snap.exists()) return;
+  const data = snap.data();
+  const LEGACY = ['goveeApiKey', 'openRouterApiKey', 'xiaomiCreds', 'memberProfiles'];
+  const present = LEGACY.filter((k) => data[k] !== undefined);
+  if (present.length === 0) return;
+  const priv = {};
+  present.forEach((k) => { priv[k] = data[k]; });
+  await setDoc(privateRef(householdId), priv, { merge: true });
+  const clear = {};
+  present.forEach((k) => { clear[k] = deleteField(); });
+  await updateDoc(doc(db, 'households', householdId), clear);
 };
 
 // Households the user belongs to — source of truth for membership across devices.
@@ -124,6 +181,26 @@ export const getRecipe = async (householdId, recipeId) => {
 export const updateHouseholdName = (householdId, name) =>
   updateDoc(doc(db, 'households', householdId), { name });
 
+// Rotate the invite code (e.g. if the old one leaked). Returns the new code.
+// The previous code stops working immediately.
+export const regenerateInviteCode = async (householdId) => {
+  const inviteCode = genInviteCode();
+  await updateDoc(doc(db, 'households', householdId), { inviteCode });
+  return inviteCode;
+};
+
+// Hand ownership to another member (owner action). The new owner must already
+// be in the household; ownership drives owner-only abilities like removing members.
+export const transferHouseholdOwnership = async (householdId, newOwnerUid) => {
+  const ref = doc(db, 'households', householdId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error('Household not found.');
+  if (!(snap.data().members || []).includes(newOwnerUid)) {
+    throw new Error('The new owner must be a household member.');
+  }
+  await updateDoc(ref, { createdBy: newOwnerUid });
+};
+
 export const getHouseholdsByIds = async (ids) => {
   if (!ids.length) return [];
   const snaps = await Promise.all(ids.map((id) => getDoc(doc(db, 'households', id))));
@@ -151,14 +228,43 @@ export const updateHouseholdFinanceCategories = (householdId, billCustomCats, ex
   });
 
 export const updateHouseholdGoveeApiKey = (householdId, apiKey) =>
-  updateDoc(doc(db, 'households', householdId), {
-    goveeApiKey: apiKey ? apiKey.trim() : deleteField(),
-  });
+  setDoc(privateRef(householdId),
+    { goveeApiKey: apiKey ? apiKey.trim() : deleteField() }, { merge: true });
 
 export const updateHouseholdOpenRouterApiKey = (householdId, apiKey) =>
-  updateDoc(doc(db, 'households', householdId), {
-    openRouterApiKey: apiKey ? apiKey.trim() : deleteField(),
-  });
+  setDoc(privateRef(householdId),
+    { openRouterApiKey: apiKey ? apiKey.trim() : deleteField() }, { merge: true });
+
+// Xiaomi Mi Home credentials, shared per household. Devices cache these locally
+// (src/services/xiaomi.js) for the signed-request path. Cleared when emptied.
+export const updateHouseholdXiaomiCreds = (householdId, creds = {}) => {
+  const hasAny = creds.userId || creds.serviceToken || creds.ssecurity;
+  return setDoc(privateRef(householdId), {
+    xiaomiCreds: hasAny
+      ? {
+          userId:       (creds.userId       || '').trim(),
+          serviceToken: (creds.serviceToken || '').trim(),
+          ssecurity:    (creds.ssecurity    || '').trim(),
+          region:       creds.region || 'cn',
+        }
+      : deleteField(),
+  }, { merge: true });
+};
+
+// Per-integration on/off flags, stored alongside the keys in the private doc so a
+// single subscription resolves enabled-state. Absent flag ⇒ enabled if configured.
+export const updateHouseholdIntegrationFlags = (householdId, { goveeEnabled, xiaomiEnabled }) =>
+  setDoc(privateRef(householdId), { goveeEnabled, xiaomiEnabled }, { merge: true });
+
+// UI preference (not a secret) kept in the private doc so it rides the same
+// subscription as the integration flags. Absent ⇒ animations on.
+export const updateHouseholdReduceMotion = (householdId, reduceMotion) =>
+  setDoc(privateRef(householdId), { reduceMotion }, { merge: true });
+
+// Live members-only private doc (secrets, member profiles, integration flags).
+// Calls back with the doc data (or {}); returns the unsubscribe fn.
+export const subscribeHouseholdPrivate = (householdId, callback) =>
+  onSnapshot(privateRef(householdId), (snap) => callback(snap.exists() ? snap.data() : {}));
 
 export const updateHouseholdAiModel = (householdId, aiModel) =>
   updateDoc(doc(db, 'households', householdId), { aiModel });
@@ -191,6 +297,21 @@ export const leaveHousehold = async (householdId, uid) => {
   if (!snap.exists()) return;
   const members = snap.data().members || [];
   await updateDoc(ref, { members: members.filter((m) => m !== uid) });
+  // Drop their stored profile from the private doc too.
+  await updateDoc(privateRef(householdId), { [`memberProfiles.${uid}`]: deleteField() }).catch(() => {});
+};
+
+// Remove another member (owner action). Same as leaveHousehold but for a
+// different uid; the owner cannot be removed this way.
+export const removeHouseholdMember = async (householdId, uid) => {
+  const ref = doc(db, 'households', householdId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return;
+  const data = snap.data();
+  if (data.createdBy === uid) throw new Error('The household owner cannot be removed.');
+  const members = data.members || [];
+  await updateDoc(ref, { members: members.filter((m) => m !== uid) });
+  await updateDoc(privateRef(householdId), { [`memberProfiles.${uid}`]: deleteField() }).catch(() => {});
 };
 
 // ── Pantry ───────────────────────────────────────────────

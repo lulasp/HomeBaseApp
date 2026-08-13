@@ -9,6 +9,7 @@ import { useTheme } from '../../context/ThemeContext';
 import { useAlert } from '../../context/AlertContext';
 import { auth } from '../../config/firebase';
 import { spacing, radius, type } from '../../theme/colors';
+import { Rise } from '../../components/Motion';
 
 if (Platform.OS !== 'web') {
   const { GoogleSignin } = require('@react-native-google-signin/google-signin');
@@ -62,7 +63,7 @@ export default function SignInScreen() {
     <SafeAreaView style={styles.root}>
       <View style={styles.content}>
 
-        <View style={styles.heroSection}>
+        <Rise index={0} style={styles.heroSection}>
           <View style={styles.logoRing}>
             <View style={styles.logoIcon}>
               <Ionicons name="home" size={30} color="#fff" />
@@ -70,9 +71,9 @@ export default function SignInScreen() {
           </View>
           <Text style={styles.appName}>HomeBase</Text>
           <Text style={styles.tagline}>Your family's home hub</Text>
-        </View>
+        </Rise>
 
-        <View style={styles.card}>
+        <Rise index={1} style={styles.card}>
           <Text style={styles.cardTitle}>Welcome back</Text>
           <Text style={styles.cardSubtitle}>
             Sign in to access your household. Your data is secured and only shared with your household members.
@@ -94,7 +95,7 @@ export default function SignInScreen() {
               </>
             )}
           </TouchableOpacity>
-        </View>
+        </Rise>
 
       </View>
     </SafeAreaView>
