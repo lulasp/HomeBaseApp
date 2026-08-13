@@ -1,10 +1,11 @@
 import React, { useEffect, useState, useMemo, useCallback, useRef, memo } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, StyleSheet,
-  Modal, TextInput, KeyboardAvoidingView, Platform, Animated,
+  Modal, TextInput, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import useFabHideOnScroll from '../../hooks/useFabHideOnScroll';
 import useVisualViewportHeight from '../../hooks/useVisualViewportHeight';
+import FloatingActionButton from '../../components/FloatingActionButton';
 import { M } from '../../components/Motion';
 import { Easing } from 'react-native-reanimated';
 import { useFocusEffect } from '@react-navigation/native';
@@ -954,19 +955,12 @@ export default function BillsExpensesScreen({ navigation }) {
       </ScrollView>
 
       {/* FAB */}
-      <Animated.View
-        style={[styles.fabWrapper, fab.animatedStyle]}
-        pointerEvents={fab.pointerEvents}
-      >
-        <TouchableOpacity
-          style={[styles.fab, { backgroundColor: colors.accent }]}
-          onPress={openNew}
-          accessibilityRole="button"
-          accessibilityLabel={`Add ${activeTab === 'bills' ? 'bill' : activeTab === 'budgets' ? 'budget' : 'expense'}`}
-        >
-          <Ionicons name="add" size={28} color="#fff" />
-        </TouchableOpacity>
-      </Animated.View>
+      <FloatingActionButton
+        onPress={openNew}
+        accessibilityLabel={`Add ${activeTab === 'bills' ? 'bill' : activeTab === 'budgets' ? 'budget' : 'expense'}`}
+        hideAnim={fab.hideAnim}
+        interactive={fab.interactive}
+      />
 
       {/* Add / Edit modal */}
       <Modal
@@ -1404,15 +1398,6 @@ const makeStyles = (colors) => StyleSheet.create({
     borderTopWidth: 1, borderTopColor: colors.border,
   },
 
-  fabWrapper: {
-    position: 'absolute', right: spacing.xl, bottom: 160,
-  },
-  fab: {
-    width: 56, height: 56, borderRadius: 28,
-    alignItems: 'center', justifyContent: 'center',
-    shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 }, elevation: 8,
-  },
 
   modalBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.6)' },
   sheet: {

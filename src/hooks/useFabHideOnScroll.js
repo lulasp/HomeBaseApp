@@ -1,14 +1,13 @@
 import { useCallback, useRef, useState } from 'react';
 import { Animated } from 'react-native';
 
-// Hide-on-scroll for a floating action button. Scrolling down slides the FAB
-// out of the way and stops it intercepting touches, so it never blocks the
-// content beneath it; scrolling up (or reaching the top) brings it back.
-// Pass the screen's entrance anim (0→1 scale/opacity) to compose both, or
-// null when the FAB has no entrance animation.
+// Hide-on-scroll signal for a floating action button. Scrolling down drives
+// `hideAnim` toward 1 (fade/shrink the FAB away) and flips `interactive` off so
+// it stops intercepting touches; scrolling up (or reaching the top) brings it
+// back. Consumed by <FloatingActionButton>, which owns the actual styling.
 //
 // Thresholds mirror NavScrollContext so the FAB and tab bar hide in sync.
-export default function useFabHideOnScroll(enterAnim = null) {
+export default function useFabHideOnScroll() {
   const hideAnim = useRef(new Animated.Value(0)).current; // 0 = shown, 1 = hidden
   const lastY = useRef(0);
   const hidden = useRef(false);
@@ -34,16 +33,5 @@ export default function useFabHideOnScroll(enterAnim = null) {
     setHidden(dy > 0 && y > 50);
   }, [setHidden]);
 
-  const hideTranslate = hideAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 140] });
-  const hideOpacity   = hideAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 0] });
-
-  const animatedStyle = {
-    opacity: enterAnim ? Animated.multiply(enterAnim, hideOpacity) : hideOpacity,
-    transform: [
-      ...(enterAnim ? [{ scale: enterAnim }] : []),
-      { translateY: hideTranslate },
-    ],
-  };
-
-  return { onScroll, animatedStyle, pointerEvents: interactive ? 'auto' : 'none' };
+  return { onScroll, hideAnim, interactive };
 }

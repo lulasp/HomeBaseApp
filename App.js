@@ -11,6 +11,7 @@ import { AlertProvider } from './src/context/AlertContext';
 import { NotificationProvider } from './src/context/NotificationContext';
 import { LightTimerProvider } from './src/context/LightTimerContext';
 import { NavScrollProvider } from './src/context/NavScrollContext';
+import { FabPositionProvider } from './src/context/FabPositionContext';
 import AppNavigator from './src/navigation/index';
 import { installWebViewportFix } from './src/utils/webViewportFix';
 
@@ -37,7 +38,9 @@ export default function App() {
               <NotificationProvider>
                 <LightTimerProvider>
                   <NavScrollProvider>
-                    <AppContent />
+                    <FabPositionProvider>
+                      <AppContent />
+                    </FabPositionProvider>
                   </NavScrollProvider>
                 </LightTimerProvider>
               </NotificationProvider>
