@@ -2,8 +2,8 @@ import React, { useState, useMemo, useEffect, memo } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView,
   StyleSheet, KeyboardAvoidingView, Platform,
-  useWindowDimensions,
 } from 'react-native';
+import useVisualViewportHeight from '../../hooks/useVisualViewportHeight';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
@@ -133,7 +133,7 @@ export default function AddRecipeScreen({ navigation, route, onClose }) {
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const contentKey = useEntranceReplay();
   const isDesktop = useIsDesktop();
-  const { height: windowHeight } = useWindowDimensions();
+  const windowHeight = useVisualViewportHeight();
 
   const [pantryItems, setPantryItems]     = useState([]);
   const [title, setTitle]                 = useState(existing?.title ?? '');

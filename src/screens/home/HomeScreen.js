@@ -14,6 +14,7 @@ import { format, startOfWeek } from 'date-fns';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { useNavScroll } from '../../context/NavScrollContext';
+import { useNotification } from '../../context/NotificationContext';
 import {
   getHouseholdWithPrivate, subscribePantryItems, subscribeGroceryItems,
   subscribeBills, subscribeMealPlan, subscribeLightShortcuts,
@@ -25,6 +26,7 @@ import { spacing, radius, type } from '../../theme/colors';
 import { useIsDesktop, SIDEBAR_WIDTH } from '../../navigation/TabBar';
 import { MEAL_TYPES, FULL_DAYS, DAYS_OF_WEEK } from '../../utils/categories';
 
+const MAX_TODOS_PER_DAY = 15;
 const DAYS_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
@@ -231,11 +233,10 @@ function StatPill({ value, label, icon, color, soft, onPress }) {
 // ── Weekly Calendar ───────────────────────────────────────────────────────────
 
 function WeeklyCalendar({ householdId, weekKey, todayFull, colors }) {
+  const { notify } = useNotification();
   const [todos, setTodos] = useState([]);
   const [selectedDay, setSelectedDay] = useState(todayFull);
   const [inputText, setInputText] = useState('');
-  const [adding, setAdding] = useState(false);
-  const inputRef = useRef(null);
 
   useEffect(() => {
     if (!householdId) return;
@@ -247,18 +248,24 @@ function WeeklyCalendar({ householdId, weekKey, todayFull, colors }) {
     [todos, selectedDay],
   );
   const doneTodos = dayTodos.filter((t) => t.done).length;
+  const atCap = dayTodos.length >= MAX_TODOS_PER_DAY;
 
   const handleAdd = useCallback(async () => {
     const text = inputText.trim();
+    if (!text) return;
+    if (dayTodos.length >= MAX_TODOS_PER_DAY) {
+      notify('Daily limit reached', `You can add up to ${MAX_TODOS_PER_DAY} tasks per day.`, { type: 'warning' });
+      return;
+    }
     setInputText('');
-    setAdding(false);
-    if (text) addWeeklyTodo(householdId, weekKey, selectedDay, text).catch(console.error);
-  }, [inputText, householdId, weekKey, selectedDay]);
-
-  const startAdding = useCallback(() => {
-    setAdding(true);
-    setTimeout(() => inputRef.current?.focus(), 50);
-  }, []);
+    try {
+      await addWeeklyTodo(householdId, weekKey, selectedDay, text);
+    } catch (err) {
+      console.error(err);
+      setInputText(text);        // keep the text so it isn't lost
+      notify('Could not save task', err?.message || 'Please try again.', { type: 'error' });
+    }
+  }, [inputText, dayTodos.length, householdId, weekKey, selectedDay, notify]);
 
   return (
     <WidgetCard style={[styles.fullCard, { borderColor: colors.border, backgroundColor: colors.surface }]}>
@@ -317,7 +324,7 @@ function WeeklyCalendar({ householdId, weekKey, todayFull, colors }) {
       </View>
 
       {/* Todo list */}
-      {dayTodos.length === 0 && !adding && (
+      {dayTodos.length === 0 && (
         <Text style={[styles.calendarEmpty, { color: colors.textTertiary }]}>
           No tasks for {selectedDay}
         </Text>
@@ -367,36 +374,36 @@ function WeeklyCalendar({ householdId, weekKey, todayFull, colors }) {
         ))}
       </Presence>
 
-      {/* Add row */}
-      {adding ? (
+      {/* Add row — always visible so you can add several in a row */}
+      {atCap ? (
+        <View style={[styles.addTodoBtn, { borderTopColor: colors.border }]}>
+          <Text style={[styles.addTodoBtnText, { color: colors.textTertiary }]}>
+            Daily limit reached ({MAX_TODOS_PER_DAY})
+          </Text>
+        </View>
+      ) : (
         <View style={[styles.todoAddRow, { borderTopColor: dayTodos.length > 0 ? colors.border : 'transparent' }]}>
           <Ionicons name="add-circle-outline" size={20} color={colors.accent} />
           <TextInput
-            ref={inputRef}
             style={[styles.todoInput, { color: colors.textPrimary }]}
             value={inputText}
             onChangeText={setInputText}
             onSubmitEditing={handleAdd}
-            placeholder="New task…"
+            blurOnSubmit={false}
+            placeholder="Add a task…"
             placeholderTextColor={colors.textTertiary}
             returnKeyType="done"
             autoCapitalize="sentences"
           />
-          <TouchableOpacity
-            onPress={() => { setAdding(false); setInputText(''); }}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            <Ionicons name="close" size={16} color={colors.textTertiary} />
-          </TouchableOpacity>
+          {inputText.trim().length > 0 && (
+            <TouchableOpacity
+              onPress={handleAdd}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Ionicons name="arrow-up-circle" size={22} color={colors.accent} />
+            </TouchableOpacity>
+          )}
         </View>
-      ) : (
-        <TouchableOpacity
-          style={[styles.addTodoBtn, { borderTopColor: dayTodos.length > 0 ? colors.border : 'transparent' }]}
-          onPress={startAdding}
-        >
-          <Ionicons name="add" size={16} color={colors.accent} />
-          <Text style={[styles.addTodoBtnText, { color: colors.accent }]}>Add task</Text>
-        </TouchableOpacity>
       )}
     </WidgetCard>
   );

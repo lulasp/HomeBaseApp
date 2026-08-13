@@ -8,6 +8,8 @@ import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { useHousehold } from '../../context/HouseholdContext';
 import { useNavScroll } from '../../context/NavScrollContext';
+import useFabHideOnScroll from '../../hooks/useFabHideOnScroll';
+import FloatingActionButton from '../../components/FloatingActionButton';
 import { useAlert } from '../../context/AlertContext';
 import { useNotification } from '../../context/NotificationContext';
 import {
@@ -322,6 +324,7 @@ export default function GroceryListScreen() {
   // ── Animations ────────────────────────────────────────────────────────────
   const headerAnim   = useRef(new Animated.Value(0)).current;
   const fabAnim      = useRef(new Animated.Value(0)).current;
+  const fab          = useFabHideOnScroll(fabAnim);
   const progressAnim = useRef(new Animated.Value(0)).current;
 
   // Replay the entrance on every focus (tab stays mounted, so a mount effect
@@ -425,7 +428,7 @@ export default function GroceryListScreen() {
           keyExtractor={(row) => row.id ?? row.label}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
-          onScroll={handleScroll}
+          onScroll={(e) => { handleScroll(e); fab.onScroll(e); }}
           scrollEventThrottle={16}
           ListEmptyComponent={
             <View style={styles.emptyStateContainer}>
@@ -484,19 +487,13 @@ export default function GroceryListScreen() {
           }}
         />
 
-        <Animated.View style={[styles.fabWrapper, {
-          transform: [{ scale: fabAnim }],
-          opacity: fabAnim,
-        }]}>
-          <TouchableOpacity
-            style={styles.floatingAddButton}
-            onPress={() => setModalVisible(true)}
-            accessibilityRole="button"
-            accessibilityLabel="Add item"
-          >
-            <Ionicons name="add" size={28} color="#fff" />
-          </TouchableOpacity>
-        </Animated.View>
+        <FloatingActionButton
+          onPress={() => setModalVisible(true)}
+          accessibilityLabel="Add item"
+          enterAnim={fabAnim}
+          hideAnim={fab.hideAnim}
+          interactive={fab.interactive}
+        />
       </View>
 
       <Modal visible={modalVisible} animationType="slide" transparent statusBarTranslucent>
@@ -690,7 +687,7 @@ const makeStyles = (colors) => StyleSheet.create({
   filterPillLabel:       { ...type.label, color: colors.textSecondary },
   filterPillLabelActive: { color: colors.accent },
 
-  listContent: { paddingHorizontal: spacing.xl, paddingBottom: 160 },
+  listContent: { paddingHorizontal: spacing.xl, paddingBottom: 230 },
 
   emptyStateContainer: { alignItems: 'center', paddingTop: 60, gap: 12 },
   emptyStateIcon: {
@@ -748,20 +745,6 @@ const makeStyles = (colors) => StyleSheet.create({
   itemName:         { ...type.bodyMed, color: colors.textPrimary },
   itemNameChecked:  { textDecorationLine: 'line-through', color: colors.textTertiary },
   itemQuantity:     { ...type.caption, color: colors.textTertiary },
-
-  fabWrapper: {
-    position: 'absolute', bottom: 160, right: spacing.xl,
-  },
-  floatingAddButton: {
-    width: 58, height: 58, borderRadius: radius.full,
-    backgroundColor: colors.accent,
-    alignItems: 'center', justifyContent: 'center',
-    shadowColor: colors.accent,
-    shadowOpacity: 0.55,
-    shadowRadius: 24,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 12,
-  },
 
   modalOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: colors.overlay },
   expirySheet: {

@@ -1,8 +1,11 @@
 import React, { useEffect, useState, useMemo, useCallback, useRef, memo } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, StyleSheet,
-  Modal, TextInput, KeyboardAvoidingView, Platform, useWindowDimensions,
+  Modal, TextInput, KeyboardAvoidingView, Platform,
 } from 'react-native';
+import useFabHideOnScroll from '../../hooks/useFabHideOnScroll';
+import useVisualViewportHeight from '../../hooks/useVisualViewportHeight';
+import FloatingActionButton from '../../components/FloatingActionButton';
 import { M } from '../../components/Motion';
 import { Easing } from 'react-native-reanimated';
 import { useFocusEffect } from '@react-navigation/native';
@@ -414,7 +417,8 @@ export default function BillsExpensesScreen({ navigation }) {
   const { colors }    = useTheme();
   const { showConfirm } = useAlert();
   const isDesktop     = useIsDesktop();
-  const { height: windowHeight } = useWindowDimensions();
+  const windowHeight = useVisualViewportHeight();
+  const fab           = useFabHideOnScroll();
   const styles        = useMemo(() => makeStyles(colors), [colors]);
   const { animationsEnabled } = useHousehold();
 
@@ -701,6 +705,8 @@ export default function BillsExpensesScreen({ navigation }) {
           styles.container,
           isDesktop && { maxWidth: DESKTOP_MAX_CONTENT, alignSelf: 'center', width: '100%' },
         ]}
+        onScroll={fab.onScroll}
+        scrollEventThrottle={16}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
@@ -945,18 +951,16 @@ export default function BillsExpensesScreen({ navigation }) {
         )}
 
         </View>
-        <View style={{ height: 180 }} />
+        <View style={{ height: 230 }} />
       </ScrollView>
 
       {/* FAB */}
-      <TouchableOpacity
-        style={[styles.fab, { backgroundColor: colors.accent }]}
+      <FloatingActionButton
         onPress={openNew}
-        accessibilityRole="button"
         accessibilityLabel={`Add ${activeTab === 'bills' ? 'bill' : activeTab === 'budgets' ? 'budget' : 'expense'}`}
-      >
-        <Ionicons name="add" size={28} color="#fff" />
-      </TouchableOpacity>
+        hideAnim={fab.hideAnim}
+        interactive={fab.interactive}
+      />
 
       {/* Add / Edit modal */}
       <Modal
@@ -1394,13 +1398,6 @@ const makeStyles = (colors) => StyleSheet.create({
     borderTopWidth: 1, borderTopColor: colors.border,
   },
 
-  fab: {
-    position: 'absolute', right: spacing.xl, bottom: 160,
-    width: 56, height: 56, borderRadius: 28,
-    alignItems: 'center', justifyContent: 'center',
-    shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 }, elevation: 8,
-  },
 
   modalBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.6)' },
   sheet: {

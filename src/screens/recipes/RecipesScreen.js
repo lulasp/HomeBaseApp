@@ -4,6 +4,7 @@ import {
   Image, ActivityIndicator, ScrollView,
   useWindowDimensions, Modal,
 } from 'react-native';
+import useVisualViewportHeight from '../../hooks/useVisualViewportHeight';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
@@ -209,7 +210,8 @@ export default function RecipesScreen({ navigation }) {
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const isDesktop = useIsDesktop();
   const contentKey = useEntranceReplay();
-  const { width, height: windowHeight } = useWindowDimensions();
+  const { width } = useWindowDimensions();
+  const windowHeight = useVisualViewportHeight();
 
   const [activeTab,      setActiveTab]      = useState('saved');
   const [savedRecipes,   setSavedRecipes]   = useState([]);

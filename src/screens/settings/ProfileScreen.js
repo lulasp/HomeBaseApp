@@ -2,8 +2,8 @@ import React, { useEffect, useState, useMemo } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet,
   Modal, KeyboardAvoidingView, Platform, ActivityIndicator,
-  useWindowDimensions,
 } from 'react-native';
+import useVisualViewportHeight from '../../hooks/useVisualViewportHeight';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
@@ -29,7 +29,7 @@ export default function ProfileScreen({ navigation }) {
   const { notify } = useNotification();
   const styles  = useMemo(() => makeStyles(colors), [colors]);
   const isDesktop = useIsDesktop();
-  const { height: windowHeight } = useWindowDimensions();
+  const windowHeight = useVisualViewportHeight();
 
   const [households, setHouseholds]   = useState([]);
   const [loadingHH, setLoadingHH]     = useState(true);
