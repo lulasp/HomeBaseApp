@@ -144,7 +144,9 @@ const RecipeCard = memo(({ recipe, onPress, onLongPress, onSave, onUnsave, isSav
       onLongPress={onLongPress}
       delayLongPress={350}
       activeOpacity={0.82}
-      accessibilityRole={selectionMode ? 'checkbox' : 'button'}
+      // no 'button' role here: on web it renders a real <button>, and the
+      // save/delete buttons inside it would be invalid nested buttons
+      accessibilityRole={selectionMode ? 'checkbox' : undefined}
       accessibilityState={selectionMode ? { checked: !!selected } : undefined}
     >
       <View style={styles.recipeCardImageContainer}>
