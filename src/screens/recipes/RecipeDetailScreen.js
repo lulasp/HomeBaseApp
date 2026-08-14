@@ -12,7 +12,7 @@ import { useAlert } from '../../context/AlertContext';
 import { useNotification } from '../../context/NotificationContext';
 import { saveRecipe, deleteRecipe, getRecipe, getPantryItems, getGroceryItems, addGroceryItem } from '../../services/firestore';
 import { spacing, radius, type } from '../../theme/colors';
-import { useIsDesktop, SIDEBAR_WIDTH, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
+import { useIsDesktop, useMobileNavClearance, SIDEBAR_WIDTH, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
 import { Rise, useEntranceReplay } from '../../components/Motion';
 
 export default function RecipeDetailScreen({ route, navigation }) {
@@ -36,6 +36,8 @@ export default function RecipeDetailScreen({ route, navigation }) {
   const contentKey = useEntranceReplay();
   const isDesktop = useIsDesktop();
   const windowHeight = useVisualViewportHeight();
+  const navClearance = useMobileNavClearance();
+  const [actionBarH, setActionBarH] = useState(0);
   const isOwnCustomRecipe = !isSearch && recipe.sourceType === 'custom' && recipe.createdBy === user?.uid;
 
   const [groceryModal, setGroceryModal]     = useState(false);
@@ -120,7 +122,11 @@ export default function RecipeDetailScreen({ route, navigation }) {
 
   return (
     <View style={{ height: windowHeight, backgroundColor: colors.background, marginLeft: isDesktop ? SIDEBAR_WIDTH : 0 }}>
-      <ScrollView key={contentKey} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 120 }}>
+      <ScrollView
+        key={contentKey}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: isDesktop ? 120 : actionBarH + navClearance + spacing.md }}
+      >
 
         {/* Back button — first item in scroll content, always visible, no z-index issues */}
         <View style={styles.navHeader}>
@@ -205,10 +211,15 @@ export default function RecipeDetailScreen({ route, navigation }) {
         </View>
       </ScrollView>
 
-      <View style={[
-        styles.bottomActionBar,
-        isDesktop && { maxWidth: DESKTOP_MAX_CONTENT, alignSelf: 'center', width: '100%', left: undefined, right: undefined, position: 'relative', borderTopWidth: 0, paddingBottom: spacing.xl },
-      ]}>
+      <View
+        onLayout={(e) => setActionBarH(e.nativeEvent.layout.height)}
+        style={[
+          styles.bottomActionBar,
+          // Sit above the floating mobile nav instead of behind it
+          !isDesktop && { bottom: navClearance, paddingBottom: spacing.md },
+          isDesktop && { maxWidth: DESKTOP_MAX_CONTENT, alignSelf: 'center', width: '100%', left: undefined, right: undefined, position: 'relative', borderTopWidth: 0, paddingBottom: spacing.xl },
+        ]}
+      >
         {isSearch ? (
           <TouchableOpacity style={styles.saveButton} onPress={handleSave} accessibilityRole="button">
             <Ionicons name="bookmark" size={18} color="#fff" />

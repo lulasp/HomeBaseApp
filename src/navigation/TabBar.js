@@ -42,6 +42,21 @@ export function useIsDesktop() {
   return Platform.OS === 'web' && width >= DESKTOP_BREAKPOINT;
 }
 
+// Pill bar (64) + gap + section switcher (40) stacked above it
+const MOBILE_NAV_STACK_HEIGHT = 112;
+
+function useMobileNavBottom() {
+  const insets = useSafeAreaInsets();
+  return Platform.OS === 'ios' ? Math.max(insets.bottom + 8, 24) : 24;
+}
+
+/** Space the mobile nav occupies at the bottom — 0 on desktop (sidebar nav). */
+export function useMobileNavClearance() {
+  const isDesktop = useIsDesktop();
+  const barBottom = useMobileNavBottom();
+  return isDesktop ? 0 : barBottom + MOBILE_NAV_STACK_HEIGHT + 12;
+}
+
 // ── Animated Sidebar Nav Item ──────────────────────────────────────────────────
 const AnimatedNavItem = memo(function AnimatedNavItem({ route, isFocused, navigation, tab, styles, colors }) {
   const indicatorScale = useRef(new Animated.Value(isFocused ? 1 : 0)).current;
@@ -263,12 +278,11 @@ function DesktopSidebar({ state, navigation, hidden }) {
 function MobileNav({ state, navigation, hidden }) {
   const { colors } = useTheme();
   const styles  = useMemo(() => makeStyles(colors), [colors]);
-  const insets  = useSafeAreaInsets();
   const { compactAnim, resetCompact } = useNavScroll();
 
   const focusedRoute  = state.routes[state.index].name;
   const activeSection = getActiveSection(focusedRoute);
-  const barBottom     = Platform.OS === 'ios' ? Math.max(insets.bottom + 8, 24) : 24;
+  const barBottom     = useMobileNavBottom();
 
   useEffect(() => { resetCompact(); }, [state.index]);
 
