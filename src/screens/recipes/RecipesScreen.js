@@ -134,11 +134,19 @@ const panelStyles = StyleSheet.create({
 });
 
 // ── RecipeCard ────────────────────────────────────────────────────────────────
-const RecipeCard = memo(({ recipe, onPress, onSave, onUnsave, isSaved, onDelete }) => {
+const RecipeCard = memo(({ recipe, onPress, onLongPress, onSave, onUnsave, isSaved, onDelete, selectionMode, selected }) => {
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   return (
-    <TouchableOpacity style={styles.recipeCard} onPress={onPress} activeOpacity={0.82}>
+    <TouchableOpacity
+      style={[styles.recipeCard, selected && styles.recipeCardSelected]}
+      onPress={onPress}
+      onLongPress={onLongPress}
+      delayLongPress={350}
+      activeOpacity={0.82}
+      accessibilityRole={selectionMode ? 'checkbox' : 'button'}
+      accessibilityState={selectionMode ? { checked: !!selected } : undefined}
+    >
       <View style={styles.recipeCardImageContainer}>
         {recipe.imageUrl
           ? <Image source={{ uri: recipe.imageUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" />
@@ -173,8 +181,13 @@ const RecipeCard = memo(({ recipe, onPress, onSave, onUnsave, isSaved, onDelete 
             </View>
           )}
         </View>
+        {selectionMode && (
+          <View style={[styles.selectionCheck, selected && styles.selectionCheckOn]} pointerEvents="none">
+            {selected && <Ionicons name="checkmark" size={13} color="#fff" />}
+          </View>
+        )}
         <View style={styles.recipeCardActionButtons}>
-          {(onSave || isSaved) && (
+          {!selectionMode && (onSave || isSaved) && (
             <TouchableOpacity
               style={[styles.recipeCardActionButton, isSaved && styles.recipeCardSavedButton]}
               onPress={isSaved ? onUnsave : onSave}
@@ -184,7 +197,7 @@ const RecipeCard = memo(({ recipe, onPress, onSave, onUnsave, isSaved, onDelete 
               <Ionicons name={isSaved ? 'bookmark' : 'bookmark-outline'} size={14} color="#fff" />
             </TouchableOpacity>
           )}
-          {onDelete && (
+          {!selectionMode && onDelete && (
             <TouchableOpacity
               style={[styles.recipeCardActionButton, styles.recipeCardDeleteButton]}
               onPress={onDelete}
@@ -227,6 +240,8 @@ export default function RecipesScreen({ navigation }) {
   const [showFilters,    setShowFilters]    = useState(false);
   const [showAddModal,   setShowAddModal]   = useState(false);
   const [apiLimitReached, setApiLimitReached] = useState(false);
+  const [selectionMode,  setSelectionMode]  = useState(false);
+  const [selectedIds,    setSelectedIds]    = useState(() => new Set());
 
   const columnCount           = isDesktop ? (width >= 1440 ? 4 : 3) : 2;
   const activeFilterCount     = (filters.type ? 1 : 0) + (filters.diet ? 1 : 0) + filters.cuisine.length + (filters.maxReadyTime ? 1 : 0);
@@ -387,20 +402,106 @@ export default function RecipesScreen({ navigation }) {
     }
   };
 
+  // ── Multi-select ────────────────────────────────────────────────────────────
+
+  const exitSelection = () => { setSelectionMode(false); setSelectedIds(new Set()); };
+
+  const startSelection = (id) => {
+    setSelectionMode(true);
+    setSelectedIds(id ? new Set([id]) : new Set());
+  };
+
+  const toggleSelected = (id) => setSelectedIds((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+
+  // Drop ids for recipes deleted elsewhere (another member, another device)
+  useEffect(() => {
+    if (!selectionMode) return;
+    if (savedRecipes.length === 0) { exitSelection(); return; }
+    setSelectedIds((prev) => {
+      const live = new Set(savedRecipes.map(r => r.id));
+      const next = new Set([...prev].filter(id => live.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [savedRecipes, selectionMode]);
+
+  const handleDeleteSelected = async () => {
+    const targets = savedRecipes.filter(r => selectedIds.has(r.id));
+    if (targets.length === 0) return;
+    const confirmed = await showConfirm({
+      title: `Delete ${targets.length} recipe${targets.length > 1 ? 's' : ''}`,
+      message: targets.length === 1
+        ? `Remove "${targets[0].title}"?`
+        : `Remove these ${targets.length} recipes? This can't be undone.`,
+      type: 'danger',
+      confirmLabel: 'Delete',
+    });
+    if (!confirmed) return;
+    const results = await Promise.allSettled(targets.map(r => deleteRecipe(householdId, r.id)));
+    const failed = results.filter(r => r.status === 'rejected').length;
+    exitSelection();
+    if (failed) {
+      showAlert({
+        title: 'Delete failed',
+        message: `${failed} of ${targets.length} recipes could not be deleted.`,
+        type: 'error',
+      });
+    } else {
+      notify('Recipes deleted', `${targets.length} recipe${targets.length > 1 ? 's' : ''} removed.`, { type: 'info' });
+    }
+  };
+
   // ── Header ──────────────────────────────────────────────────────────────────
 
   const listHeader = (
     <View>
+      {selectionMode ? (
+        <View style={styles.selectionBar}>
+          <TouchableOpacity onPress={exitSelection} accessibilityRole="button">
+            <Text style={styles.selectionCancel}>Cancel</Text>
+          </TouchableOpacity>
+          <Text style={styles.selectionCount}>
+            {selectedIds.size} selected
+          </Text>
+          <TouchableOpacity
+            style={[styles.selectionDeleteButton, selectedIds.size === 0 && styles.selectionDeleteButtonDisabled]}
+            onPress={handleDeleteSelected}
+            disabled={selectedIds.size === 0}
+            accessibilityRole="button"
+            accessibilityLabel={`Delete ${selectedIds.size} selected recipes`}
+          >
+            <Ionicons name="trash-outline" size={15} color="#fff" />
+            <Text style={styles.selectionDeleteLabel}>Delete</Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
       <Rise index={0}>
       <View style={styles.headerSection}>
         <Text style={styles.screenTitle}>Recipes</Text>
-        <TouchableOpacity style={styles.addRecipeButton} onPress={() => setShowAddModal(true)} accessibilityRole="button">
-          <Ionicons name="add" size={16} color="#fff" />
-          <Text style={styles.addRecipeButtonLabel}>New</Text>
-        </TouchableOpacity>
+        <View style={styles.headerActions}>
+          {activeTab === 'saved' && savedRecipes.length > 0 && (
+            <TouchableOpacity
+              style={styles.selectButton}
+              onPress={() => startSelection(null)}
+              accessibilityRole="button"
+              accessibilityLabel="Select recipes"
+            >
+              <Text style={styles.selectButtonLabel}>Select</Text>
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity style={styles.addRecipeButton} onPress={() => setShowAddModal(true)} accessibilityRole="button">
+            <Ionicons name="add" size={16} color="#fff" />
+            <Text style={styles.addRecipeButtonLabel}>New</Text>
+          </TouchableOpacity>
+        </View>
       </View>
       </Rise>
+      )}
 
+      {!selectionMode && (
       <View style={styles.tabRow}>
         {[
           ['saved',  'bookmark-outline', 'Saved'   ],
@@ -418,6 +519,7 @@ export default function RecipesScreen({ navigation }) {
           </TouchableOpacity>
         ))}
       </View>
+      )}
 
       {activeTab === 'search' && (
         <View style={styles.searchRow}>
@@ -527,11 +629,17 @@ export default function RecipesScreen({ navigation }) {
             const isSaved = activeTab === 'search'
               && recipe.spoonacularId != null
               && savedSpoonacularIds.has(recipe.spoonacularId);
+            const selectable = activeTab === 'saved' && !!recipe.id;
             return (
               <Reveal visible={seen.set.has(index)} delay={(index % columnCount) * 60} style={{ flex: 1 }}>
                 <RecipeCard
                   recipe={recipe}
-                  onPress={() => navigation.navigate('RecipeDetail', { recipe, isSearch: activeTab === 'search' })}
+                  onPress={() => (selectionMode && selectable)
+                    ? toggleSelected(recipe.id)
+                    : navigation.navigate('RecipeDetail', { recipe, isSearch: activeTab === 'search' })}
+                  onLongPress={selectable && !selectionMode ? () => startSelection(recipe.id) : null}
+                  selectionMode={selectionMode && selectable}
+                  selected={selectedIds.has(recipe.id)}
                   onSave={activeTab === 'search' && !isSaved ? () => handleSaveRecipe(recipe) : null}
                   onUnsave={isSaved ? () => handleUnsaveRecipe(recipe) : null}
                   isSaved={isSaved}
@@ -592,6 +700,26 @@ const makeStyles = (colors) => StyleSheet.create({
     paddingHorizontal: spacing.xl, paddingTop: spacing.xl, paddingBottom: spacing.lg,
   },
   screenTitle:          { ...type.h2, color: colors.textPrimary },
+  headerActions:        { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  selectButton: {
+    paddingHorizontal: 14, paddingVertical: 9, borderRadius: radius.md,
+    backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
+  },
+  selectButtonLabel:    { ...type.label, color: colors.textSecondary, fontWeight: '700' },
+
+  selectionBar: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: spacing.xl, paddingTop: spacing.xl, paddingBottom: spacing.lg,
+  },
+  selectionCancel: { ...type.label, color: colors.accent, fontWeight: '700' },
+  selectionCount:  { ...type.label, color: colors.textSecondary },
+  selectionDeleteButton: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: colors.danger, paddingHorizontal: 14, paddingVertical: 9, borderRadius: radius.md,
+  },
+  selectionDeleteButtonDisabled: { opacity: 0.4 },
+  selectionDeleteLabel: { ...type.label, color: '#fff', fontWeight: '700' },
+
   addRecipeButton: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
     backgroundColor: colors.accent, paddingHorizontal: 14, paddingVertical: 9, borderRadius: radius.md,
@@ -658,7 +786,17 @@ const makeStyles = (colors) => StyleSheet.create({
     flex: 1, borderRadius: radius.xl, marginBottom: 12, overflow: 'hidden',
     borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface,
   },
+  // borderWidth stays 1 so selecting doesn't shift the grid
+  recipeCardSelected:        { borderColor: colors.accent },
   recipeCardImageContainer:  { height: 172, position: 'relative' },
+  selectionCheck: {
+    position: 'absolute', top: 8, left: 8,
+    width: 22, height: 22, borderRadius: 11,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.85)',
+  },
+  selectionCheckOn: { backgroundColor: colors.accent, borderColor: colors.accent },
   recipeCardImagePlaceholder: {
     backgroundColor: colors.surfaceElevated, alignItems: 'center', justifyContent: 'center',
   },
