@@ -41,7 +41,7 @@ const IngredientInput = memo(({ ingredient, index, pantryItems, colors, onUpdate
       <View>
         <View style={styles.ingredientNameRow}>
           <TextInput
-            style={[styles.textInput, { flex: 1 }]}
+            style={[styles.textInput, styles.flexInput]}
             placeholder="Ingredient name"
             value={ingredient.name}
             onChangeText={(v) => {
@@ -84,7 +84,7 @@ const IngredientInput = memo(({ ingredient, index, pantryItems, colors, onUpdate
       </View>
       <View style={styles.ingredientMetaRow}>
         <TextInput
-          style={[styles.textInput, { flex: 1 }]}
+          style={[styles.textInput, styles.flexInput]}
           placeholder="Amount"
           value={ingredient.amount}
           onChangeText={(v) => onUpdate(index, 'amount', v)}
@@ -93,7 +93,7 @@ const IngredientInput = memo(({ ingredient, index, pantryItems, colors, onUpdate
           accessibilityLabel="Amount"
         />
         <TextInput
-          style={[styles.textInput, { flex: 1 }]}
+          style={[styles.textInput, styles.flexInput]}
           placeholder="Unit"
           value={ingredient.unit}
           onChangeText={(v) => onUpdate(index, 'unit', v)}
@@ -428,6 +428,8 @@ const makeStyles = (colors) => StyleSheet.create({
     backgroundColor: colors.surface,
   },
   textAreaInput: { height: 80, paddingTop: 12 },
+  // web inputs have an intrinsic width — min-width:0 lets them shrink in a row
+  flexInput: { flex: 1, minWidth: 0 },
 
   statsFieldGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   statsField:     { width: '47%' },
