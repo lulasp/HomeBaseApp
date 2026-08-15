@@ -150,6 +150,59 @@ export const getGroceryItems = async (householdId) => {
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 };
 
+// ── Grocery Price History ────────────────────────────────
+// One doc per purchase: what an item cost, where, and when. Grouping into a
+// per-item history (and the cheaper/more-expensive comparison) happens
+// client-side in src/utils/pricing.js, so no composite index is needed here.
+export const subscribePriceEntries = (householdId, callback) =>
+  onSnapshot(
+    collection(db, 'households', householdId, 'priceEntries'),
+    (snap) => callback(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+  );
+
+export const getPriceEntries = async (householdId) => {
+  const snap = await getDocs(collection(db, 'households', householdId, 'priceEntries'));
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+};
+
+// `entry` must come from buildPriceEntry() so the stored unitPrice and
+// canonicalUnit stay consistent with how history is compared.
+export const addPriceEntry = (householdId, entry) =>
+  addDoc(collection(db, 'households', householdId, 'priceEntries'), {
+    ...entry,
+    createdAt: serverTimestamp(),
+  });
+
+// Bulk-insert price entries (e.g. from a parsed receipt) in a single batch.
+export const addPriceEntriesBatch = (householdId, entries) => {
+  if (!entries?.length) return Promise.resolve();
+  const batch = writeBatch(db);
+  const col = collection(db, 'households', householdId, 'priceEntries');
+  for (const entry of entries) {
+    batch.set(doc(col), { ...entry, createdAt: serverTimestamp() });
+  }
+  return batch.commit();
+};
+
+export const updatePriceEntry = (householdId, entryId, data) =>
+  updateDoc(doc(db, 'households', householdId, 'priceEntries', entryId), {
+    ...data,
+    updatedAt: serverTimestamp(),
+  });
+
+export const deletePriceEntry = (householdId, entryId) =>
+  deleteDoc(doc(db, 'households', householdId, 'priceEntries', entryId));
+
+// Remove an item's whole price history (used from the price detail screen).
+export const deletePriceEntriesForItem = async (householdId, itemKey) => {
+  const q = query(
+    collection(db, 'households', householdId, 'priceEntries'),
+    where('itemKey', '==', itemKey),
+  );
+  const snap = await getDocs(q);
+  await Promise.all(snap.docs.map((d) => deleteDoc(d.ref)));
+};
+
 // ── Recipes ──────────────────────────────────────────────
 export const subscribeRecipes = (householdId, callback) => {
   return onSnapshot(

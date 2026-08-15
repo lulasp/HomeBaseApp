@@ -16,12 +16,16 @@ import {
   subscribeGroceryItems, addGroceryItem, toggleGroceryItem,
   deleteGroceryItem, clearCheckedItems, updateGroceryItem,
   addPantryItemFromGrocery, removePantryItemByGroceryId,
-  getHousehold,
+  getHousehold, subscribePriceEntries, addPriceEntry,
 } from '../../services/firestore';
 import { spacing, radius, type } from '../../theme/colors';
 import { PANTRY_CATEGORIES, NON_FOOD_CATEGORIES, UNITS } from '../../utils/categories';
+import {
+  buildPriceEntry, lastEntryFor, recentStores, computeTrend, sortEntries,
+  itemKeyOf, formatPrice, trendPresentation, formatPercent, summarizeBasket,
+} from '../../utils/pricing';
 import DatePickerInput from '../../components/DatePickerInput';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useIsDesktop, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
 
 const applyOrder = (all, order) => {
@@ -30,9 +34,10 @@ const applyOrder = (all, order) => {
   return [...all].sort((a, b) => (map.get(a.label) ?? 999) - (map.get(b.label) ?? 999));
 };
 
-const GroceryItemRow = memo(({ item, onToggle, onEdit, onDelete }) => {
+const GroceryItemRow = memo(({ item, priceInfo, onToggle, onEdit, onDelete, onOpenPrice }) => {
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
+  const trendStyle = priceInfo ? trendPresentation(priceInfo.direction) : null;
   return (
     <View style={styles.groceryItemRow}>
       <TouchableOpacity
@@ -51,7 +56,28 @@ const GroceryItemRow = memo(({ item, onToggle, onEdit, onDelete }) => {
         <Text style={[styles.itemName, item.checked && styles.itemNameChecked]} numberOfLines={1}>
           {item.name}
         </Text>
-        {item.quantity ? <Text style={styles.itemQuantity}>{item.quantity}{item.unit ? ` ${item.unit}` : ''}</Text> : null}
+        <View style={styles.itemMetaRow}>
+          {item.quantity ? <Text style={styles.itemQuantity}>{item.quantity}{item.unit ? ` ${item.unit}` : ''}</Text> : null}
+          {priceInfo && (
+            <TouchableOpacity
+              style={styles.priceTag}
+              onPress={onOpenPrice}
+              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+              accessibilityRole="button"
+              accessibilityLabel={`${item.name} last paid ${formatPrice(priceInfo.price)}. ${trendStyle.label}. View price history`}
+            >
+              <Text style={styles.priceTagValue}>{formatPrice(priceInfo.price)}</Text>
+              {priceInfo.direction !== 'new' && priceInfo.direction !== 'same' && (
+                <>
+                  <Ionicons name={trendStyle.icon} size={11} color={colors[trendStyle.colorKey]} />
+                  <Text style={[styles.priceTagDelta, { color: colors[trendStyle.colorKey] }]}>
+                    {formatPercent(priceInfo.pct)}
+                  </Text>
+                </>
+              )}
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
       <View style={styles.itemActions}>
         <TouchableOpacity
@@ -84,8 +110,10 @@ export default function GroceryListScreen() {
   const { notify } = useNotification();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const isDesktop = useIsDesktop();
+  const navigation = useNavigation();
 
   const [items, setItems] = useState([]);
+  const [priceEntries, setPriceEntries] = useState([]);
   const [enabledCategoryLabels, setEnabledCategoryLabels]           = useState(null);
   const [customCategoryDefs, setCustomCategoryDefs]                 = useState([]);
   const [foodCategoryOrder, setFoodCategoryOrder]                   = useState([]);
@@ -103,12 +131,21 @@ export default function GroceryListScreen() {
   const [selectedCategory, setSelectedCategory] = useState('Other');
   const [activeFilter, setActiveFilter] = useState('all');
   const [errors, setErrors] = useState({});
-  const [expiryPromptItem, setExpiryPromptItem] = useState(null);
-  const [expiryPromptDate, setExpiryPromptDate] = useState('');
+  // Check-off sheet: captures the pantry expiry date and (optionally) what the
+  // item cost, so price history builds up from the normal shopping flow.
+  const [checkoutItem, setCheckoutItem]   = useState(null);
+  const [checkoutExpiry, setCheckoutExpiry] = useState('');
+  const [checkoutPrice, setCheckoutPrice]   = useState('');
+  const [checkoutStore, setCheckoutStore]   = useState('');
 
   useEffect(() => {
     if (!householdId) return;
     return subscribeGroceryItems(householdId, setItems);
+  }, [householdId]);
+
+  useEffect(() => {
+    if (!householdId) return;
+    return subscribePriceEntries(householdId, setPriceEntries);
   }, [householdId]);
 
   useFocusEffect(
@@ -203,6 +240,34 @@ export default function GroceryListScreen() {
     return result;
   }, [items, activeFilter, visibleFoodCategories, visibleNonFoodCategories, visibleCategories]);
 
+  // Last recorded price per item key, with the trend against the previous one.
+  // Keyed so a row lookup is O(1) rather than a scan per render.
+  const priceByItemKey = useMemo(() => {
+    const groups = new Map();
+    for (const entry of priceEntries) {
+      const key = entry.itemKey || itemKeyOf(entry.itemName);
+      if (!key) continue;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(entry);
+    }
+    const map = new Map();
+    for (const [key, group] of groups) {
+      const trend = computeTrend(sortEntries(group));
+      if (!trend.latest) continue;
+      map.set(key, { price: trend.latest.price, direction: trend.direction, pct: trend.pct });
+    }
+    return map;
+  }, [priceEntries]);
+
+  const storeSuggestions = useMemo(() => recentStores(priceEntries), [priceEntries]);
+
+  const checkoutLastEntry = useMemo(
+    () => (checkoutItem ? lastEntryFor(priceEntries, checkoutItem.name) : null),
+    [checkoutItem, priceEntries],
+  );
+
+  const basket = useMemo(() => summarizeBasket(items, priceEntries), [items, priceEntries]);
+
   // Toggles a grocery item and syncs the change to the pantry:
   // checking → adds a linked pantry item; unchecking → removes it.
   const handleToggle = useCallback(async (item) => {
@@ -210,24 +275,60 @@ export default function GroceryListScreen() {
     try {
       await toggleGroceryItem(householdId, item.id, newChecked);
       if (newChecked) {
-        setExpiryPromptItem(item);
-        setExpiryPromptDate('');
+        const previous = lastEntryFor(priceEntries, item.name);
+        setCheckoutItem(item);
+        setCheckoutExpiry('');
+        setCheckoutPrice('');
+        // Pre-fill the store from the last purchase — most shops repeat.
+        setCheckoutStore(previous?.store || '');
       } else {
         await removePantryItemByGroceryId(householdId, item.id);
       }
     } catch (e) {
       showAlert({ title: 'Error', message: e.message, type: 'error' });
     }
-  }, [householdId, showAlert]);
+  }, [householdId, showAlert, priceEntries]);
 
-  const handleExpiryConfirm = async (date) => {
-    if (!expiryPromptItem) return;
-    const item = { ...expiryPromptItem, expiryDate: date || null };
-    setExpiryPromptItem(null);
-    setExpiryPromptDate('');
+  // Closes the check-off sheet, writing the pantry item and — when a price was
+  // entered — a price-history entry. `save` false means "skip", which still
+  // files the pantry item (the item is already checked off at this point).
+  const handleCheckoutConfirm = async (save) => {
+    if (!checkoutItem) return;
+    const item   = { ...checkoutItem, expiryDate: (save && checkoutExpiry) || null };
+    const price  = save ? checkoutPrice.trim() : '';
+    const store  = save ? checkoutStore.trim() : '';
+    setCheckoutItem(null);
+    setCheckoutExpiry('');
+    setCheckoutPrice('');
+    setCheckoutStore('');
     try {
       await addPantryItemFromGrocery(householdId, item);
-      notify('Added to pantry', `${item.name} added to your pantry.`, { type: 'success' });
+      const entry = price
+        ? buildPriceEntry({
+            name:     item.name,
+            price,
+            quantity: item.quantity,
+            unit:     item.unit,
+            category: item.category,
+            store,
+            addedBy:  user.uid,
+          })
+        : null;
+      if (entry) {
+        const previous = lastEntryFor(priceEntries, item.name);
+        // Tie the entry to the list item so the trip's running total is exact
+        // rather than inferred from dates.
+        await addPriceEntry(householdId, { ...entry, groceryItemId: item.id });
+        notify(
+          'Added to pantry',
+          previous
+            ? `${item.name} · ${formatPrice(entry.price)} (last ${formatPrice(previous.price)})`
+            : `${item.name} · ${formatPrice(entry.price)} — first price logged.`,
+          { type: 'success' },
+        );
+      } else {
+        notify('Added to pantry', `${item.name} added to your pantry.`, { type: 'success' });
+      }
     } catch (e) {
       showAlert({ title: 'Error', message: e.message, type: 'error' });
     }
@@ -377,18 +478,61 @@ export default function GroceryListScreen() {
                 {pendingCount} remaining · {checkedCount} done
               </Text>
             </View>
-            {checkedCount > 0 && (
+            <View style={styles.headerActions}>
+              {checkedCount > 0 && (
+                <TouchableOpacity
+                  style={styles.clearCheckedButton}
+                  onPress={handleClearChecked}
+                  accessibilityRole="button"
+                  accessibilityLabel="Clear checked items"
+                >
+                  <Ionicons name="checkmark-done-outline" size={14} color={colors.accent} />
+                  <Text style={styles.clearCheckedLabel}>Clear done</Text>
+                </TouchableOpacity>
+              )}
               <TouchableOpacity
-                style={styles.clearCheckedButton}
-                onPress={handleClearChecked}
+                style={styles.priceHistoryButton}
+                onPress={() => navigation.navigate('PriceHistory')}
                 accessibilityRole="button"
-                accessibilityLabel="Clear checked items"
+                accessibilityLabel="Price history"
               >
-                <Ionicons name="checkmark-done-outline" size={14} color={colors.accent} />
-                <Text style={styles.clearCheckedLabel}>Clear done</Text>
+                <Ionicons name="pricetags-outline" size={14} color={colors.textSecondary} />
+                <Text style={styles.priceHistoryLabel}>Prices</Text>
               </TouchableOpacity>
-            )}
+            </View>
           </View>
+
+          {/* Trip cost: what's been rung up so far, and what the till is likely
+              to say once the rest of the list is picked up. */}
+          {basket.pricedCount > 0 && (
+            <View style={styles.basketCard}>
+              <View style={styles.basketMain}>
+                <View>
+                  <Text style={styles.basketLabel}>
+                    {basket.loggedCount > 0 ? 'Projected total' : 'Estimated total'}
+                  </Text>
+                  <Text style={styles.basketTotal}>{formatPrice(basket.projected)}</Text>
+                </View>
+                {basket.loggedCount > 0 && (
+                  <View style={styles.basketSplit}>
+                    <Text style={styles.basketSplitValue}>{formatPrice(basket.actual)}</Text>
+                    <Text style={styles.basketSplitLabel}>in basket</Text>
+                  </View>
+                )}
+                {basket.remaining > 0 && (
+                  <View style={styles.basketSplit}>
+                    <Text style={styles.basketSplitValue}>{formatPrice(basket.remaining)}</Text>
+                    <Text style={styles.basketSplitLabel}>to go</Text>
+                  </View>
+                )}
+              </View>
+              {basket.unpricedCount > 0 && (
+                <Text style={styles.basketNote}>
+                  {basket.unpricedCount} item{basket.unpricedCount !== 1 ? 's' : ''} with no price history yet
+                </Text>
+              )}
+            </View>
+          )}
 
           {totalCount > 0 && (
             <View style={styles.progressBarTrack}>
@@ -462,6 +606,8 @@ export default function GroceryListScreen() {
                   <GroceryItemRow
                     key={item.id}
                     item={item}
+                    priceInfo={priceByItemKey.get(itemKeyOf(item.name))}
+                    onOpenPrice={() => navigation.navigate('PriceDetail', { itemKey: itemKeyOf(item.name) })}
                     onToggle={() => handleToggle(item)}
                     onEdit={() => openEditModal(item)}
                     onDelete={async () => {
@@ -601,37 +747,100 @@ export default function GroceryListScreen() {
           </ScrollView>
         </KeyboardAvoidingView>
       </Modal>
-      <Modal visible={!!expiryPromptItem} animationType="slide" transparent statusBarTranslucent>
+      <Modal visible={!!checkoutItem} animationType="slide" transparent statusBarTranslucent>
         <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => handleExpiryConfirm(null)} />
-          <View style={styles.expirySheet}>
-            <View style={styles.sheetDragHandle} />
-            <View style={styles.expirySheetHeader}>
-              <View style={[styles.expirySheetIcon, { backgroundColor: colors.accentSoft }]}>
-                <Ionicons name="checkmark-circle" size={22} color={colors.accent} />
+          <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => handleCheckoutConfirm(false)} />
+          <ScrollView style={styles.bottomSheetScroll} keyboardShouldPersistTaps="handled">
+            <View style={styles.bottomSheetInner}>
+              <View style={styles.sheetDragHandle} />
+              <View style={styles.expirySheetHeader}>
+                <View style={[styles.expirySheetIcon, { backgroundColor: colors.accentSoft }]}>
+                  <Ionicons name="checkmark-circle" size={22} color={colors.accent} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.expirySheetTitle} numberOfLines={1}>{checkoutItem?.name}</Text>
+                  <Text style={styles.expirySheetSub}>
+                    Added to pantry — log what it cost?
+                  </Text>
+                </View>
               </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.expirySheetTitle} numberOfLines={1}>{expiryPromptItem?.name}</Text>
-                <Text style={styles.expirySheetSub}>Added to pantry — set an expiry date?</Text>
+
+              <View style={styles.quantityRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.inputLabel}>Price Paid</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    placeholder="0.00"
+                    value={checkoutPrice}
+                    onChangeText={(text) => setCheckoutPrice(text.replace(/[^0-9.]/g, ''))}
+                    keyboardType="decimal-pad"
+                    placeholderTextColor={colors.textTertiary}
+                    accessibilityLabel="Price paid"
+                  />
+                </View>
+                <View style={{ flex: 1.4 }}>
+                  <Text style={styles.inputLabel}>Store</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    placeholder="e.g. Lidl"
+                    value={checkoutStore}
+                    onChangeText={setCheckoutStore}
+                    placeholderTextColor={colors.textTertiary}
+                    accessibilityLabel="Store"
+                  />
+                </View>
+              </View>
+
+              {/* Total for the whole quantity — restated so it's unambiguous
+                  what the number covers when comparing per-unit later. */}
+              {!!checkoutItem?.quantity && (
+                <Text style={styles.checkoutHint}>
+                  Total for {checkoutItem.quantity}{checkoutItem.unit ? ` ${checkoutItem.unit}` : ''}
+                  {checkoutLastEntry
+                    ? ` · last paid ${formatPrice(checkoutLastEntry.price)}${checkoutLastEntry.store ? ` at ${checkoutLastEntry.store}` : ''}`
+                    : ''}
+                </Text>
+              )}
+
+              {storeSuggestions.length > 0 && (
+                <View style={styles.storeChipRow}>
+                  {storeSuggestions.map((store) => (
+                    <TouchableOpacity
+                      key={store}
+                      style={[styles.storeChip, checkoutStore === store && styles.storeChipActive]}
+                      onPress={() => setCheckoutStore(store)}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: checkoutStore === store }}
+                    >
+                      <Text style={[styles.storeChipLabel, checkoutStore === store && styles.storeChipLabelActive]}>
+                        {store}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+
+              {!visibleNonFoodCategories.some((c) => c.label === checkoutItem?.category) && (
+                <>
+                  <Text style={styles.inputLabel}>Expiry Date</Text>
+                  <DatePickerInput value={checkoutExpiry} onChange={setCheckoutExpiry} />
+                </>
+              )}
+
+              <View style={styles.sheetActionRow}>
+                <TouchableOpacity style={styles.cancelButton} onPress={() => handleCheckoutConfirm(false)}>
+                  <Text style={styles.cancelButtonLabel}>Skip</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.confirmButton, !checkoutPrice && !checkoutExpiry && styles.confirmButtonDisabled]}
+                  disabled={!checkoutPrice && !checkoutExpiry}
+                  onPress={() => handleCheckoutConfirm(true)}
+                >
+                  <Text style={styles.confirmButtonLabel}>Save</Text>
+                </TouchableOpacity>
               </View>
             </View>
-            <DatePickerInput
-              value={expiryPromptDate}
-              onChange={setExpiryPromptDate}
-            />
-            <View style={styles.sheetActionRow}>
-              <TouchableOpacity style={styles.cancelButton} onPress={() => handleExpiryConfirm(null)}>
-                <Text style={styles.cancelButtonLabel}>Skip</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.confirmButton, !expiryPromptDate && styles.confirmButtonDisabled]}
-                disabled={!expiryPromptDate}
-                onPress={() => handleExpiryConfirm(expiryPromptDate)}
-              >
-                <Text style={styles.confirmButtonLabel}>Save Expiry</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
+          </ScrollView>
         </KeyboardAvoidingView>
       </Modal>
     </SafeAreaView>
@@ -655,6 +864,7 @@ const makeStyles = (colors) => StyleSheet.create({
   screenTitle:    { ...type.h2, color: colors.textPrimary },
   screenSubtitle: { ...type.bodySm, color: colors.textSecondary, marginTop: 3 },
 
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   clearCheckedButton: {
     flexDirection: 'row', alignItems: 'center', gap: 5,
     backgroundColor: colors.accentSoft,
@@ -662,6 +872,28 @@ const makeStyles = (colors) => StyleSheet.create({
     borderRadius: radius.full,
   },
   clearCheckedLabel: { ...type.label, color: colors.accent },
+
+  priceHistoryButton: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    backgroundColor: colors.surface,
+    borderWidth: 1, borderColor: colors.border,
+    paddingHorizontal: 12, paddingVertical: 7,
+    borderRadius: radius.full,
+  },
+  priceHistoryLabel: { ...type.label, color: colors.textSecondary },
+
+  basketCard: {
+    backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
+    borderRadius: radius.lg, paddingHorizontal: spacing.lg, paddingVertical: spacing.md,
+    gap: 6,
+  },
+  basketMain:  { flexDirection: 'row', alignItems: 'flex-end', gap: spacing.xl },
+  basketLabel: { ...type.label, color: colors.textSecondary, textTransform: 'uppercase' },
+  basketTotal: { ...type.h3, color: colors.textPrimary, marginTop: 2 },
+  basketSplit: { alignItems: 'flex-start' },
+  basketSplitValue: { ...type.bodyMed, color: colors.textSecondary },
+  basketSplitLabel: { ...type.caption, color: colors.textTertiary },
+  basketNote:  { ...type.caption, color: colors.textTertiary },
 
   progressBarTrack: {
     height: 5, backgroundColor: colors.muted,
@@ -745,6 +977,28 @@ const makeStyles = (colors) => StyleSheet.create({
   itemName:         { ...type.bodyMed, color: colors.textPrimary },
   itemNameChecked:  { textDecorationLine: 'line-through', color: colors.textTertiary },
   itemQuantity:     { ...type.caption, color: colors.textTertiary },
+  itemMetaRow:      { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+
+  priceTag: {
+    flexDirection: 'row', alignItems: 'center', gap: 3,
+    backgroundColor: colors.muted,
+    paddingHorizontal: 7, paddingVertical: 2,
+    borderRadius: radius.full,
+  },
+  priceTagValue: { ...type.caption, color: colors.textSecondary, fontWeight: '700' },
+  priceTagDelta: { ...type.caption, fontWeight: '700' },
+
+  checkoutHint: { ...type.caption, color: colors.textTertiary },
+  storeChipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  storeChip: {
+    paddingHorizontal: 11, paddingVertical: 6,
+    borderRadius: radius.full,
+    backgroundColor: colors.surfaceElevated,
+    borderWidth: 1, borderColor: colors.border,
+  },
+  storeChipActive:      { backgroundColor: colors.accentSoft, borderColor: colors.accent },
+  storeChipLabel:       { ...type.label, color: colors.textSecondary },
+  storeChipLabelActive: { color: colors.accent },
 
   modalOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: colors.overlay },
   expirySheet: {

@@ -54,8 +54,15 @@ import {
   updateHouseholdIntegrationFlags,
   updateHouseholdReduceMotion,
   subscribeHouseholdPrivate,
+  subscribePriceEntries,
+  getPriceEntries,
+  addPriceEntry,
+  updatePriceEntry,
+  deletePriceEntry,
+  deletePriceEntriesForItem,
+  addPriceEntriesBatch,
 } from '../services/firestore';
-import { onSnapshot } from 'firebase/firestore';
+import { onSnapshot, where } from 'firebase/firestore';
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -559,6 +566,89 @@ describe('subscribeHouseholdPrivate', () => {
     });
     subscribeHouseholdPrivate('hh1', cb);
     expect(cb).toHaveBeenCalledWith({});
+  });
+});
+
+// ── Price entries ─────────────────────────────────────────────────────────────
+
+describe('price entries', () => {
+  const householdId = 'hh1';
+  const entry = {
+    itemKey: 'milk', itemName: 'Milk', price: 1.49,
+    quantity: 1, unit: 'L', canonicalUnit: 'L', unitPrice: 1.49,
+    purchasedAt: '2026-01-01', store: 'Lidl',
+  };
+
+  it('subscribes to the household priceEntries collection', () => {
+    const unsub = jest.fn();
+    const cb = jest.fn();
+    onSnapshot.mockImplementation((ref, handler) => {
+      handler({ docs: [{ id: 'p1', data: () => entry }] });
+      return unsub;
+    });
+    const result = subscribePriceEntries(householdId, cb);
+    expect(onSnapshot).toHaveBeenCalledWith('households/hh1/priceEntries', expect.any(Function));
+    expect(cb).toHaveBeenCalledWith([{ id: 'p1', ...entry }]);
+    expect(result).toBe(unsub);
+  });
+
+  it('reads entries with their doc ids', async () => {
+    mockGetDocs.mockResolvedValue({ docs: [{ id: 'p1', data: () => entry }] });
+    await expect(getPriceEntries(householdId)).resolves.toEqual([{ id: 'p1', ...entry }]);
+    expect(mockCollection).toHaveBeenCalledWith({}, 'households', 'hh1', 'priceEntries');
+  });
+
+  it('stamps createdAt on a new entry', async () => {
+    await addPriceEntry(householdId, entry);
+    expect(mockAddDoc).toHaveBeenCalledWith(
+      'households/hh1/priceEntries',
+      { ...entry, createdAt: 'SERVER_TIMESTAMP' },
+    );
+  });
+
+  it('stamps updatedAt on an edit', async () => {
+    await updatePriceEntry(householdId, 'p1', { price: 2 });
+    expect(mockUpdateDoc).toHaveBeenCalledWith(
+      'households/hh1/priceEntries/p1',
+      { price: 2, updatedAt: 'SERVER_TIMESTAMP' },
+    );
+  });
+
+  it('deletes a single entry by id', async () => {
+    await deletePriceEntry(householdId, 'p1');
+    expect(mockDeleteDoc).toHaveBeenCalledWith('households/hh1/priceEntries/p1');
+  });
+
+  it('deletes a whole item history by itemKey', async () => {
+    mockGetDocs.mockResolvedValue({
+      docs: [{ ref: 'ref-a' }, { ref: 'ref-b' }],
+    });
+    await deletePriceEntriesForItem(householdId, 'milk');
+    expect(where).toHaveBeenCalledWith('itemKey', '==', 'milk');
+    expect(mockDeleteDoc).toHaveBeenCalledTimes(2);
+    expect(mockDeleteDoc).toHaveBeenCalledWith('ref-a');
+    expect(mockDeleteDoc).toHaveBeenCalledWith('ref-b');
+  });
+
+  it('is a no-op when an item has no entries', async () => {
+    mockGetDocs.mockResolvedValue({ docs: [] });
+    await deletePriceEntriesForItem(householdId, 'nothing');
+    expect(mockDeleteDoc).not.toHaveBeenCalled();
+  });
+
+  it('writes an imported receipt as a single batch', async () => {
+    await addPriceEntriesBatch(householdId, [entry, { ...entry, itemKey: 'egg' }]);
+    expect(mockWriteBatch).toHaveBeenCalledTimes(1);
+    expect(mockBatchSet).toHaveBeenCalledTimes(2);
+    expect(mockBatchSet.mock.calls[0][1]).toMatchObject({ ...entry, createdAt: 'SERVER_TIMESTAMP' });
+    expect(mockBatchCommit).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not open a batch for an empty import', async () => {
+    await addPriceEntriesBatch(householdId, []);
+    await addPriceEntriesBatch(householdId, undefined);
+    expect(mockWriteBatch).not.toHaveBeenCalled();
+    expect(mockBatchCommit).not.toHaveBeenCalled();
   });
 });
 
