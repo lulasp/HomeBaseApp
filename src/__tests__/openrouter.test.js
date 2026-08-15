@@ -1,5 +1,5 @@
 import {
-  sendChatMessage, suggestRecipes, parseBankStatement, parseStatementText,
+  sendChatMessage, suggestRecipes, parseBankStatement, parseStatementText, parseReceipt,
 } from '../services/openrouter';
 import { DEFAULT_AI_MODEL } from '../utils/aiModels';
 
@@ -124,6 +124,73 @@ describe('parseBankStatement', () => {
     mockFetchOnce({ json: jsonReply({ transactions: [] }) });
     await parseBankStatement(KEY, 'X', {}, 'openai/gpt-oss-20b:free');
     expect(JSON.parse(global.fetch.mock.calls[0][1].body).plugins[0].pdf.engine).toBe('cloudflare-ai');
+  });
+});
+
+describe('parseReceipt', () => {
+  const VISION_MODEL = 'openai/gpt-4o-mini';
+  const receipt = { store: 'Lidl', date: '2026-03-04', lines: [] };
+
+  it('sends a photo as an image content part with a data URL', async () => {
+    mockFetchOnce({ json: jsonReply(receipt) });
+    await parseReceipt(KEY, { base64: 'IMGDATA', mimeType: 'image/jpeg' }, VISION_MODEL);
+
+    const body = JSON.parse(global.fetch.mock.calls[0][1].body);
+    const parts = body.messages[0].content;
+    const image = parts.find((p) => p.type === 'image_url');
+    expect(image.image_url.url).toBe('data:image/jpeg;base64,IMGDATA');
+    expect(body.plugins).toBeUndefined();
+  });
+
+  it('asks for the receipt schema so lines come back structured', async () => {
+    mockFetchOnce({ json: jsonReply(receipt) });
+    await parseReceipt(KEY, { base64: 'X', mimeType: 'image/png' }, VISION_MODEL);
+
+    const body = JSON.parse(global.fetch.mock.calls[0][1].body);
+    expect(body.response_format.json_schema.name).toBe('receipt');
+    const props = body.response_format.json_schema.schema.properties;
+    expect(Object.keys(props.lines.items.properties).sort())
+      .toEqual(['name', 'price', 'quantity', 'unit']);
+  });
+
+  it('rejects an image when the model has no vision support', async () => {
+    global.fetch = jest.fn();
+    await expect(
+      parseReceipt(KEY, { base64: 'X', mimeType: 'image/jpeg' }, 'openai/gpt-oss-20b:free'),
+    ).rejects.toThrow(/cannot read images/i);
+    // Must not burn a request to find that out.
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it('routes a PDF receipt through the file-parser plugin instead', async () => {
+    mockFetchOnce({ json: jsonReply(receipt) });
+    await parseReceipt(KEY, { base64: 'PDFDATA', mimeType: 'application/pdf' }, VISION_MODEL);
+
+    const body = JSON.parse(global.fetch.mock.calls[0][1].body);
+    const filePart = body.messages[0].content.find((p) => p.type === 'file');
+    expect(filePart.file.file_data).toBe('data:application/pdf;base64,PDFDATA');
+    expect(body.plugins[0].pdf.engine).toBe('native');
+  });
+
+  it('accepts a PDF even on a model without vision', async () => {
+    mockFetchOnce({ json: jsonReply(receipt) });
+    await parseReceipt(KEY, { base64: 'X', mimeType: 'application/pdf' }, 'openai/gpt-oss-20b:free');
+    expect(JSON.parse(global.fetch.mock.calls[0][1].body).plugins[0].pdf.engine).toBe('cloudflare-ai');
+  });
+
+  it('returns the parsed receipt', async () => {
+    const parsed = { store: 'Aldi', date: '2026-03-04', lines: [{ name: 'Milk', price: 1.49, quantity: 1, unit: 'L' }] };
+    mockFetchOnce({ json: jsonReply(parsed) });
+    await expect(parseReceipt(KEY, { base64: 'X', mimeType: 'image/jpeg' }, VISION_MODEL))
+      .resolves.toEqual(parsed);
+  });
+
+  it('defaults the mime type to jpeg when the picker omits it', async () => {
+    mockFetchOnce({ json: jsonReply(receipt) });
+    await parseReceipt(KEY, { base64: 'X' }, VISION_MODEL);
+    const image = JSON.parse(global.fetch.mock.calls[0][1].body)
+      .messages[0].content.find((p) => p.type === 'image_url');
+    expect(image.image_url.url).toBe('data:image/jpeg;base64,X');
   });
 });
 
