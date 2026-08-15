@@ -2,10 +2,11 @@ import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react'
 import {
   View, Text, ScrollView, TouchableOpacity, StyleSheet,
   Switch, SafeAreaView, Platform, ActivityIndicator,
-  Modal, TextInput, KeyboardAvoidingView,
+  Modal, TextInput, KeyboardAvoidingView, RefreshControl,
 } from 'react-native';
 import Slider from '@react-native-community/slider';
 import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
 import { useTheme } from '../../context/ThemeContext';
 import { useNavScroll } from '../../context/NavScrollContext';
 import { useAuth } from '../../context/AuthContext';
@@ -74,44 +75,63 @@ function hasBluetooth(device) {
   return (device.capabilities ?? []).some((c) => c.type?.includes('bluetooth'));
 }
 
+// Reads live state for every device. Govee limits /device/state to 30 req/min
+// *per device*, so one request each in parallel is safe. A device that errors
+// out is treated as offline — its last reported values can't be trusted.
+async function fetchDeviceStates(apiKey, devs) {
+  const entries = await Promise.all(devs.map(async (dev) => {
+    try {
+      const caps = await getDeviceState(apiKey, dev.sku, dev.device);
+      return [dev.device, stateFromCapabilities(caps)];
+    } catch {
+      return [dev.device, { ...DEFAULT_STATE, online: false }];
+    }
+  }));
+  return Object.fromEntries(entries);
+}
+
 // ── Sub-component ─────────────────────────────────────────────────────────────
 
 function DeviceCard({ device, isSelected, isOn, isOnline, onSelect, onToggle }) {
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const supportsBt = hasBluetooth(device);
+  // An offline device reports stale values, so it can never read as "on".
+  const lit = isOnline && isOn;
   return (
     <TouchableOpacity
       style={[styles.deviceCard, isSelected && styles.deviceCardSelected]}
       onPress={onSelect}
       accessibilityRole="button"
-      accessibilityLabel={`Select ${device.deviceName}`}
+      accessibilityLabel={`Select ${device.deviceName}${isOnline ? '' : ' (offline)'}`}
       accessibilityState={{ selected: isSelected }}
     >
       <View style={[
         styles.deviceIconWrap,
-        isOn && { backgroundColor: colors.accentSoft },
+        lit && { backgroundColor: colors.accentSoft },
         isSelected && styles.deviceIconWrapSelected,
+        !isOnline && styles.offline,
       ]}>
         <Ionicons
-          name={isOn ? 'bulb' : 'bulb-outline'}
+          name={lit ? 'bulb' : 'bulb-outline'}
           size={22}
-          color={isOn || isSelected ? colors.accent : colors.textTertiary}
+          color={lit || isSelected ? colors.accent : colors.textTertiary}
         />
       </View>
-      <View style={{ flex: 1, marginLeft: 12 }}>
+      <View style={[{ flex: 1, marginLeft: 12 }, !isOnline && styles.offline]}>
         <Text style={[styles.deviceName, isSelected && styles.deviceNameSelected]} numberOfLines={1}>
           {device.deviceName}
         </Text>
         <View style={styles.deviceMeta}>
           <Text style={styles.deviceModel}>{device.sku}</Text>
           <View style={styles.connectivityIcons}>
-            {isOnline && (
-              <Ionicons
-                name="wifi"
-                size={13}
-                color="#4CAF50"
-              />
+            {isOnline ? (
+              <Ionicons name="wifi" size={13} color={colors.success} />
+            ) : (
+              <>
+                <Ionicons name="cloud-offline-outline" size={13} color={colors.textTertiary} />
+                <Text style={styles.offlineLabel}>Offline</Text>
+              </>
             )}
             {supportsBt && (
               <Ionicons
@@ -123,13 +143,22 @@ function DeviceCard({ device, isSelected, isOn, isOnline, onSelect, onToggle }) 
           </View>
         </View>
       </View>
-      <Switch
-        value={isOn}
-        onValueChange={onToggle}
-        trackColor={{ false: colors.muted, true: colors.accent }}
-        thumbColor="#fff"
-        ios_backgroundColor={colors.muted}
-      />
+      {isOnline ? (
+        <Switch
+          value={lit}
+          onValueChange={onToggle}
+          trackColor={{ false: colors.muted, true: colors.accent }}
+          thumbColor="#fff"
+          ios_backgroundColor={colors.muted}
+          accessibilityLabel={`Toggle ${device.deviceName}`}
+        />
+      ) : (
+        // A disabled Switch reads as a half-drawn control — show an inert
+        // placeholder of the same width so rows stay aligned.
+        <View style={styles.switchSlot}>
+          <Text style={styles.switchSlotDash}>—</Text>
+        </View>
+      )}
     </TouchableOpacity>
   );
 }
@@ -152,6 +181,7 @@ export default function HomeLightsScreen({ route }) {
   const [error, setError] = useState(null);
   const [deviceStates, setDeviceStates] = useState({});
   const [selectedId, setSelectedId] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   const [shortcuts, setShortcuts] = useState([]);
   const [shortcutModalVisible, setShortcutModalVisible] = useState(false);
@@ -184,15 +214,7 @@ export default function HomeLightsScreen({ route }) {
         setDevices(devs);
         if (devs.length > 0) setSelectedId(devs[0].device);
 
-        const states = {};
-        for (const dev of devs) {
-          try {
-            const caps = await getDeviceState(apiKey, dev.sku, dev.device);
-            states[dev.device] = { ...stateFromCapabilities(caps), online: true };
-          } catch {
-            states[dev.device] = { ...DEFAULT_STATE, online: false };
-          }
-        }
+        const states = await fetchDeviceStates(apiKey, devs);
         if (!cancelled) setDeviceStates(states);
       } catch (e) {
         if (!cancelled) setError(e.message);
@@ -203,6 +225,33 @@ export default function HomeLightsScreen({ route }) {
     load();
     return () => { cancelled = true; };
   }, [householdId]);
+
+  // ── Keep state fresh: pull-to-refresh + on every re-focus ─────────────────
+  const refreshStates = useCallback(async () => {
+    if (!goveeApiKey || devices.length === 0) return;
+    setRefreshing(true);
+    try {
+      setDeviceStates(await fetchDeviceStates(goveeApiKey, devices));
+    } finally {
+      setRefreshing(false);
+    }
+  }, [goveeApiKey, devices]);
+
+  // Read through a ref so the focus effect keeps a stable identity — otherwise
+  // it would re-fire every time `devices` settles, not just on re-focus.
+  const refreshRef = useRef(refreshStates);
+  refreshRef.current = refreshStates;
+  const skipFocusRefresh = useRef(true);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (skipFocusRefresh.current) {
+        skipFocusRefresh.current = false;   // mount already loads state
+        return;
+      }
+      refreshRef.current();
+    }, []),
+  );
 
   useEffect(() => {
     const id = route?.params?.selectedDeviceId;
@@ -217,6 +266,14 @@ export default function HomeLightsScreen({ route }) {
   // ── Derived ───────────────────────────────────────────────────────────────
   const selectedDevice = devices.find((d) => d.device === selectedId);
   const selected = deviceStates[selectedId] ?? DEFAULT_STATE;
+  const selectedOnline = selected.online;
+  const selectedOn = selectedOnline && selected.on;
+  const onlineCount = devices.filter((d) => deviceStates[d.device]?.online).length;
+  const offlineCount = devices.length - onlineCount;
+  const onlineOnCount = devices.filter((d) => {
+    const s = deviceStates[d.device];
+    return s?.online && s?.on;
+  }).length;
 
   const supports = useCallback((cap) => {
     if (!selectedDevice) return false;
@@ -253,63 +310,78 @@ export default function HomeLightsScreen({ route }) {
   }, [selectedId]);
 
   // ── Control handlers (optimistic UI + API call) ───────────────────────────
+  // Power is the one control we roll back on failure — the switch must never
+  // claim a light is on when the command never reached it.
+  const applyPower = useCallback((dev, next) => {
+    const id = dev.device;
+    setDeviceStates((prev) => ({ ...prev, [id]: { ...(prev[id] ?? DEFAULT_STATE), on: next } }));
+    setPower(goveeApiKey, dev.sku, id, next).catch((e) => {
+      console.error(e);
+      setDeviceStates((prev) => ({ ...prev, [id]: { ...(prev[id] ?? DEFAULT_STATE), on: !next } }));
+    });
+  }, [goveeApiKey]);
+
   const toggleDevice = useCallback((id) => {
     const dev = devices.find((d) => d.device === id);
-    if (!dev || !goveeApiKey) return;
-    const next = !(deviceStates[id]?.on ?? false);
-    setDeviceStates((prev) => ({ ...prev, [id]: { ...(prev[id] ?? DEFAULT_STATE), on: next } }));
-    setPower(goveeApiKey, dev.sku, dev.device, next).catch(console.error);
-  }, [devices, deviceStates, goveeApiKey]);
+    const state = deviceStates[id];
+    if (!dev || !goveeApiKey || !state?.online) return;
+    applyPower(dev, !state.on);
+  }, [devices, deviceStates, goveeApiKey, applyPower]);
 
   const handlePowerToggle = useCallback((v) => {
-    if (!selectedDevice || !goveeApiKey) return;
-    updateSelected({ on: v });
-    setPower(goveeApiKey, selectedDevice.sku, selectedDevice.device, v).catch(console.error);
-  }, [selectedDevice, updateSelected, goveeApiKey]);
+    if (!selectedDevice || !goveeApiKey || !selectedOnline) return;
+    applyPower(selectedDevice, v);
+  }, [selectedDevice, goveeApiKey, selectedOnline, applyPower]);
+
+  // Every control is a no-op while the light is unreachable — nothing local
+  // changes either, so the UI keeps showing the last known real state.
+  const canControl = Boolean(selectedDevice) && Boolean(goveeApiKey) && selectedOnline;
 
   const handleBrightnessChange = useCallback((v) => {
+    if (!canControl) return;
     const value = Math.round(v);
     updateSelected({ brightness: value });
     clearTimeout(debounce.current.brightness);
     debounce.current.brightness = setTimeout(() => {
-      if (selectedDevice && goveeApiKey) setBrightness(goveeApiKey, selectedDevice.sku, selectedDevice.device, value).catch(console.error);
+      setBrightness(goveeApiKey, selectedDevice.sku, selectedDevice.device, value).catch(console.error);
     }, 300);
-  }, [selectedDevice, updateSelected, goveeApiKey]);
+  }, [canControl, selectedDevice, updateSelected, goveeApiKey]);
 
   const handleColorChange = useCallback((hex) => {
-    if (!selectedDevice || !goveeApiKey) return;
+    if (!canControl) return;
     updateSelected({ color: hex, scene: null });
     setColor(goveeApiKey, selectedDevice.sku, selectedDevice.device, hex).catch(console.error);
-  }, [selectedDevice, updateSelected, goveeApiKey]);
+  }, [canControl, selectedDevice, updateSelected, goveeApiKey]);
 
   const handleColorTempChange = useCallback((v) => {
+    if (!canControl) return;
     const value = Math.round(v);
     updateSelected({ colorTem: value });
     clearTimeout(debounce.current.colorTem);
     debounce.current.colorTem = setTimeout(() => {
-      if (selectedDevice && goveeApiKey) setColorTemp(goveeApiKey, selectedDevice.sku, selectedDevice.device, value).catch(console.error);
+      setColorTemp(goveeApiKey, selectedDevice.sku, selectedDevice.device, value).catch(console.error);
     }, 300);
-  }, [selectedDevice, updateSelected, goveeApiKey]);
+  }, [canControl, selectedDevice, updateSelected, goveeApiKey]);
 
   const handleSceneSelect = useCallback((sceneId) => {
-    if (!selectedDevice || !goveeApiKey) return;
+    if (!canControl) return;
     const next = selected.scene === sceneId ? null : sceneId;
     updateSelected({ scene: next });
     if (next !== null) setScene(goveeApiKey, selectedDevice.sku, selectedDevice.device, next).catch(console.error);
-  }, [selectedDevice, selected.scene, updateSelected, goveeApiKey]);
+  }, [canControl, selectedDevice, selected.scene, updateSelected, goveeApiKey]);
 
   const handleMusicModeToggle = useCallback((v) => {
-    if (!selectedDevice || !goveeApiKey) return;
+    if (!canControl) return;
     const next = v ? 0 : null;
     updateSelected({ musicMode: next });
     if (next !== null) setMusicMode(goveeApiKey, selectedDevice.sku, selectedDevice.device, next).catch(console.error);
-  }, [selectedDevice, updateSelected, goveeApiKey]);
+  }, [canControl, selectedDevice, updateSelected, goveeApiKey]);
 
   const handleMusicModeSelect = useCallback((modeId) => {
-    if (!selectedDevice || !goveeApiKey) return;
+    if (!canControl) return;
     updateSelected({ musicMode: modeId });
     setMusicMode(goveeApiKey, selectedDevice.sku, selectedDevice.device, modeId).catch(console.error);
-  }, [selectedDevice, updateSelected, goveeApiKey]);
+  }, [canControl, selectedDevice, updateSelected, goveeApiKey]);
 
   // ── Shortcuts ─────────────────────────────────────────────────────────────
   const handleShortcutPatch = useCallback((id, patch) => {
@@ -455,6 +527,9 @@ export default function HomeLightsScreen({ route }) {
         onScroll={handleScroll}
         scrollEventThrottle={16}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={refreshStates} tintColor={colors.accent} />
+        }
       >
         {/* Header */}
         <Rise index={0}>
@@ -462,7 +537,8 @@ export default function HomeLightsScreen({ route }) {
           <View>
             <Text style={styles.title}>Home Lights</Text>
             <Text style={styles.subtitle}>
-              {devices.filter((d) => deviceStates[d.device]?.on).length} of {devices.length} lights on
+              {onlineOnCount} of {onlineCount} online lights on
+              {offlineCount > 0 ? ` · ${offlineCount} offline` : ''}
             </Text>
           </View>
           <View style={styles.headerBadge}>
@@ -492,16 +568,17 @@ export default function HomeLightsScreen({ route }) {
         <Rise index={2}>
         <View style={styles.sectionLabelRow}>
           <Text style={[styles.sectionLabel, styles.sectionLabelFlat]}>DEVICES</Text>
-          {(() => {
-            const n = devices.filter((d) => deviceStates[d.device]?.on).length;
-            if (!n) return null;
-            return (
-              <View style={styles.activeBadge}>
-                <View style={styles.activeDot} />
-                <Text style={styles.activeBadgeText}>{n} on</Text>
-              </View>
-            );
-          })()}
+          {onlineOnCount > 0 && (
+            <View style={styles.activeBadge}>
+              <View style={styles.activeDot} />
+              <Text style={styles.activeBadgeText}>{onlineOnCount} on</Text>
+            </View>
+          )}
+          {offlineCount > 0 && (
+            <View style={styles.offlineBadge}>
+              <Text style={styles.offlineBadgeText}>{offlineCount} offline</Text>
+            </View>
+          )}
         </View>
         <View style={styles.card}>
           {devices.map((device, i) => (
@@ -526,29 +603,46 @@ export default function HomeLightsScreen({ route }) {
           <Text style={styles.selectedDeviceLabel}>{selectedDevice?.deviceName}</Text>
         </View>
 
+        {selectedDevice && !selectedOnline && (
+          <View style={styles.offlineNotice}>
+            <Ionicons name="cloud-offline-outline" size={16} color={colors.textSecondary} />
+            <Text style={styles.offlineNoticeText}>
+              This light is offline — controls are unavailable. Pull down to refresh.
+            </Text>
+          </View>
+        )}
+
         {/* Power + Brightness */}
-        <View style={styles.card}>
+        <View style={[styles.card, !selectedOnline && styles.offline]}>
           <View style={styles.controlRow}>
             <View style={styles.controlRowLeft}>
-              <View style={[styles.controlIcon, selected.on && styles.controlIconActive]}>
+              <View style={[styles.controlIcon, selectedOn && styles.controlIconActive]}>
                 <Ionicons
-                  name={selected.on ? 'power' : 'power-outline'}
+                  name={selectedOn ? 'power' : 'power-outline'}
                   size={18}
-                  color={selected.on ? colors.accent : colors.textTertiary}
+                  color={selectedOn ? colors.accent : colors.textTertiary}
                 />
               </View>
               <View>
                 <Text style={styles.controlLabel}>Power</Text>
-                <Text style={styles.controlValue}>{selected.on ? 'On' : 'Off'}</Text>
+                <Text style={styles.controlValue}>
+                  {!selectedOnline ? 'Offline' : selected.on ? 'On' : 'Off'}
+                </Text>
               </View>
             </View>
-            <Switch
-              value={selected.on}
-              onValueChange={handlePowerToggle}
-              trackColor={{ false: colors.muted, true: colors.accent }}
-              thumbColor="#fff"
-              ios_backgroundColor={colors.muted}
-            />
+            {selectedOnline ? (
+              <Switch
+                value={selectedOn}
+                onValueChange={handlePowerToggle}
+                trackColor={{ false: colors.muted, true: colors.accent }}
+                thumbColor="#fff"
+                ios_backgroundColor={colors.muted}
+              />
+            ) : (
+              <View style={styles.switchSlot}>
+                <Text style={styles.switchSlotDash}>—</Text>
+              </View>
+            )}
           </View>
 
           {supports('brightness') && (
@@ -574,6 +668,7 @@ export default function HomeLightsScreen({ route }) {
                   minimumTrackTintColor={colors.accent}
                   maximumTrackTintColor={colors.muted}
                   thumbTintColor={colors.accent}
+                  disabled={!selectedOnline}
                   accessibilityLabel="Brightness slider"
                 />
               </View>
@@ -585,7 +680,7 @@ export default function HomeLightsScreen({ route }) {
         {supports('color') && (
           <>
             <Text style={styles.sectionLabel}>COLOR</Text>
-            <View style={styles.card}>
+            <View style={[styles.card, !selectedOnline && styles.offline]}>
               <View style={[styles.colorPreview, { backgroundColor: selected.color }]}>
                 <Text style={[styles.colorHex, { color: selected.color === '#FFFFFF' ? '#333' : '#fff' }]}>
                   {selected.color}
@@ -614,7 +709,7 @@ export default function HomeLightsScreen({ route }) {
         {supports('colorTem') && (
           <>
             <Text style={styles.sectionLabel}>COLOR TEMPERATURE</Text>
-            <View style={styles.card}>
+            <View style={[styles.card, !selectedOnline && styles.offline]}>
               <View style={styles.controlCol}>
                 <View style={styles.controlRowLeft}>
                   <View style={styles.controlIcon}>
@@ -635,6 +730,7 @@ export default function HomeLightsScreen({ route }) {
                   minimumTrackTintColor="#FFD580"
                   maximumTrackTintColor={colors.muted}
                   thumbTintColor="#FFD580"
+                  disabled={!selectedOnline}
                   accessibilityLabel="Color temperature slider"
                 />
                 <View style={styles.colorTemRow}>
@@ -650,7 +746,7 @@ export default function HomeLightsScreen({ route }) {
         {supports('scene') && deviceScenes.length > 0 && (
           <>
             <Text style={styles.sectionLabel}>SCENES</Text>
-            <View style={styles.scenesGrid}>
+            <View style={[styles.scenesGrid, !selectedOnline && styles.offline]}>
               {deviceScenes.map((scene, i) => {
                 const active = selected.scene === scene.id;
                 const visual = SCENE_VISUALS[i % SCENE_VISUALS.length];
@@ -683,7 +779,7 @@ export default function HomeLightsScreen({ route }) {
         {supports('musicMode') && (
           <>
             <Text style={styles.sectionLabel}>MUSIC MODE</Text>
-            <View style={styles.card}>
+            <View style={[styles.card, !selectedOnline && styles.offline]}>
               <View style={styles.musicHeader}>
                 <View style={styles.controlRowLeft}>
                   <View style={[styles.controlIcon, selected.musicMode !== null && styles.controlIconActive]}>
@@ -735,7 +831,7 @@ export default function HomeLightsScreen({ route }) {
         {supports('segment') && (
           <>
             <Text style={styles.sectionLabel}>SEGMENT CONTROL</Text>
-            <View style={styles.card}>
+            <View style={[styles.card, !selectedOnline && styles.offline]}>
               <Text style={{ color: colors.textSecondary, marginBottom: 12, ...type.caption }}>
                 Control individual light segments independently
               </Text>
@@ -755,7 +851,7 @@ export default function HomeLightsScreen({ route }) {
         {selectedDevice && (
           <>
             <Text style={styles.sectionLabel}>TIMER</Text>
-            <View style={styles.card}>
+            <View style={[styles.card, !selectedOnline && styles.offline]}>
               <View style={styles.timerRow}>
                 {['15 min', '30 min', '1 hr', '2 hr'].map((label) => {
                   const active = activeTimers[selectedDevice.device]?.label === label;
@@ -1096,6 +1192,25 @@ const makeStyles = (colors) => StyleSheet.create({
   },
   activeDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.accent },
   activeBadgeText: { ...type.caption, color: colors.accent, fontWeight: '700' },
+  offlineBadge: {
+    backgroundColor: colors.muted,
+    paddingHorizontal: 8, paddingVertical: 3,
+    borderRadius: radius.full,
+  },
+  offlineBadgeText: { ...type.caption, color: colors.textTertiary, fontWeight: '700' },
+
+  offline: { opacity: 0.5 },
+  offlineLabel: { ...type.caption, color: colors.textTertiary, fontWeight: '700' },
+  switchSlot: { width: 51, alignItems: 'center', justifyContent: 'center' },
+  switchSlotDash: { ...type.body, color: colors.textTertiary },
+  offlineNotice: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: colors.muted,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  offlineNoticeText: { ...type.caption, color: colors.textSecondary, flex: 1 },
 
   controlsHeader: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',

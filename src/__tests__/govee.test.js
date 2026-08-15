@@ -123,7 +123,48 @@ describe('stateFromCapabilities', () => {
       colorTem: 4000,
       scene: null,
       musicMode: null,
+      online: true,
     });
+  });
+
+  it('parses the online capability as offline', () => {
+    const caps = [
+      { type: 'devices.capabilities.online', instance: 'online', state: { value: false } },
+    ];
+    expect(stateFromCapabilities(caps).online).toBe(false);
+  });
+
+  it('parses the online capability as online', () => {
+    const caps = [
+      { type: 'devices.capabilities.online', instance: 'online', state: { value: true } },
+    ];
+    expect(stateFromCapabilities(caps).online).toBe(true);
+  });
+
+  it('accepts a numeric online value', () => {
+    expect(stateFromCapabilities([
+      { type: 'devices.capabilities.online', instance: 'online', state: { value: 1 } },
+    ]).online).toBe(true);
+    expect(stateFromCapabilities([
+      { type: 'devices.capabilities.online', instance: 'online', state: { value: 0 } },
+    ]).online).toBe(false);
+  });
+
+  it('assumes online when the device does not report the capability', () => {
+    const caps = [
+      { type: 'devices.capabilities.on_off', instance: 'powerSwitch', state: { value: 1 } },
+    ];
+    expect(stateFromCapabilities(caps).online).toBe(true);
+  });
+
+  it('keeps the reported power value when offline (caller decides)', () => {
+    const caps = [
+      { type: 'devices.capabilities.online', instance: 'online', state: { value: false } },
+      { type: 'devices.capabilities.on_off', instance: 'powerSwitch', state: { value: 1 } },
+    ];
+    const state = stateFromCapabilities(caps);
+    expect(state.online).toBe(false);
+    expect(state.on).toBe(true);
   });
 
   it('parses power on', () => {

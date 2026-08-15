@@ -171,10 +171,15 @@ export function stateFromCapabilities(caps) {
     colorTem: 4000,
     scene: null,
     musicMode: null,
+    // Not every device reports the online capability — assume reachable unless
+    // the API explicitly says otherwise.
+    online: true,
   };
   for (const cap of caps) {
     const val = cap.state?.value;
-    if (cap.type === 'devices.capabilities.on_off' && cap.instance === 'powerSwitch') {
+    if (cap.type === 'devices.capabilities.online' && cap.instance === 'online') {
+      if (val != null) state.online = val === true || val === 1;
+    } else if (cap.type === 'devices.capabilities.on_off' && cap.instance === 'powerSwitch') {
       state.on = val === 1;
     } else if (cap.type === 'devices.capabilities.range' && cap.instance === 'brightness') {
       if (val != null) state.brightness = val;
