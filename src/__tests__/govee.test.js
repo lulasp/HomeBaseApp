@@ -4,9 +4,31 @@ import {
   hasCap,
   getCapParam,
   getScenesFromDevice,
+  getDynamicScenes,
+  getDiyScenes,
+  getSegmentCount,
+  sceneKey,
+  setSegmentColor,
+  setSegmentBrightness,
+  applyScene,
+  resolveSceneByName,
   stateFromCapabilities,
   applyActionsToDevice,
 } from '../services/govee';
+
+const mockFetchJson = (...payloads) => {
+  global.fetch = jest.fn();
+  for (const payload of payloads) {
+    global.fetch.mockResolvedValueOnce({
+      status: 200,
+      text: () => Promise.resolve(JSON.stringify({ code: 200, ...payload })),
+    });
+  }
+  global.fetch.mockResolvedValue({
+    status: 200,
+    text: () => Promise.resolve(JSON.stringify({ code: 200 })),
+  });
+};
 
 describe('hexToRgbInt', () => {
   it('converts red', () => expect(hexToRgbInt('#FF0000')).toBe(0xff0000));
@@ -83,7 +105,7 @@ describe('getScenesFromDevice', () => {
   it('returns empty array when no dynamic_scene capability', () =>
     expect(getScenesFromDevice(makeDevice([]))).toEqual([]));
 
-  it('maps options to id/name pairs', () => {
+  it('normalises options, carrying the capability and source', () => {
     const device = makeDevice([
       {
         type: 'devices.capabilities.dynamic_scene',
@@ -97,8 +119,14 @@ describe('getScenesFromDevice', () => {
       },
     ]);
     expect(getScenesFromDevice(device)).toEqual([
-      { id: 1, name: 'Sunrise' },
-      { id: 2, name: 'Ocean' },
+      {
+        key: '1', name: 'Sunrise', value: 1, source: 'static',
+        type: 'devices.capabilities.dynamic_scene', instance: 'lightScene',
+      },
+      {
+        key: '2', name: 'Ocean', value: 2, source: 'static',
+        type: 'devices.capabilities.dynamic_scene', instance: 'lightScene',
+      },
     ]);
   });
 
@@ -111,6 +139,240 @@ describe('getScenesFromDevice', () => {
       },
     ]);
     expect(getScenesFromDevice(device)[0].name).toBe('Scene 1');
+  });
+});
+
+describe('sceneKey', () => {
+  it('returns null for null', () => expect(sceneKey(null)).toBeNull());
+  it('returns null for undefined', () => expect(sceneKey(undefined)).toBeNull());
+  it('stringifies an integer value', () => expect(sceneKey(8216931)).toBe('8216931'));
+  it('stringifies zero', () => expect(sceneKey(0)).toBe('0'));
+  it('flattens a dynamic-scene object', () =>
+    expect(sceneKey({ paramId: 4280, id: 3853 })).toBe('4280:3853'));
+  it('tolerates a partial object', () =>
+    expect(sceneKey({ id: 3853 })).toBe(':3853'));
+});
+
+describe('getSegmentCount', () => {
+  const withSegments = (n, instance = 'segmentedColorRgb') => makeDevice([
+    {
+      type: 'devices.capabilities.segment_color_setting',
+      instance,
+      parameters: {
+        fields: [
+          { fieldName: 'segment', options: Array.from({ length: n }, (_, i) => ({ value: i })) },
+          { fieldName: 'rgb', range: { min: 0, max: 16777215 } },
+        ],
+      },
+    },
+  ]);
+
+  it('counts the segment options', () => expect(getSegmentCount(withSegments(15))).toBe(15));
+
+  it('falls back to the brightness instance', () =>
+    expect(getSegmentCount(withSegments(10, 'segmentedBrightness'))).toBe(10));
+
+  it('returns 0 when the device has no segment capability', () =>
+    expect(getSegmentCount(makeDevice([]))).toBe(0));
+
+  it('returns 0 for a null device', () => expect(getSegmentCount(null)).toBe(0));
+
+  it('returns 0 when the segment field has no options', () => {
+    const device = makeDevice([
+      {
+        type: 'devices.capabilities.segment_color_setting',
+        instance: 'segmentedColorRgb',
+        parameters: { fields: [{ fieldName: 'segment' }] },
+      },
+    ]);
+    expect(getSegmentCount(device)).toBe(0);
+  });
+});
+
+describe('scene catalogue fetchers', () => {
+  const sentBody = (i = 0) => JSON.parse(global.fetch.mock.calls[i][1].body);
+  const sentUrl = (i = 0) => global.fetch.mock.calls[i][0];
+
+  afterEach(() => { delete global.fetch; });
+
+  it('getDynamicScenes posts to /device/scenes and normalises object values', async () => {
+    mockFetchJson({
+      payload: {
+        capabilities: [{
+          type: 'devices.capabilities.dynamic_scene',
+          instance: 'lightScene',
+          parameters: { options: [{ name: 'Sunrise', value: { paramId: 4280, id: 3853 } }] },
+        }],
+      },
+    });
+    const scenes = await getDynamicScenes('key', 'H6159', 'AA:BB');
+    expect(sentUrl()).toContain('/device/scenes');
+    expect(sentBody().payload).toEqual({ sku: 'H6159', device: 'AA:BB' });
+    expect(scenes).toEqual([{
+      key: '4280:3853',
+      name: 'Sunrise',
+      value: { paramId: 4280, id: 3853 },
+      type: 'devices.capabilities.dynamic_scene',
+      instance: 'lightScene',
+      source: 'dynamic',
+    }]);
+  });
+
+  it('getDiyScenes posts to /device/diy-scenes and keeps the DIY capability', async () => {
+    mockFetchJson({
+      payload: {
+        capabilities: [{
+          type: 'devices.capabilities.diy_color_setting',
+          instance: 'diyScene',
+          parameters: { options: [{ name: 'Xmas lights 2', value: 8216931 }] },
+        }],
+      },
+    });
+    const scenes = await getDiyScenes('key', 'H6159', 'AA:BB');
+    expect(sentUrl()).toContain('/device/diy-scenes');
+    expect(scenes).toEqual([{
+      key: '8216931',
+      name: 'Xmas lights 2',
+      value: 8216931,
+      type: 'devices.capabilities.diy_color_setting',
+      instance: 'diyScene',
+      source: 'diy',
+    }]);
+  });
+
+  it('returns an empty list when the payload has no capabilities', async () => {
+    mockFetchJson({ payload: {} });
+    expect(await getDynamicScenes('key', 'H6159', 'AA:BB')).toEqual([]);
+  });
+});
+
+describe('segment commands', () => {
+  const sentCapability = () => JSON.parse(global.fetch.mock.calls[0][1].body).payload.capability;
+
+  beforeEach(() => mockFetchJson());
+  afterEach(() => { delete global.fetch; });
+
+  it('sends segment colours as an rgb int with the segment array', async () => {
+    await setSegmentColor('key', 'H6159', 'AA:BB', [0, 2, 4], '#FF0000');
+    expect(sentCapability()).toEqual({
+      type: 'devices.capabilities.segment_color_setting',
+      instance: 'segmentedColorRgb',
+      value: { segment: [0, 2, 4], rgb: 0xff0000 },
+    });
+  });
+
+  it('sends segment brightness', async () => {
+    await setSegmentBrightness('key', 'H6159', 'AA:BB', [1], 60);
+    expect(sentCapability()).toEqual({
+      type: 'devices.capabilities.segment_color_setting',
+      instance: 'segmentedBrightness',
+      value: { segment: [1], brightness: 60 },
+    });
+  });
+});
+
+describe('applyScene', () => {
+  beforeEach(() => mockFetchJson());
+  afterEach(() => { delete global.fetch; });
+
+  it('echoes the scene capability back verbatim', async () => {
+    await applyScene('key', 'H6159', 'AA:BB', {
+      key: '8216931',
+      name: 'Xmas lights 2',
+      value: 8216931,
+      type: 'devices.capabilities.diy_color_setting',
+      instance: 'diyScene',
+      source: 'diy',
+    });
+    expect(JSON.parse(global.fetch.mock.calls[0][1].body).payload.capability).toEqual({
+      type: 'devices.capabilities.diy_color_setting',
+      instance: 'diyScene',
+      value: 8216931,
+    });
+  });
+});
+
+describe('resolveSceneByName', () => {
+  const device = {
+    sku: 'H6159',
+    device: 'AA:BB',
+    capabilities: [{
+      type: 'devices.capabilities.dynamic_scene',
+      instance: 'lightScene',
+      parameters: { options: [{ value: 9, name: 'Sunrise' }] },
+    }],
+  };
+
+  afterEach(() => { delete global.fetch; });
+
+  it('returns null without a name', async () => {
+    mockFetchJson();
+    expect(await resolveSceneByName('key', device, null)).toBeNull();
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it('prefers the device list and makes no request', async () => {
+    mockFetchJson();
+    const scene = await resolveSceneByName('key', device, 'Sunrise');
+    expect(scene).toMatchObject({ value: 9, source: 'static' });
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the dynamic catalogue', async () => {
+    mockFetchJson({
+      payload: {
+        capabilities: [{
+          type: 'devices.capabilities.dynamic_scene',
+          instance: 'lightScene',
+          parameters: { options: [{ name: 'Aurora', value: { paramId: 1, id: 2 } }] },
+        }],
+      },
+    });
+    const scene = await resolveSceneByName('key', device, 'Aurora');
+    expect(scene).toMatchObject({ source: 'dynamic', value: { paramId: 1, id: 2 } });
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to DIY scenes when the dynamic list misses', async () => {
+    mockFetchJson(
+      { payload: { capabilities: [] } },
+      {
+        payload: {
+          capabilities: [{
+            type: 'devices.capabilities.diy_color_setting',
+            instance: 'diyScene',
+            parameters: { options: [{ name: 'Party', value: 42 }] },
+          }],
+        },
+      },
+    );
+    const scene = await resolveSceneByName('key', device, 'Party');
+    expect(scene).toMatchObject({ source: 'diy', value: 42 });
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns null when no catalogue has the name', async () => {
+    mockFetchJson({ payload: { capabilities: [] } }, { payload: { capabilities: [] } });
+    expect(await resolveSceneByName('key', device, 'Nope')).toBeNull();
+  });
+
+  it('keeps looking when a catalogue request fails', async () => {
+    global.fetch = jest.fn()
+      .mockRejectedValueOnce(new Error('rate limited'))
+      .mockResolvedValueOnce({
+        status: 200,
+        text: () => Promise.resolve(JSON.stringify({
+          code: 200,
+          payload: {
+            capabilities: [{
+              type: 'devices.capabilities.diy_color_setting',
+              instance: 'diyScene',
+              parameters: { options: [{ name: 'Party', value: 42 }] },
+            }],
+          },
+        })),
+      });
+    expect(await resolveSceneByName('key', device, 'Party')).toMatchObject({ value: 42 });
   });
 });
 
@@ -272,18 +534,75 @@ describe('applyActionsToDevice', () => {
     const patch = await applyActionsToDevice('key', device, {
       colorMode: 'scene', sceneName: 'Sunrise',
     });
-    expect(patch).toEqual({ scene: 9 });
+    expect(patch).toEqual({ scene: 9, on: true });
     expect(sentCapabilities()).toEqual([
       expect.objectContaining({ instance: 'lightScene', value: 9 }),
     ]);
   });
 
-  it('skips a scene the device does not have', async () => {
+  it('reports the light as on when a shortcut leaves power alone', async () => {
+    const patch = await applyActionsToDevice('key', device, {
+      power: null, brightness: 40, colorMode: 'colorTem', colorTem: 3000,
+    });
+    expect(patch).toEqual({ brightness: 40, colorTem: 3000, scene: null, on: true });
+  });
+
+  it('does not claim the light is on when every capability was skipped', async () => {
+    const powerOnly = {
+      sku: 'H1',
+      device: 'CC:DD',
+      capabilities: [{ type: 'devices.capabilities.on_off', instance: 'powerSwitch' }],
+    };
+    const patch = await applyActionsToDevice('key', powerOnly, {
+      power: null, brightness: 40, colorMode: 'colorTem', colorTem: 3000,
+    });
+    expect(patch).toEqual({});
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it('skips a scene no catalogue has, sending no control command', async () => {
     const patch = await applyActionsToDevice('key', device, {
       colorMode: 'scene', sceneName: 'Nope',
     });
     expect(patch).toEqual({});
-    expect(global.fetch).not.toHaveBeenCalled();
+    // The two catalogue lookups run, but nothing is sent to /device/control.
+    expect(global.fetch.mock.calls.map(([url]) => url).some((u) => u.includes('/device/control')))
+      .toBe(false);
+  });
+
+  it('applies a DIY scene resolved from the catalogue', async () => {
+    global.fetch = jest.fn()
+      .mockResolvedValueOnce({
+        status: 200,
+        text: () => Promise.resolve(JSON.stringify({ code: 200, payload: { capabilities: [] } })),
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        text: () => Promise.resolve(JSON.stringify({
+          code: 200,
+          payload: {
+            capabilities: [{
+              type: 'devices.capabilities.diy_color_setting',
+              instance: 'diyScene',
+              parameters: { options: [{ name: 'Party', value: 42 }] },
+            }],
+          },
+        })),
+      })
+      .mockResolvedValue({
+        status: 200,
+        text: () => Promise.resolve(JSON.stringify({ code: 200 })),
+      });
+
+    const patch = await applyActionsToDevice('key', device, {
+      colorMode: 'scene', sceneName: 'Party',
+    });
+    expect(patch).toEqual({ scene: 42, on: true });
+    expect(JSON.parse(global.fetch.mock.calls[2][1].body).payload.capability).toEqual({
+      type: 'devices.capabilities.diy_color_setting',
+      instance: 'diyScene',
+      value: 42,
+    });
   });
 
   it('skips capabilities the device lacks', async () => {

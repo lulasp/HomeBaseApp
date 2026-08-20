@@ -21,8 +21,10 @@ import {
 } from '../../services/firestore';
 import {
   getDevices, getDeviceState, stateFromCapabilities,
-  hasCap, getCapParam, getScenesFromDevice,
-  setPower, setBrightness, setColor, setColorTemp, setScene, setMusicMode,
+  hasCap, getCapParam, getScenesFromDevice, getDynamicScenes, getDiyScenes,
+  sceneKey, getSegmentCount,
+  setPower, setBrightness, setColor, setColorTemp, applyScene, setMusicMode,
+  setSegmentColor, setSegmentBrightness,
 } from '../../services/govee';
 import LightShortcutsRow, { SHORTCUT_VISUALS } from '../../components/LightShortcutsRow';
 
@@ -52,6 +54,16 @@ const SCENE_VISUALS = [
   { icon: 'earth',        color: '#228B22' },
   { icon: 'flash',        color: '#FF00FF' },
 ];
+
+const SCENE_SOURCES = [
+  { id: 'static',  label: 'Featured' },
+  { id: 'dynamic', label: 'Built-in' },
+  { id: 'diy',     label: 'DIY' },
+];
+
+// The dynamic catalogue can run to hundreds of scenes — show a slice until the
+// user searches or asks for the rest.
+const SCENE_PAGE = 20;
 
 const DEFAULT_SHORTCUT_FORM = {
   name: '',
@@ -183,6 +195,18 @@ export default function HomeLightsScreen({ route }) {
   const [selectedId, setSelectedId] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
 
+  // deviceId → { loading } | { dynamic: [], diy: [] }
+  const [sceneCatalog, setSceneCatalog] = useState({});
+  const [sceneSource, setSceneSource] = useState('all');
+  const [sceneQuery, setSceneQuery] = useState('');
+  const [scenesExpanded, setScenesExpanded] = useState(false);
+
+  // Govee never reports per-segment colours back, so what we set is the only
+  // record we have. Kept per device, in memory only.
+  const [selectedSegments, setSelectedSegments] = useState([]);
+  const [segmentColors, setSegmentColors] = useState({});
+  const [segBrightness, setSegBrightness] = useState(100);
+
   const [shortcuts, setShortcuts] = useState([]);
   const [shortcutModalVisible, setShortcutModalVisible] = useState(false);
   const [editingShortcutId, setEditingShortcutId] = useState(null);
@@ -282,9 +306,7 @@ export default function HomeLightsScreen({ route }) {
       case 'brightness': return hasCap(selectedDevice, 'devices.capabilities.range', 'brightness');
       case 'color':      return hasCap(selectedDevice, 'devices.capabilities.color_setting', 'colorRgb');
       case 'colorTem':   return hasCap(selectedDevice, 'devices.capabilities.color_setting', 'colorTemperatureK');
-      case 'scene':      return hasCap(selectedDevice, 'devices.capabilities.dynamic_scene', 'lightScene');
       case 'musicMode':  return hasCap(selectedDevice, 'devices.capabilities.music_setting', 'musicMode');
-      case 'segment':    return hasCap(selectedDevice, 'devices.capabilities.segment_color_setting');
       default:           return false;
     }
   }, [selectedDevice]);
@@ -299,7 +321,55 @@ export default function HomeLightsScreen({ route }) {
     colorTemK <= 4500 ? 'Neutral' :
     colorTemK <= 6000 ? 'Cool' : 'Daylight';
 
-  const deviceScenes = selectedDevice ? getScenesFromDevice(selectedDevice) : [];
+  const segmentCount = getSegmentCount(selectedDevice);
+
+  // ── Scenes ────────────────────────────────────────────────────────────────
+  // The device list only carries a handful of scenes; the full built-in
+  // catalogue and the user's DIY scenes each need their own request. Fetched
+  // once per device and cached — both endpoints allow 30 req/min per device.
+  const sceneFetched = useRef({});
+  useEffect(() => {
+    if (!goveeApiKey || !selectedDevice) return;
+    const id = selectedDevice.device;
+    if (sceneFetched.current[id]) return;
+    sceneFetched.current[id] = true;
+    setSceneCatalog((prev) => ({ ...prev, [id]: { loading: true } }));
+    (async () => {
+      const [dynamic, diy] = await Promise.all([
+        getDynamicScenes(goveeApiKey, selectedDevice.sku, id).catch(() => []),
+        getDiyScenes(goveeApiKey, selectedDevice.sku, id).catch(() => []),
+      ]);
+      setSceneCatalog((prev) => ({ ...prev, [id]: { dynamic, diy } }));
+    })();
+  }, [goveeApiKey, selectedDevice]);
+
+  // Reset the scene browser and segment selection when switching device
+  useEffect(() => {
+    setSceneSource('all');
+    setSceneQuery('');
+    setScenesExpanded(false);
+    setSelectedSegments([]);
+  }, [selectedId]);
+
+  const allScenes = useMemo(() => {
+    const featured = selectedDevice ? getScenesFromDevice(selectedDevice) : [];
+    const cat = sceneCatalog[selectedId];
+    const seen = new Set(featured.map((s) => s.name));
+    const dynamic = (cat?.dynamic ?? []).filter((s) => !seen.has(s.name));
+    return [...featured, ...dynamic, ...(cat?.diy ?? [])];
+  }, [selectedDevice, sceneCatalog, selectedId]);
+
+  const scenesLoading = Boolean(sceneCatalog[selectedId]?.loading);
+  const sceneSources = SCENE_SOURCES.filter((s) => allScenes.some((sc) => sc.source === s.id));
+
+  const visibleScenes = useMemo(() => {
+    const q = sceneQuery.trim().toLowerCase();
+    return allScenes.filter((s) =>
+      (sceneSource === 'all' || s.source === sceneSource) &&
+      (!q || s.name.toLowerCase().includes(q)));
+  }, [allScenes, sceneSource, sceneQuery]);
+
+  const shownScenes = scenesExpanded ? visibleScenes : visibleScenes.slice(0, SCENE_PAGE);
 
   // ── State helpers ─────────────────────────────────────────────────────────
   const updateSelected = useCallback((patch) => {
@@ -337,10 +407,15 @@ export default function HomeLightsScreen({ route }) {
   // changes either, so the UI keeps showing the last known real state.
   const canControl = Boolean(selectedDevice) && Boolean(goveeApiKey) && selectedOnline;
 
+  // Every light-emitting command (brightness, colour, temperature, scene,
+  // music, segments) powers the device on as a side effect, so each one also
+  // flips `on` locally — otherwise the toggle keeps reading off until the next
+  // refresh even though the light is visibly lit.
+
   const handleBrightnessChange = useCallback((v) => {
     if (!canControl) return;
     const value = Math.round(v);
-    updateSelected({ brightness: value });
+    updateSelected({ brightness: value, on: true });
     clearTimeout(debounce.current.brightness);
     debounce.current.brightness = setTimeout(() => {
       setBrightness(goveeApiKey, selectedDevice.sku, selectedDevice.device, value).catch(console.error);
@@ -349,37 +424,73 @@ export default function HomeLightsScreen({ route }) {
 
   const handleColorChange = useCallback((hex) => {
     if (!canControl) return;
-    updateSelected({ color: hex, scene: null });
+    updateSelected({ color: hex, scene: null, on: true });
     setColor(goveeApiKey, selectedDevice.sku, selectedDevice.device, hex).catch(console.error);
   }, [canControl, selectedDevice, updateSelected, goveeApiKey]);
 
   const handleColorTempChange = useCallback((v) => {
     if (!canControl) return;
     const value = Math.round(v);
-    updateSelected({ colorTem: value });
+    updateSelected({ colorTem: value, on: true });
     clearTimeout(debounce.current.colorTem);
     debounce.current.colorTem = setTimeout(() => {
       setColorTemp(goveeApiKey, selectedDevice.sku, selectedDevice.device, value).catch(console.error);
     }, 300);
   }, [canControl, selectedDevice, updateSelected, goveeApiKey]);
 
-  const handleSceneSelect = useCallback((sceneId) => {
+  const handleSceneSelect = useCallback((scene) => {
     if (!canControl) return;
-    const next = selected.scene === sceneId ? null : sceneId;
-    updateSelected({ scene: next });
-    if (next !== null) setScene(goveeApiKey, selectedDevice.sku, selectedDevice.device, next).catch(console.error);
+    // Tapping the active scene clears it locally; there's no "no scene"
+    // command, so nothing is sent — pick a colour to actually leave the scene.
+    if (sceneKey(selected.scene) === scene.key) {
+      updateSelected({ scene: null });
+      return;
+    }
+    updateSelected({ scene: scene.value, on: true });
+    applyScene(goveeApiKey, selectedDevice.sku, selectedDevice.device, scene).catch(console.error);
   }, [canControl, selectedDevice, selected.scene, updateSelected, goveeApiKey]);
+
+  const toggleSegment = useCallback((seg) => {
+    setSelectedSegments((prev) =>
+      prev.includes(seg) ? prev.filter((s) => s !== seg) : [...prev, seg].sort((a, b) => a - b));
+  }, []);
+
+  const handleSegmentColor = useCallback((hex) => {
+    if (!canControl || selectedSegments.length === 0) return;
+    setSegmentColors((prev) => ({
+      ...prev,
+      [selectedId]: {
+        ...(prev[selectedId] ?? {}),
+        ...Object.fromEntries(selectedSegments.map((s) => [s, hex])),
+      },
+    }));
+    updateSelected({ on: true });
+    setSegmentColor(goveeApiKey, selectedDevice.sku, selectedDevice.device, selectedSegments, hex)
+      .catch(console.error);
+  }, [canControl, selectedSegments, selectedId, selectedDevice, updateSelected, goveeApiKey]);
+
+  const handleSegmentBrightness = useCallback((v) => {
+    const value = Math.round(v);
+    setSegBrightness(value);
+    if (!canControl || selectedSegments.length === 0) return;
+    updateSelected({ on: true });
+    clearTimeout(debounce.current.segment);
+    debounce.current.segment = setTimeout(() => {
+      setSegmentBrightness(goveeApiKey, selectedDevice.sku, selectedDevice.device, selectedSegments, value)
+        .catch(console.error);
+    }, 300);
+  }, [canControl, selectedSegments, selectedDevice, updateSelected, goveeApiKey]);
 
   const handleMusicModeToggle = useCallback((v) => {
     if (!canControl) return;
     const next = v ? 0 : null;
-    updateSelected({ musicMode: next });
+    updateSelected(next === null ? { musicMode: null } : { musicMode: next, on: true });
     if (next !== null) setMusicMode(goveeApiKey, selectedDevice.sku, selectedDevice.device, next).catch(console.error);
   }, [canControl, selectedDevice, updateSelected, goveeApiKey]);
 
   const handleMusicModeSelect = useCallback((modeId) => {
     if (!canControl) return;
-    updateSelected({ musicMode: modeId });
+    updateSelected({ musicMode: modeId, on: true });
     setMusicMode(goveeApiKey, selectedDevice.sku, selectedDevice.device, modeId).catch(console.error);
   }, [canControl, selectedDevice, updateSelected, goveeApiKey]);
 
@@ -463,9 +574,13 @@ export default function HomeLightsScreen({ route }) {
     for (const id of shortcutForm.deviceIds) {
       const dev = devices.find((d) => d.device === id);
       for (const s of getScenesFromDevice(dev)) names.add(s.name);
+      // Catalogue scenes are only listed for devices already browsed this
+      // session; the shortcut still resolves any name at run time.
+      const cat = sceneCatalog[id];
+      for (const s of [...(cat?.dynamic ?? []), ...(cat?.diy ?? [])]) names.add(s.name);
     }
     return [...names];
-  }, [shortcutForm.deviceIds, devices]);
+  }, [shortcutForm.deviceIds, devices, sceneCatalog]);
 
   const { startTimer, cancelTimer, activeTimers } = useLightTimer();
 
@@ -742,25 +857,66 @@ export default function HomeLightsScreen({ route }) {
           </>
         )}
 
-        {/* Scenes — only shown when the device reports scenes in its capabilities */}
-        {supports('scene') && deviceScenes.length > 0 && (
+        {/* Scenes — device's own list plus the built-in and DIY catalogues */}
+        {(allScenes.length > 0 || scenesLoading) && (
           <>
-            <Text style={styles.sectionLabel}>SCENES</Text>
+            <View style={styles.sectionHeaderRow}>
+              <Text style={styles.sectionLabel}>SCENES</Text>
+              {scenesLoading && <ActivityIndicator size="small" color={colors.accent} />}
+            </View>
+
+            {sceneSources.length > 1 && (
+              <View style={styles.chipRow}>
+                {[{ id: 'all', label: 'All' }, ...sceneSources].map((src) => {
+                  const active = sceneSource === src.id;
+                  return (
+                    <TouchableOpacity
+                      key={src.id}
+                      style={[styles.sceneChip, active && styles.sceneChipActive]}
+                      onPress={() => { setSceneSource(src.id); setScenesExpanded(false); }}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: active }}
+                    >
+                      <Text style={[styles.sceneChipLabel, active && { color: colors.accent }]}>
+                        {src.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            )}
+
+            {allScenes.length > SCENE_PAGE && (
+              <TextInput
+                style={styles.sceneSearch}
+                value={sceneQuery}
+                onChangeText={setSceneQuery}
+                placeholder="Search scenes…"
+                placeholderTextColor={colors.textTertiary}
+                autoCorrect={false}
+                accessibilityLabel="Search scenes"
+              />
+            )}
+
             <View style={[styles.scenesGrid, !selectedOnline && styles.offline]}>
-              {deviceScenes.map((scene, i) => {
-                const active = selected.scene === scene.id;
+              {shownScenes.map((scene, i) => {
+                const active = sceneKey(selected.scene) === scene.key;
                 const visual = SCENE_VISUALS[i % SCENE_VISUALS.length];
                 return (
                   <TouchableOpacity
-                    key={scene.id}
+                    key={`${scene.source}-${scene.key}`}
                     style={[styles.sceneCard, active && styles.sceneCardActive]}
-                    onPress={() => handleSceneSelect(scene.id)}
+                    onPress={() => handleSceneSelect(scene)}
                     accessibilityRole="button"
                     accessibilityLabel={`${scene.name} scene`}
                     accessibilityState={{ selected: active }}
                   >
                     <View style={[styles.sceneIcon, { backgroundColor: visual.color + '33' }]}>
-                      <Ionicons name={visual.icon} size={20} color={visual.color} />
+                      <Ionicons
+                        name={scene.source === 'diy' ? 'color-wand' : visual.icon}
+                        size={20}
+                        color={visual.color}
+                      />
                     </View>
                     <Text
                       style={[styles.sceneName, active && { color: colors.accent }]}
@@ -772,6 +928,20 @@ export default function HomeLightsScreen({ route }) {
                 );
               })}
             </View>
+
+            {visibleScenes.length > shownScenes.length && (
+              <TouchableOpacity
+                style={styles.showAllBtn}
+                onPress={() => setScenesExpanded(true)}
+                accessibilityRole="button"
+              >
+                <Text style={styles.showAllLabel}>Show all {visibleScenes.length}</Text>
+              </TouchableOpacity>
+            )}
+
+            {visibleScenes.length === 0 && !scenesLoading && (
+              <Text style={styles.timerHint}>No scenes match “{sceneQuery}”</Text>
+            )}
           </>
         )}
 
@@ -828,21 +998,91 @@ export default function HomeLightsScreen({ route }) {
         )}
 
         {/* Segment Control */}
-        {supports('segment') && (
+        {segmentCount > 0 && (
           <>
             <Text style={styles.sectionLabel}>SEGMENT CONTROL</Text>
             <View style={[styles.card, !selectedOnline && styles.offline]}>
-              <Text style={{ color: colors.textSecondary, marginBottom: 12, ...type.caption }}>
-                Control individual light segments independently
-              </Text>
+              <View style={styles.segmentHeader}>
+                <Text style={styles.controlLabel}>
+                  {selectedSegments.length > 0
+                    ? `${selectedSegments.length} of ${segmentCount} selected`
+                    : 'Tap segments to select'}
+                </Text>
+                <TouchableOpacity
+                  onPress={() => setSelectedSegments(
+                    selectedSegments.length === segmentCount
+                      ? []
+                      : Array.from({ length: segmentCount }, (_, i) => i),
+                  )}
+                  accessibilityRole="button"
+                >
+                  <Text style={styles.segmentAction}>
+                    {selectedSegments.length === segmentCount ? 'Clear' : 'Select all'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
               <View style={styles.segmentRow}>
-                {[1, 2, 3, 4, 5, 6, 7, 8].map((seg) => (
-                  <View key={seg} style={[styles.segment, { backgroundColor: selected.color }]}>
-                    <Text style={styles.segmentLabel}>{seg}</Text>
-                  </View>
+                {Array.from({ length: segmentCount }, (_, seg) => {
+                  const active = selectedSegments.includes(seg);
+                  const segColor = segmentColors[selectedId]?.[seg];
+                  return (
+                    <TouchableOpacity
+                      key={seg}
+                      style={[
+                        styles.segment,
+                        segColor ? { backgroundColor: segColor } : null,
+                        active && styles.segmentActive,
+                      ]}
+                      onPress={() => toggleSegment(seg)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Segment ${seg + 1}`}
+                      accessibilityState={{ selected: active }}
+                    >
+                      <Text style={[styles.segmentLabel, !segColor && { color: colors.textTertiary }]}>
+                        {seg + 1}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              <View style={styles.divider} />
+
+              <Text style={styles.controlLabel}>Colour</Text>
+              <View style={styles.colorGrid}>
+                {PRESET_COLORS.map((hex) => (
+                  <TouchableOpacity
+                    key={hex}
+                    style={[styles.colorSwatch, { backgroundColor: hex }]}
+                    onPress={() => handleSegmentColor(hex)}
+                    disabled={selectedSegments.length === 0}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Set selected segments to ${hex}`}
+                  />
                 ))}
               </View>
-              <Text style={styles.timerHint}>Individual segment colors available via Govee segment API</Text>
+
+              <View style={styles.divider} />
+
+              <View style={styles.controlRow}>
+                <Text style={styles.controlLabel}>Brightness</Text>
+                <Text style={styles.colorHex}>{segBrightness}%</Text>
+              </View>
+              <Slider
+                minimumValue={1}
+                maximumValue={100}
+                value={segBrightness}
+                onValueChange={handleSegmentBrightness}
+                minimumTrackTintColor={colors.accent}
+                maximumTrackTintColor={colors.muted}
+                thumbTintColor={colors.accent}
+                disabled={selectedSegments.length === 0}
+              />
+
+              {selectedSegments.length === 0 && (
+                <Text style={styles.timerHint}>Select one or more segments to change them</Text>
+              )}
             </View>
           </>
         )}
@@ -1293,6 +1533,18 @@ const makeStyles = (colors) => StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   sceneName: { ...type.caption, color: colors.textSecondary, textAlign: 'center' },
+  sectionHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: spacing.sm },
+  sceneSearch: {
+    ...type.body, color: colors.text,
+    backgroundColor: colors.surface,
+    borderWidth: 1, borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md, paddingVertical: 10,
+    marginBottom: spacing.sm,
+  },
+  showAllBtn: { alignSelf: 'center', paddingVertical: spacing.sm },
+  showAllLabel: { ...type.caption, color: colors.accent, fontWeight: '700' },
 
   musicHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   musicModes:  { flexDirection: 'row', gap: 8, marginTop: 4 },
@@ -1316,12 +1568,19 @@ const makeStyles = (colors) => StyleSheet.create({
   timerBtnLabelActive: { color: colors.accent },
   timerHint: { ...type.caption, color: colors.textTertiary, textAlign: 'center', marginTop: 4 },
 
-  segmentRow: { flexDirection: 'row', gap: 6, marginBottom: spacing.sm },
-  segment: {
-    flex: 1, height: 40, borderRadius: radius.sm,
-    alignItems: 'center', justifyContent: 'center',
-    opacity: 0.85,
+  segmentHeader: {
+    flexDirection: 'row', alignItems: 'center',
+    justifyContent: 'space-between', marginBottom: spacing.sm,
   },
+  segmentAction: { ...type.caption, color: colors.accent, fontWeight: '700' },
+  segmentRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: spacing.sm },
+  segment: {
+    width: 40, height: 40, borderRadius: radius.sm,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: colors.muted,
+    borderWidth: 2, borderColor: 'transparent',
+  },
+  segmentActive: { borderColor: colors.accent },
   segmentLabel: { ...type.caption, color: '#fff', fontWeight: '700' },
 
   modalBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.6)' },
