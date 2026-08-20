@@ -10,7 +10,7 @@ import { useTheme } from '../../context/ThemeContext';
 import { useNavScroll } from '../../context/NavScrollContext';
 import { useAlert } from '../../context/AlertContext';
 import { useNotification } from '../../context/NotificationContext';
-import { subscribeMealPlan, setMealSlot, clearMealSlot, subscribeRecipes, getRecipe, deductPantryIngredients, getPantryItems, getGroceryItems, addGroceryItem } from '../../services/firestore';
+import { subscribeMealPlan, setMealSlot, clearMealSlot, subscribeRecipes, getRecipe, deductPantryIngredients, getPantryItems, subscribePantryItems, getGroceryItems, addGroceryItem } from '../../services/firestore';
 import { spacing, radius, type } from '../../theme/colors';
 import { DAYS_OF_WEEK, FULL_DAYS, MEAL_TYPES } from '../../utils/categories';
 import { useIsDesktop, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
@@ -55,6 +55,14 @@ const MealTimerBadge = memo(({ status, colors, small }) => {
       </View>
     );
 
+  if (status.state === 'missed')
+    return (
+      <View style={base}>
+        <Ionicons name="alert-circle-outline" size={small ? 10 : 12} color={colors.danger} />
+        {!small && <Text style={txt(colors.danger)}>Missed</Text>}
+      </View>
+    );
+
   return null;
 });
 
@@ -80,6 +88,13 @@ export default function NutritionScreen({ navigation }) {
   const [pendingRecipe, setPendingRecipe] = useState(null);
   const [originalSlot, setOriginalSlot] = useState(null);
   const [originalMeal, setOriginalMeal] = useState(null);
+
+  const [pantryItems, setPantryItems]                 = useState([]);
+  const [pantryDropdownOpen, setPantryDropdownOpen]   = useState(false);
+  const [pantrySearch, setPantrySearch]               = useState('');
+  const [pendingPantryItem, setPendingPantryItem]     = useState(null);
+  const [pantryAmount, setPantryAmount]               = useState('1');
+  const [pantryCalories, setPantryCalories]           = useState('');
 
   const [now, setNow] = useState(() => new Date());
   const autoCookedRef  = useRef(new Set());
@@ -115,14 +130,31 @@ export default function NutritionScreen({ navigation }) {
     return subscribeRecipes(householdId, setSavedRecipes);
   }, [householdId]);
 
+  useEffect(() => {
+    if (!householdId) return;
+    return subscribePantryItems(householdId, setPantryItems);
+  }, [householdId]);
+
   const getMeal = (day, mealType) => mealPlan[day]?.[mealType] || null;
+
+  // Resets every picker field in the add/replace sheet.
+  const resetPicker = () => {
+    setRecipeDropdownOpen(false);
+    setRecipeSearch('');
+    setPendingRecipe(null);
+    setPantryDropdownOpen(false);
+    setPantrySearch('');
+    setPendingPantryItem(null);
+    setPantryAmount('1');
+    setPantryCalories('');
+  };
 
   const handleSlotPress = async (day, mealType) => {
     const existingMeal = getMeal(day, mealType);
     if (existingMeal) {
       const cookOption = existingMeal.cooked
         ? null
-        : { label: 'Mark as Cooked', value: 'cook' };
+        : { label: existingMeal.pantryItemId ? 'Mark as Eaten' : 'Mark as Cooked', value: 'cook' };
 
       const action = await showOptions({
         title: existingMeal.name,
@@ -136,60 +168,73 @@ export default function NutritionScreen({ navigation }) {
       });
       if (action === 'cook') {
         try {
-          const recipe = existingMeal.recipeId
-            ? await getRecipe(householdId, existingMeal.recipeId)
-            : null;
-
-          const ingredients = (recipe?.ingredients ?? []).filter(
-            (i) => i.name?.trim() && parseFloat(i.amount) > 0,
-          );
-
-          const pantryItems = ingredients.length > 0 ? await getPantryItems(householdId) : [];
-          const normName = (s) => (s || '').trim().toLowerCase();
           const deductions = [];
+          let confirmMessage = '';
 
-          for (const ing of ingredients) {
-            let match = null;
-
-            // Try the saved link first
-            if (ing.pantryItemId) {
-              match = pantryItems.find((p) => p.id === ing.pantryItemId) ?? null;
+          if (existingMeal.pantryItemId) {
+            // Single pantry product — deduct the planned amount from that item.
+            const amount = parseFloat(existingMeal.amount) || 0;
+            const item   = pantryItems.find((p) => p.id === existingMeal.pantryItemId) ?? null;
+            if (item && amount > 0) {
+              deductions.push({ pantryItemId: item.id, amount });
+              confirmMessage = `Deduct ${amount} ${existingMeal.unit || item.unit || 'pcs'} of "${item.name}" from the pantry?`;
             }
+          } else {
+            const recipe = existingMeal.recipeId
+              ? await getRecipe(householdId, existingMeal.recipeId)
+              : null;
 
-            // Fallback: search by name
-            if (!match) {
-              const byName = pantryItems.filter((p) => normName(p.name) === normName(ing.name));
-              if (byName.length === 1) {
-                match = byName[0];
-              } else if (byName.length > 1) {
-                const chosen = await showOptions({
-                  title: `Which "${ing.name}"?`,
-                  message: `Multiple pantry items match "${ing.name}" (${ing.amount} ${ing.unit}). Pick one or skip.`,
-                  type: 'info',
-                  options: [
-                    ...byName.map((p) => ({
-                      label: `${p.name}  ·  ${p.quantity} ${p.unit}`,
-                      value: p.id,
-                    })),
-                    { label: 'Skip this ingredient', value: 'skip' },
-                    { label: 'Cancel', value: null, style: 'cancel' },
-                  ],
-                });
-                if (chosen === null) return;
-                if (chosen !== 'skip') {
-                  match = byName.find((p) => p.id === chosen) ?? null;
+            const ingredients = (recipe?.ingredients ?? []).filter(
+              (i) => i.name?.trim() && parseFloat(i.amount) > 0,
+            );
+
+            const currentPantry = ingredients.length > 0 ? await getPantryItems(householdId) : [];
+
+            for (const ing of ingredients) {
+              let match = null;
+
+              // Try the saved link first
+              if (ing.pantryItemId) {
+                match = currentPantry.find((p) => p.id === ing.pantryItemId) ?? null;
+              }
+
+              // Fallback: search by name
+              if (!match) {
+                const byName = currentPantry.filter((p) => normName(p.name) === normName(ing.name));
+                if (byName.length === 1) {
+                  match = byName[0];
+                } else if (byName.length > 1) {
+                  const chosen = await showOptions({
+                    title: `Which "${ing.name}"?`,
+                    message: `Multiple pantry items match "${ing.name}" (${ing.amount} ${ing.unit}). Pick one or skip.`,
+                    type: 'info',
+                    options: [
+                      ...byName.map((p) => ({
+                        label: `${p.name}  ·  ${p.quantity} ${p.unit}`,
+                        value: p.id,
+                      })),
+                      { label: 'Skip this ingredient', value: 'skip' },
+                      { label: 'Cancel', value: null, style: 'cancel' },
+                    ],
+                  });
+                  if (chosen === null) return;
+                  if (chosen !== 'skip') {
+                    match = byName.find((p) => p.id === chosen) ?? null;
+                  }
                 }
               }
+
+              if (match) deductions.push({ pantryItemId: match.id, amount: ing.amount });
             }
 
-            if (match) deductions.push({ pantryItemId: match.id, amount: ing.amount });
+            confirmMessage = `Deduct ${deductions.length} pantry item${deductions.length !== 1 ? 's' : ''} used in "${existingMeal.name}"?`;
           }
 
           if (deductions.length > 0) {
             const confirmed = await showConfirm({
               title: 'Mark as Cooked',
-              message: `Deduct ${deductions.length} pantry item${deductions.length !== 1 ? 's' : ''} used in "${existingMeal.name}"?`,
-              confirmLabel: 'Cook',
+              message: confirmMessage,
+              confirmLabel: existingMeal.pantryItemId ? 'Eat' : 'Cook',
               type: 'info',
             });
             if (!confirmed) return;
@@ -198,7 +243,7 @@ export default function NutritionScreen({ navigation }) {
 
           await setMealSlot(householdId, weekKey, day, mealType, { ...existingMeal, cooked: true });
           notify(
-            'Cooked!',
+            existingMeal.pantryItemId ? 'Eaten!' : 'Cooked!',
             deductions.length > 0
               ? `${deductions.length} pantry item${deductions.length !== 1 ? 's' : ''} deducted.`
               : `"${existingMeal.name}" marked as done.`,
@@ -222,9 +267,18 @@ export default function NutritionScreen({ navigation }) {
         setSelectedSlot({ day, mealType });
         setOriginalSlot({ day, mealType });
         setOriginalMeal(existingMeal);
-        setRecipeDropdownOpen(false);
-        setRecipeSearch('');
-        setPendingRecipe(null);
+        resetPicker();
+        if (existingMeal.pantryItemId) {
+          // Prefill the pantry picker with what's already in the slot.
+          const item = pantryItems.find((p) => p.id === existingMeal.pantryItemId);
+          setPendingPantryItem(item ?? {
+            id: existingMeal.pantryItemId,
+            name: existingMeal.name,
+            unit: existingMeal.unit || 'pcs',
+          });
+          setPantryAmount(String(existingMeal.amount ?? 1));
+          setPantryCalories(existingMeal.calories ? String(existingMeal.calories) : '');
+        }
         setModalVisible(true);
       }
     } else {
@@ -232,9 +286,7 @@ export default function NutritionScreen({ navigation }) {
       setSelectedSlot({ day, mealType });
       setOriginalSlot(null);
       setOriginalMeal(null);
-      setRecipeDropdownOpen(false);
-      setRecipeSearch('');
-      setPendingRecipe(null);
+      resetPicker();
       setModalVisible(true);
     }
   };
@@ -248,14 +300,33 @@ export default function NutritionScreen({ navigation }) {
       `${recipe.title} added to ${selectedSlot.day} ${selectedSlot.mealType}.`,
       { type: 'success' },
     );
-    setModalVisible(false);
+    closeModal();
+  };
+
+  // A single pantry product planned as a meal (yogurt, a piece of fruit, …).
+  const buildPantryMeal = () => ({
+    name:         pendingPantryItem.name,
+    recipeId:     null,
+    pantryItemId: pendingPantryItem.id,
+    amount:       parseFloat(pantryAmount) > 0 ? parseFloat(pantryAmount) : 1,
+    unit:         pendingPantryItem.unit || 'pcs',
+    calories:     parseInt(pantryCalories, 10) || 0,
+  });
+
+  const handleAddPantryMeal = async () => {
+    const mealData = buildPantryMeal();
+    await setMealSlot(householdId, weekKey, selectedSlot.day, selectedSlot.mealType, mealData);
+    notify(
+      'Meal added',
+      `${mealData.amount} ${mealData.unit} of ${mealData.name} added to ${selectedSlot.day} ${selectedSlot.mealType}.`,
+      { type: 'success' },
+    );
+    closeModal();
   };
 
   const closeModal = () => {
     setModalVisible(false);
-    setRecipeDropdownOpen(false);
-    setRecipeSearch('');
-    setPendingRecipe(null);
+    resetPicker();
     setOriginalSlot(null);
     setOriginalMeal(null);
   };
@@ -263,7 +334,9 @@ export default function NutritionScreen({ navigation }) {
   const handleConfirmUpdate = async () => {
     const mealData = pendingRecipe
       ? { name: pendingRecipe.title, recipeId: pendingRecipe.id, calories: pendingRecipe.calories || 0 }
-      : { name: originalMeal.name, recipeId: originalMeal.recipeId ?? null, calories: originalMeal.calories ?? 0 };
+      : pendingPantryItem
+        ? buildPantryMeal()
+        : { name: originalMeal.name, recipeId: originalMeal.recipeId ?? null, calories: originalMeal.calories ?? 0 };
 
     await setMealSlot(householdId, weekKey, selectedSlot.day, selectedSlot.mealType, mealData);
 
@@ -288,8 +361,7 @@ export default function NutritionScreen({ navigation }) {
 
   const handleAddNewRecipe = () => {
     setModalVisible(false);
-    setRecipeDropdownOpen(false);
-    setRecipeSearch('');
+    resetPicker();
     setAddRecipeVisible(true);
   };
 
@@ -298,16 +370,22 @@ export default function NutritionScreen({ navigation }) {
   const handleGenerateGroceryList = async () => {
     setShopLoading(true);
     try {
-      const recipeIds = new Set();
+      const recipeIds     = new Set();
+      const singleProducts = [];
       FULL_DAYS.forEach((day) => {
         MEAL_TYPES.forEach((mt) => {
           const meal = getMeal(day, mt);
-          if (meal?.recipeId) recipeIds.add(meal.recipeId);
+          if (!meal) return;
+          if (meal.recipeId) {
+            recipeIds.add(meal.recipeId);
+          } else if (meal.pantryItemId) {
+            singleProducts.push({ name: meal.name, amount: meal.amount ?? 1, unit: meal.unit || 'pcs' });
+          }
         });
       });
 
-      if (recipeIds.size === 0) {
-        showAlert({ title: 'No recipes planned', message: 'Add meals with saved recipes to this week first.', type: 'info' });
+      if (recipeIds.size === 0 && singleProducts.length === 0) {
+        showAlert({ title: 'Nothing planned', message: 'Add meals with saved recipes or pantry products to this week first.', type: 'info' });
         return;
       }
 
@@ -322,6 +400,11 @@ export default function NutritionScreen({ navigation }) {
           const key = normName(ing.name);
           if (!seen.has(key)) { seen.add(key); allIngredients.push(ing); }
         }
+      }
+      for (const product of singleProducts) {
+        if (!product.name?.trim()) continue;
+        const key = normName(product.name);
+        if (!seen.has(key)) { seen.add(key); allIngredients.push(product); }
       }
 
       if (allIngredients.length === 0) {
@@ -382,6 +465,13 @@ export default function NutritionScreen({ navigation }) {
     [savedRecipes, recipeSearch],
   );
 
+  const filteredPantryItems = useMemo(
+    () => pantryItems
+      .filter((p) => (p.name || '').toLowerCase().includes(pantrySearch.toLowerCase()))
+      .sort((a, b) => (a.name || '').localeCompare(b.name || '')),
+    [pantryItems, pantrySearch],
+  );
+
   const getDayCalories    = (day) => MEAL_TYPES.reduce((sum, mt) => sum + (getMeal(day, mt)?.calories || 0), 0);
   const totalWeekCalories = FULL_DAYS.reduce((sum, day) => sum + getDayCalories(day), 0);
   const totalMealsPlanned = FULL_DAYS.reduce((sum, day) => sum + MEAL_TYPES.filter((mt) => getMeal(day, mt)).length, 0);
@@ -390,25 +480,58 @@ export default function NutritionScreen({ navigation }) {
 
   const getMealTimerStatus = (dayIndex, mealType, meal) => {
     if (!meal) return null;
-    const date    = addDays(weekStart, dayIndex);
-    if (format(date, 'yyyy-MM-dd') !== todayDateKey) return null;
     if (meal.cooked) return { state: 'cooked' };
 
+    const date         = addDays(weekStart, dayIndex);
     const mealTime     = new Date(date); mealTime.setHours(MEAL_HOURS[mealType], 0, 0, 0);
     const autoCookTime = new Date(mealTime.getTime() + AUTO_COOK_H * 3_600_000);
 
-    if (now >= autoCookTime) return { state: 'cooked' };
-    if (now >= mealTime) {
-      const msLeft = autoCookTime - now;
-      const h = Math.floor(msLeft / 3_600_000);
-      const m = Math.max(1, Math.ceil((msLeft % 3_600_000) / 60_000));
-      return { state: 'countdown', h, m };
+    if (format(date, 'yyyy-MM-dd') === todayDateKey) {
+      if (now >= autoCookTime) return { state: 'cooked' };
+      if (now >= mealTime) {
+        const msLeft = autoCookTime - now;
+        const h = Math.floor(msLeft / 3_600_000);
+        const m = Math.max(1, Math.ceil((msLeft % 3_600_000) / 60_000));
+        return { state: 'countdown', h, m };
+      }
+      const h = MEAL_HOURS[mealType];
+      return { state: 'upcoming', time: `${h < 10 ? '0' : ''}${h}:00` };
     }
-    const h = MEAL_HOURS[mealType];
-    return { state: 'upcoming', time: `${h < 10 ? '0' : ''}${h}:00` };
+
+    // Other days: auto-cook only runs for today, so anything past its window
+    // that is still uncooked was never eaten.
+    if (now >= autoCookTime) return { state: 'missed' };
+    return null;
   };
 
+  // Cooked / missed tallies, used by the day badges and the week summary.
+  const getDayProgress = (day, dayIndex) => {
+    let total = 0, done = 0, missed = 0;
+    MEAL_TYPES.forEach((mealType) => {
+      const meal = getMeal(day, mealType);
+      if (!meal) return;
+      total += 1;
+      const state = getMealTimerStatus(dayIndex, mealType, meal)?.state;
+      if (state === 'cooked')      done   += 1;
+      else if (state === 'missed') missed += 1;
+    });
+    return { total, done, missed };
+  };
+
+  const weekProgress = FULL_DAYS.reduce((acc, day, dayIndex) => {
+    const { total, done, missed } = getDayProgress(day, dayIndex);
+    return { total: acc.total + total, done: acc.done + done, missed: acc.missed + missed };
+  }, { total: 0, done: 0, missed: 0 });
+
   const cookMeal = async (day, mealType, meal) => {
+    if (meal.pantryItemId) {
+      const deducted = await deductPantryIngredients(householdId, [
+        { pantryItemId: meal.pantryItemId, amount: meal.amount ?? 1 },
+      ]);
+      await setMealSlot(householdId, weekKey, day, mealType, { ...meal, cooked: true });
+      return deducted;
+    }
+
     const recipe = meal.recipeId ? await getRecipe(householdId, meal.recipeId) : null;
     if (recipe?.ingredients?.length) {
       await deductPantryIngredients(householdId, recipe.ingredients);
@@ -443,6 +566,7 @@ export default function NutritionScreen({ navigation }) {
 
   const canUpdate = isReplacing && (
     !!pendingRecipe ||
+    !!pendingPantryItem ||
     (originalSlot && selectedSlot?.mealType !== originalSlot?.mealType)
   );
 
@@ -514,8 +638,18 @@ export default function NutritionScreen({ navigation }) {
 
       <View style={styles.summaryStatsRow}>
         <View style={styles.summaryStatCard}>
-          <Text style={styles.summaryStatValue}>{totalMealsPlanned}</Text>
-          <Text style={styles.summaryStatLabel}>Meals planned</Text>
+          <Text style={styles.summaryStatValue}>
+            {totalMealsPlanned > 0 ? `${weekProgress.done}/${totalMealsPlanned}` : '—'}
+          </Text>
+          <Text style={styles.summaryStatLabel}>Meals done</Text>
+          {totalMealsPlanned > 0 && (
+            <View style={styles.progressTrack}>
+              <View style={[
+                styles.progressFill,
+                { width: `${Math.round((weekProgress.done / totalMealsPlanned) * 100)}%` },
+              ]} />
+            </View>
+          )}
         </View>
         <View style={styles.summaryStatCard}>
           <Text style={styles.summaryStatValue}>{totalWeekCalories > 0 ? totalWeekCalories.toLocaleString() : '—'}</Text>
@@ -580,9 +714,11 @@ export default function NutritionScreen({ navigation }) {
     const date        = addDays(weekStart, dayIndex);
     const dateKey     = format(date, 'yyyy-MM-dd');
     const isToday     = dateKey === todayDateKey;
+    const isPast      = dateKey < todayDateKey;
     const dayCalories = getDayCalories(day);
+    const dayProgress = getDayProgress(day, dayIndex);
     return (
-      <Rise key={day} index={dayIndex + 1} style={[styles.dayCard, isToday && styles.dayCardToday]}>
+      <Rise key={day} index={dayIndex + 1} style={[styles.dayCard, isToday && styles.dayCardToday, isPast && styles.dayCardPast]}>
         <View style={[styles.dayCardHeader, isToday && styles.dayCardHeaderToday]}>
           <View>
             <Text style={[styles.dayName, isToday && styles.dayNameToday]}>
@@ -590,13 +726,45 @@ export default function NutritionScreen({ navigation }) {
             </Text>
             <Text style={styles.dayDateLabel}>{format(date, 'MMM d')}</Text>
           </View>
-          {dayCalories > 0 && (
-            <View style={[styles.calorieBadge, isToday && styles.calorieBadgeToday]}>
-              <Text style={[styles.calorieBadgeText, isToday && styles.calorieBadgeTextToday]}>
-                {dayCalories} cal
-              </Text>
-            </View>
-          )}
+          <View style={styles.dayCardHeaderRight}>
+            {dayProgress.total > 0 && (
+              <View style={[
+                styles.dayStatusBadge,
+                dayProgress.done === dayProgress.total ? styles.dayStatusBadgeDone
+                  : dayProgress.missed > 0             ? styles.dayStatusBadgeMissed
+                                                       : null,
+              ]}>
+                <Ionicons
+                  name={
+                    dayProgress.done === dayProgress.total ? 'checkmark-circle'
+                      : dayProgress.missed > 0             ? 'alert-circle'
+                                                           : 'ellipse-outline'
+                  }
+                  size={11}
+                  color={
+                    dayProgress.done === dayProgress.total ? colors.sage
+                      : dayProgress.missed > 0             ? colors.danger
+                                                           : colors.textTertiary
+                  }
+                />
+                <Text style={[
+                  styles.dayStatusBadgeText,
+                  dayProgress.done === dayProgress.total ? { color: colors.sage }
+                    : dayProgress.missed > 0             ? { color: colors.danger }
+                                                         : null,
+                ]}>
+                  {dayProgress.done}/{dayProgress.total}
+                </Text>
+              </View>
+            )}
+            {dayCalories > 0 && (
+              <View style={[styles.calorieBadge, isToday && styles.calorieBadgeToday]}>
+                <Text style={[styles.calorieBadgeText, isToday && styles.calorieBadgeTextToday]}>
+                  {dayCalories} cal
+                </Text>
+              </View>
+            )}
+          </View>
         </View>
         <View style={styles.mealSlotsGrid}>
           {MEAL_TYPES.map((mealType) => {
@@ -604,6 +772,7 @@ export default function NutritionScreen({ navigation }) {
             const mealColor  = mealTypeColors[mealType];
             const timerStatus = getMealTimerStatus(dayIndex, mealType, meal);
             const isCooked   = timerStatus?.state === 'cooked';
+            const isMissed   = timerStatus?.state === 'missed';
             return (
               <TouchableOpacity
                 key={mealType}
@@ -611,17 +780,38 @@ export default function NutritionScreen({ navigation }) {
                   styles.mealSlot,
                   meal && { backgroundColor: mealColor.bg },
                   isCooked && styles.mealSlotCooked,
+                  isMissed && styles.mealSlotMissed,
                 ]}
                 onPress={() => handleSlotPress(day, mealType)}
                 accessibilityRole="button"
-                accessibilityLabel={`${day} ${mealType}: ${meal ? meal.name : 'empty, tap to add'}`}
+                accessibilityLabel={`${day} ${mealType}: ${meal ? `${meal.name}${isCooked ? ', cooked' : isMissed ? ', missed' : ''}` : 'empty, tap to add'}`}
               >
-                <Text style={[styles.mealTypeLabel, meal && { color: mealColor.text }]}>
+                <Text style={[
+                  styles.mealTypeLabel,
+                  meal && { color: mealColor.text },
+                  isCooked && { color: colors.sage },
+                  isMissed && { color: colors.danger },
+                ]}>
                   {mealType}
                 </Text>
                 {meal ? (
                   <>
-                    <Text style={[styles.mealName, { color: mealColor.text }]} numberOfLines={1}>{meal.name}</Text>
+                    <Text
+                      style={[
+                        styles.mealName,
+                        { color: mealColor.text },
+                        isCooked && styles.mealNameCooked,
+                        isMissed && styles.mealNameMissed,
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {meal.name}
+                    </Text>
+                    {meal.pantryItemId && (
+                      <Text style={styles.mealPortion} numberOfLines={1}>
+                        {meal.amount ?? 1} {meal.unit || 'pcs'}
+                      </Text>
+                    )}
                     <MealTimerBadge status={timerStatus} colors={colors} />
                   </>
                 ) : (
@@ -652,12 +842,43 @@ export default function NutritionScreen({ navigation }) {
                 const dateKey     = format(date, 'yyyy-MM-dd');
                 const isToday     = dateKey === todayDateKey;
                 const dayCalories = getDayCalories(day);
+                const isPast      = dateKey < todayDateKey;
+                const dayProgress = getDayProgress(day, dayIndex);
                 return (
-                  <View key={day} style={[styles.desktopDayHeaderCell, isToday && styles.desktopDayHeaderCellToday]}>
+                  <View key={day} style={[
+                    styles.desktopDayHeaderCell,
+                    isToday && styles.desktopDayHeaderCellToday,
+                    isPast && styles.desktopDayHeaderCellPast,
+                  ]}>
                     <Text style={[styles.desktopDayAbbr, isToday && styles.desktopDayAbbrToday]}>
                       {DAYS_OF_WEEK[dayIndex]}
                     </Text>
                     <Text style={styles.desktopDayDate}>{format(date, 'MMM d')}</Text>
+                    {dayProgress.total > 0 && (
+                      <View style={styles.desktopDayProgressRow}>
+                        <Ionicons
+                          name={
+                            dayProgress.done === dayProgress.total ? 'checkmark-circle'
+                              : dayProgress.missed > 0             ? 'alert-circle'
+                                                                   : 'ellipse-outline'
+                          }
+                          size={10}
+                          color={
+                            dayProgress.done === dayProgress.total ? colors.sage
+                              : dayProgress.missed > 0             ? colors.danger
+                                                                   : colors.textTertiary
+                          }
+                        />
+                        <Text style={[
+                          styles.desktopDayProgressText,
+                          dayProgress.done === dayProgress.total ? { color: colors.sage }
+                            : dayProgress.missed > 0             ? { color: colors.danger }
+                                                                 : null,
+                        ]}>
+                          {dayProgress.done}/{dayProgress.total}
+                        </Text>
+                      </View>
+                    )}
                     {dayCalories > 0 && (
                       <Text style={[styles.desktopDayCalories, isToday && styles.desktopDayCaloriesToday]}>
                         {dayCalories} cal
@@ -681,6 +902,7 @@ export default function NutritionScreen({ navigation }) {
                     const meal        = getMeal(day, mealType);
                     const timerStatus = getMealTimerStatus(dayIndex, mealType, meal);
                     const isCooked    = timerStatus?.state === 'cooked';
+                    const isMissed    = timerStatus?.state === 'missed';
                     return (
                       <TouchableOpacity
                         key={day}
@@ -689,14 +911,25 @@ export default function NutritionScreen({ navigation }) {
                           isToday && styles.desktopMealCellToday,
                           meal && { backgroundColor: mealColor.bg },
                           isCooked && styles.mealSlotCooked,
+                          isMissed && styles.mealSlotMissed,
                         ]}
                         onPress={() => handleSlotPress(day, mealType)}
                         accessibilityRole="button"
-                        accessibilityLabel={`${day} ${mealType}: ${meal ? meal.name : 'empty, tap to add'}`}
+                        accessibilityLabel={`${day} ${mealType}: ${meal ? `${meal.name}${isCooked ? ', cooked' : isMissed ? ', missed' : ''}` : 'empty, tap to add'}`}
                       >
                         {meal ? (
                           <>
-                            <Text style={[styles.desktopMealName, { color: mealColor.text }]} numberOfLines={2}>{meal.name}</Text>
+                            <Text
+                              style={[
+                                styles.desktopMealName,
+                                { color: mealColor.text },
+                                isCooked && styles.mealNameCooked,
+                                isMissed && styles.mealNameMissed,
+                              ]}
+                              numberOfLines={2}
+                            >
+                              {meal.name}
+                            </Text>
                             <MealTimerBadge status={timerStatus} colors={colors} small />
                           </>
                         ) : (
@@ -898,6 +1131,7 @@ export default function NutritionScreen({ navigation }) {
                               isSelected && { backgroundColor: colors.accentSoft },
                             ]}
                             onPress={() => {
+                              setPendingPantryItem(null);
                               if (isReplacing) {
                                 setPendingRecipe(recipe);
                                 setRecipeDropdownOpen(false);
@@ -930,6 +1164,152 @@ export default function NutritionScreen({ navigation }) {
               </View>
             )}
 
+            {/* Pantry product — a single item eaten on its own (yogurt, fruit, …) */}
+            {pantryItems.length > 0 && (
+              <View>
+                {savedRecipes.length > 0 && (
+                  <View style={[styles.dividerRow, { marginBottom: 12 }]}>
+                    <View style={styles.dividerLine} />
+                    <Text style={styles.dividerLabel}>or</Text>
+                    <View style={styles.dividerLine} />
+                  </View>
+                )}
+                <TouchableOpacity
+                  style={[
+                    styles.dropdownTrigger,
+                    pantryDropdownOpen && styles.dropdownTriggerOpen,
+                  ]}
+                  onPress={() => {
+                    setPantryDropdownOpen((v) => !v);
+                    setPantrySearch('');
+                  }}
+                  activeOpacity={0.8}
+                  accessibilityRole="button"
+                  accessibilityLabel="Pick a product from the pantry"
+                  accessibilityState={{ expanded: pantryDropdownOpen }}
+                >
+                  <View style={styles.dropdownTriggerLeft}>
+                    <Ionicons
+                      name={pendingPantryItem ? 'nutrition' : 'nutrition-outline'}
+                      size={15}
+                      color={pendingPantryItem ? colors.accent : colors.textSecondary}
+                    />
+                    <Text style={[styles.dropdownTriggerLabel, pendingPantryItem && { color: colors.accent }]} numberOfLines={1}>
+                      {pendingPantryItem ? pendingPantryItem.name : 'Pick from pantry'}
+                    </Text>
+                  </View>
+                  <View style={styles.dropdownTriggerRight}>
+                    <Text style={styles.dropdownCount}>{pantryItems.length}</Text>
+                    <Ionicons
+                      name={pantryDropdownOpen ? 'chevron-up' : 'chevron-down'}
+                      size={14}
+                      color={colors.textTertiary}
+                    />
+                  </View>
+                </TouchableOpacity>
+
+                {pantryDropdownOpen && (
+                  <View style={[styles.dropdownPanel, { borderColor: colors.border }]}>
+                    <View style={[styles.dropdownSearch, { borderBottomColor: colors.border }]}>
+                      <Ionicons name="search-outline" size={14} color={colors.textTertiary} />
+                      <TextInput
+                        style={[styles.dropdownSearchInput, { color: colors.textPrimary }]}
+                        placeholder="Search pantry…"
+                        placeholderTextColor={colors.textTertiary}
+                        value={pantrySearch}
+                        onChangeText={setPantrySearch}
+                        autoFocus
+                      />
+                      {pantrySearch.length > 0 && (
+                        <TouchableOpacity
+                          onPress={() => setPantrySearch('')}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        >
+                          <Ionicons name="close-circle" size={14} color={colors.textTertiary} />
+                        </TouchableOpacity>
+                      )}
+                    </View>
+
+                    <FlatList
+                      data={filteredPantryItems}
+                      keyExtractor={(p) => p.id}
+                      style={{ maxHeight: 200 }}
+                      showsVerticalScrollIndicator={false}
+                      keyboardShouldPersistTaps="handled"
+                      ListEmptyComponent={
+                        <Text style={[styles.dropdownEmpty, { color: colors.textTertiary }]}>
+                          No pantry items match "{pantrySearch}"
+                        </Text>
+                      }
+                      renderItem={({ item, index }) => {
+                        const isSelected = pendingPantryItem?.id === item.id;
+                        return (
+                          <TouchableOpacity
+                            style={[
+                              styles.dropdownItem,
+                              { borderBottomColor: colors.border },
+                              index === filteredPantryItems.length - 1 && { borderBottomWidth: 0 },
+                              isSelected && { backgroundColor: colors.accentSoft },
+                            ]}
+                            onPress={() => {
+                              setPendingRecipe(null);
+                              setPendingPantryItem(item);
+                              setPantryAmount('1');
+                              setPantryCalories('');
+                              setPantryDropdownOpen(false);
+                              setPantrySearch('');
+                            }}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Select ${item.name}`}
+                            accessibilityState={{ selected: isSelected }}
+                          >
+                            <Text style={[styles.dropdownItemTitle, { color: isSelected ? colors.accent : colors.textPrimary }]} numberOfLines={1}>
+                              {item.name}
+                            </Text>
+                            <Text style={[styles.dropdownItemCalories, { color: colors.textSecondary }]}>
+                              {item.quantity} {item.unit}
+                            </Text>
+                            {isSelected && (
+                              <Ionicons name="checkmark" size={16} color={colors.accent} style={{ marginLeft: 6 }} />
+                            )}
+                          </TouchableOpacity>
+                        );
+                      }}
+                    />
+                  </View>
+                )}
+
+                {pendingPantryItem && !pantryDropdownOpen && (
+                  <View style={styles.pantryFieldsRow}>
+                    <View style={styles.pantryField}>
+                      <Text style={styles.pantryFieldLabel}>Amount ({pendingPantryItem.unit || 'pcs'})</Text>
+                      <TextInput
+                        style={styles.pantryFieldInput}
+                        value={pantryAmount}
+                        onChangeText={setPantryAmount}
+                        keyboardType="numeric"
+                        placeholder="1"
+                        placeholderTextColor={colors.textTertiary}
+                        accessibilityLabel="Amount"
+                      />
+                    </View>
+                    <View style={styles.pantryField}>
+                      <Text style={styles.pantryFieldLabel}>Calories (optional)</Text>
+                      <TextInput
+                        style={styles.pantryFieldInput}
+                        value={pantryCalories}
+                        onChangeText={setPantryCalories}
+                        keyboardType="numeric"
+                        placeholder="—"
+                        placeholderTextColor={colors.textTertiary}
+                        accessibilityLabel="Calories"
+                      />
+                    </View>
+                  </View>
+                )}
+              </View>
+            )}
+
             {/* Add new recipe — navigates to full recipe creation */}
             <View style={styles.dividerRow}>
               <View style={styles.dividerLine} />
@@ -955,7 +1335,7 @@ export default function NutritionScreen({ navigation }) {
                 <Text style={styles.cancelButtonLabel}>Cancel</Text>
               </TouchableOpacity>
 
-              {isReplacing && (
+              {isReplacing ? (
                 <TouchableOpacity
                   style={[styles.updateButton, { flex: 1 }, !canUpdate && styles.updateButtonDisabled]}
                   onPress={handleConfirmUpdate}
@@ -965,7 +1345,16 @@ export default function NutritionScreen({ navigation }) {
                 >
                   <Text style={styles.updateButtonLabel}>Update</Text>
                 </TouchableOpacity>
-              )}
+              ) : pendingPantryItem ? (
+                <TouchableOpacity
+                  style={[styles.updateButton, { flex: 1 }]}
+                  onPress={handleAddPantryMeal}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Add ${pendingPantryItem.name} to the meal plan`}
+                >
+                  <Text style={styles.updateButtonLabel}>Add</Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
           </View>
         </View>
@@ -1048,6 +1437,12 @@ const makeStyles = (colors) => StyleSheet.create({
   summaryStatValue: { ...type.h3, color: colors.accent },
   summaryStatLabel: { ...type.caption, color: colors.textSecondary, textAlign: 'center' },
 
+  progressTrack: {
+    width: '100%', height: 3, borderRadius: 2,
+    backgroundColor: colors.muted, overflow: 'hidden', marginTop: 2,
+  },
+  progressFill: { height: '100%', borderRadius: 2, backgroundColor: colors.sage },
+
   mobileContent: { paddingBottom: 120 },
   dayGrid: { paddingHorizontal: spacing.xl, paddingTop: spacing.sm, gap: 12 },
   dayCard: {
@@ -1055,6 +1450,7 @@ const makeStyles = (colors) => StyleSheet.create({
     borderWidth: 1, borderColor: colors.border,
   },
   dayCardToday: { borderColor: colors.accent, borderWidth: 1.5 },
+  dayCardPast:  { opacity: 0.72 },
 
   // Desktop week grid
   desktopGrid: {
@@ -1077,6 +1473,9 @@ const makeStyles = (colors) => StyleSheet.create({
     borderLeftWidth: 1, borderLeftColor: colors.border,
   },
   desktopDayHeaderCellToday: { backgroundColor: colors.accentSoft },
+  desktopDayHeaderCellPast:  { opacity: 0.6 },
+  desktopDayProgressRow:  { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  desktopDayProgressText: { ...type.caption, fontSize: 10, color: colors.textTertiary, fontWeight: '600' },
   desktopDayAbbr: {
     ...type.caption, color: colors.textSecondary,
     fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5,
@@ -1117,6 +1516,16 @@ const makeStyles = (colors) => StyleSheet.create({
   dayNameToday:       { color: colors.accent },
   dayDateLabel:       { ...type.caption, color: colors.textTertiary, marginTop: 1 },
 
+  dayCardHeaderRight: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  dayStatusBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 3,
+    backgroundColor: colors.muted,
+    paddingHorizontal: 8, paddingVertical: 4, borderRadius: radius.full,
+  },
+  dayStatusBadgeDone:   { backgroundColor: colors.sageSoft },
+  dayStatusBadgeMissed: { backgroundColor: colors.dangerSoft },
+  dayStatusBadgeText:   { ...type.caption, color: colors.textSecondary, fontWeight: '600' },
+
   calorieBadge:         { backgroundColor: colors.muted, paddingHorizontal: 9, paddingVertical: 4, borderRadius: radius.full },
   calorieBadgeToday:    { backgroundColor: colors.accentSoft },
   calorieBadgeText:     { ...type.caption, color: colors.textSecondary, fontWeight: '600' },
@@ -1129,11 +1538,16 @@ const makeStyles = (colors) => StyleSheet.create({
     backgroundColor: colors.surface,
   },
   mealSlotCooked: { backgroundColor: colors.sageSoft },
+  mealSlotMissed: { backgroundColor: colors.dangerSoft },
   mealTypeLabel: {
     ...type.caption, color: colors.textTertiary, fontWeight: '700',
     textTransform: 'uppercase', marginBottom: 3, letterSpacing: 0.6,
   },
   mealName:      { ...type.bodySm, fontWeight: '600' },
+  mealPortion:   { ...type.caption, color: colors.textTertiary, marginTop: 1 },
+  // Cooked reads as struck-through and faded; missed keeps full contrast in danger.
+  mealNameCooked:{ color: colors.sage, textDecorationLine: 'line-through', opacity: 0.75 },
+  mealNameMissed:{ color: colors.danger },
   mealEmptyRow:  { flexDirection: 'row', alignItems: 'center', gap: 3, opacity: 0.45 },
   mealEmptyLabel:{ ...type.caption, color: colors.textTertiary },
 
@@ -1294,6 +1708,16 @@ const makeStyles = (colors) => StyleSheet.create({
   },
   dropdownItemTitle:    { ...type.bodyMed, flex: 1 },
   dropdownItemCalories: { ...type.caption, marginLeft: 8 },
+  // Pantry product amount / calories fields
+  pantryFieldsRow:  { flexDirection: 'row', gap: 10, marginTop: 10 },
+  pantryField:      { flex: 1, gap: 4 },
+  pantryFieldLabel: { ...type.caption, color: colors.textTertiary },
+  pantryFieldInput: {
+    height: 44, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md,
+    paddingHorizontal: spacing.md, ...type.body, color: colors.textPrimary,
+    backgroundColor: colors.surfaceElevated,
+  },
+
   dropdownEmpty: {
     ...type.body, textAlign: 'center',
     paddingVertical: spacing.lg, paddingHorizontal: spacing.xl,

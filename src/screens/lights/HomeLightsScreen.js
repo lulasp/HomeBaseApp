@@ -2,10 +2,11 @@ import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react'
 import {
   View, Text, ScrollView, TouchableOpacity, StyleSheet,
   Switch, SafeAreaView, Platform, ActivityIndicator,
-  Modal, TextInput, KeyboardAvoidingView,
+  Modal, TextInput, KeyboardAvoidingView, RefreshControl,
 } from 'react-native';
 import Slider from '@react-native-community/slider';
 import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
 import { useTheme } from '../../context/ThemeContext';
 import { useNavScroll } from '../../context/NavScrollContext';
 import { useAuth } from '../../context/AuthContext';
@@ -20,8 +21,10 @@ import {
 } from '../../services/firestore';
 import {
   getDevices, getDeviceState, stateFromCapabilities,
-  hasCap, getCapParam, getScenesFromDevice,
-  setPower, setBrightness, setColor, setColorTemp, setScene, setMusicMode,
+  hasCap, getCapParam, getScenesFromDevice, getDynamicScenes, getDiyScenes,
+  sceneKey, getSegmentCount,
+  setPower, setBrightness, setColor, setColorTemp, applyScene, setMusicMode,
+  setSegmentColor, setSegmentBrightness,
 } from '../../services/govee';
 import LightShortcutsRow, { SHORTCUT_VISUALS } from '../../components/LightShortcutsRow';
 
@@ -52,6 +55,16 @@ const SCENE_VISUALS = [
   { icon: 'flash',        color: '#FF00FF' },
 ];
 
+const SCENE_SOURCES = [
+  { id: 'static',  label: 'Featured' },
+  { id: 'dynamic', label: 'Built-in' },
+  { id: 'diy',     label: 'DIY' },
+];
+
+// The dynamic catalogue can run to hundreds of scenes — show a slice until the
+// user searches or asks for the rest.
+const SCENE_PAGE = 20;
+
 const DEFAULT_SHORTCUT_FORM = {
   name: '',
   visual: 0,
@@ -74,44 +87,63 @@ function hasBluetooth(device) {
   return (device.capabilities ?? []).some((c) => c.type?.includes('bluetooth'));
 }
 
+// Reads live state for every device. Govee limits /device/state to 30 req/min
+// *per device*, so one request each in parallel is safe. A device that errors
+// out is treated as offline — its last reported values can't be trusted.
+async function fetchDeviceStates(apiKey, devs) {
+  const entries = await Promise.all(devs.map(async (dev) => {
+    try {
+      const caps = await getDeviceState(apiKey, dev.sku, dev.device);
+      return [dev.device, stateFromCapabilities(caps)];
+    } catch {
+      return [dev.device, { ...DEFAULT_STATE, online: false }];
+    }
+  }));
+  return Object.fromEntries(entries);
+}
+
 // ── Sub-component ─────────────────────────────────────────────────────────────
 
 function DeviceCard({ device, isSelected, isOn, isOnline, onSelect, onToggle }) {
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const supportsBt = hasBluetooth(device);
+  // An offline device reports stale values, so it can never read as "on".
+  const lit = isOnline && isOn;
   return (
     <TouchableOpacity
       style={[styles.deviceCard, isSelected && styles.deviceCardSelected]}
       onPress={onSelect}
       accessibilityRole="button"
-      accessibilityLabel={`Select ${device.deviceName}`}
+      accessibilityLabel={`Select ${device.deviceName}${isOnline ? '' : ' (offline)'}`}
       accessibilityState={{ selected: isSelected }}
     >
       <View style={[
         styles.deviceIconWrap,
-        isOn && { backgroundColor: colors.accentSoft },
+        lit && { backgroundColor: colors.accentSoft },
         isSelected && styles.deviceIconWrapSelected,
+        !isOnline && styles.offline,
       ]}>
         <Ionicons
-          name={isOn ? 'bulb' : 'bulb-outline'}
+          name={lit ? 'bulb' : 'bulb-outline'}
           size={22}
-          color={isOn || isSelected ? colors.accent : colors.textTertiary}
+          color={lit || isSelected ? colors.accent : colors.textTertiary}
         />
       </View>
-      <View style={{ flex: 1, marginLeft: 12 }}>
+      <View style={[{ flex: 1, marginLeft: 12 }, !isOnline && styles.offline]}>
         <Text style={[styles.deviceName, isSelected && styles.deviceNameSelected]} numberOfLines={1}>
           {device.deviceName}
         </Text>
         <View style={styles.deviceMeta}>
           <Text style={styles.deviceModel}>{device.sku}</Text>
           <View style={styles.connectivityIcons}>
-            {isOnline && (
-              <Ionicons
-                name="wifi"
-                size={13}
-                color="#4CAF50"
-              />
+            {isOnline ? (
+              <Ionicons name="wifi" size={13} color={colors.success} />
+            ) : (
+              <>
+                <Ionicons name="cloud-offline-outline" size={13} color={colors.textTertiary} />
+                <Text style={styles.offlineLabel}>Offline</Text>
+              </>
             )}
             {supportsBt && (
               <Ionicons
@@ -123,13 +155,22 @@ function DeviceCard({ device, isSelected, isOn, isOnline, onSelect, onToggle }) 
           </View>
         </View>
       </View>
-      <Switch
-        value={isOn}
-        onValueChange={onToggle}
-        trackColor={{ false: colors.muted, true: colors.accent }}
-        thumbColor="#fff"
-        ios_backgroundColor={colors.muted}
-      />
+      {isOnline ? (
+        <Switch
+          value={lit}
+          onValueChange={onToggle}
+          trackColor={{ false: colors.muted, true: colors.accent }}
+          thumbColor="#fff"
+          ios_backgroundColor={colors.muted}
+          accessibilityLabel={`Toggle ${device.deviceName}`}
+        />
+      ) : (
+        // A disabled Switch reads as a half-drawn control — show an inert
+        // placeholder of the same width so rows stay aligned.
+        <View style={styles.switchSlot}>
+          <Text style={styles.switchSlotDash}>—</Text>
+        </View>
+      )}
     </TouchableOpacity>
   );
 }
@@ -152,6 +193,19 @@ export default function HomeLightsScreen({ route }) {
   const [error, setError] = useState(null);
   const [deviceStates, setDeviceStates] = useState({});
   const [selectedId, setSelectedId] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  // deviceId → { loading } | { dynamic: [], diy: [] }
+  const [sceneCatalog, setSceneCatalog] = useState({});
+  const [sceneSource, setSceneSource] = useState('all');
+  const [sceneQuery, setSceneQuery] = useState('');
+  const [scenesExpanded, setScenesExpanded] = useState(false);
+
+  // Govee never reports per-segment colours back, so what we set is the only
+  // record we have. Kept per device, in memory only.
+  const [selectedSegments, setSelectedSegments] = useState([]);
+  const [segmentColors, setSegmentColors] = useState({});
+  const [segBrightness, setSegBrightness] = useState(100);
 
   const [shortcuts, setShortcuts] = useState([]);
   const [shortcutModalVisible, setShortcutModalVisible] = useState(false);
@@ -184,15 +238,7 @@ export default function HomeLightsScreen({ route }) {
         setDevices(devs);
         if (devs.length > 0) setSelectedId(devs[0].device);
 
-        const states = {};
-        for (const dev of devs) {
-          try {
-            const caps = await getDeviceState(apiKey, dev.sku, dev.device);
-            states[dev.device] = { ...stateFromCapabilities(caps), online: true };
-          } catch {
-            states[dev.device] = { ...DEFAULT_STATE, online: false };
-          }
-        }
+        const states = await fetchDeviceStates(apiKey, devs);
         if (!cancelled) setDeviceStates(states);
       } catch (e) {
         if (!cancelled) setError(e.message);
@@ -203,6 +249,33 @@ export default function HomeLightsScreen({ route }) {
     load();
     return () => { cancelled = true; };
   }, [householdId]);
+
+  // ── Keep state fresh: pull-to-refresh + on every re-focus ─────────────────
+  const refreshStates = useCallback(async () => {
+    if (!goveeApiKey || devices.length === 0) return;
+    setRefreshing(true);
+    try {
+      setDeviceStates(await fetchDeviceStates(goveeApiKey, devices));
+    } finally {
+      setRefreshing(false);
+    }
+  }, [goveeApiKey, devices]);
+
+  // Read through a ref so the focus effect keeps a stable identity — otherwise
+  // it would re-fire every time `devices` settles, not just on re-focus.
+  const refreshRef = useRef(refreshStates);
+  refreshRef.current = refreshStates;
+  const skipFocusRefresh = useRef(true);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (skipFocusRefresh.current) {
+        skipFocusRefresh.current = false;   // mount already loads state
+        return;
+      }
+      refreshRef.current();
+    }, []),
+  );
 
   useEffect(() => {
     const id = route?.params?.selectedDeviceId;
@@ -217,6 +290,14 @@ export default function HomeLightsScreen({ route }) {
   // ── Derived ───────────────────────────────────────────────────────────────
   const selectedDevice = devices.find((d) => d.device === selectedId);
   const selected = deviceStates[selectedId] ?? DEFAULT_STATE;
+  const selectedOnline = selected.online;
+  const selectedOn = selectedOnline && selected.on;
+  const onlineCount = devices.filter((d) => deviceStates[d.device]?.online).length;
+  const offlineCount = devices.length - onlineCount;
+  const onlineOnCount = devices.filter((d) => {
+    const s = deviceStates[d.device];
+    return s?.online && s?.on;
+  }).length;
 
   const supports = useCallback((cap) => {
     if (!selectedDevice) return false;
@@ -225,9 +306,7 @@ export default function HomeLightsScreen({ route }) {
       case 'brightness': return hasCap(selectedDevice, 'devices.capabilities.range', 'brightness');
       case 'color':      return hasCap(selectedDevice, 'devices.capabilities.color_setting', 'colorRgb');
       case 'colorTem':   return hasCap(selectedDevice, 'devices.capabilities.color_setting', 'colorTemperatureK');
-      case 'scene':      return hasCap(selectedDevice, 'devices.capabilities.dynamic_scene', 'lightScene');
       case 'musicMode':  return hasCap(selectedDevice, 'devices.capabilities.music_setting', 'musicMode');
-      case 'segment':    return hasCap(selectedDevice, 'devices.capabilities.segment_color_setting');
       default:           return false;
     }
   }, [selectedDevice]);
@@ -242,7 +321,55 @@ export default function HomeLightsScreen({ route }) {
     colorTemK <= 4500 ? 'Neutral' :
     colorTemK <= 6000 ? 'Cool' : 'Daylight';
 
-  const deviceScenes = selectedDevice ? getScenesFromDevice(selectedDevice) : [];
+  const segmentCount = getSegmentCount(selectedDevice);
+
+  // ── Scenes ────────────────────────────────────────────────────────────────
+  // The device list only carries a handful of scenes; the full built-in
+  // catalogue and the user's DIY scenes each need their own request. Fetched
+  // once per device and cached — both endpoints allow 30 req/min per device.
+  const sceneFetched = useRef({});
+  useEffect(() => {
+    if (!goveeApiKey || !selectedDevice) return;
+    const id = selectedDevice.device;
+    if (sceneFetched.current[id]) return;
+    sceneFetched.current[id] = true;
+    setSceneCatalog((prev) => ({ ...prev, [id]: { loading: true } }));
+    (async () => {
+      const [dynamic, diy] = await Promise.all([
+        getDynamicScenes(goveeApiKey, selectedDevice.sku, id).catch(() => []),
+        getDiyScenes(goveeApiKey, selectedDevice.sku, id).catch(() => []),
+      ]);
+      setSceneCatalog((prev) => ({ ...prev, [id]: { dynamic, diy } }));
+    })();
+  }, [goveeApiKey, selectedDevice]);
+
+  // Reset the scene browser and segment selection when switching device
+  useEffect(() => {
+    setSceneSource('all');
+    setSceneQuery('');
+    setScenesExpanded(false);
+    setSelectedSegments([]);
+  }, [selectedId]);
+
+  const allScenes = useMemo(() => {
+    const featured = selectedDevice ? getScenesFromDevice(selectedDevice) : [];
+    const cat = sceneCatalog[selectedId];
+    const seen = new Set(featured.map((s) => s.name));
+    const dynamic = (cat?.dynamic ?? []).filter((s) => !seen.has(s.name));
+    return [...featured, ...dynamic, ...(cat?.diy ?? [])];
+  }, [selectedDevice, sceneCatalog, selectedId]);
+
+  const scenesLoading = Boolean(sceneCatalog[selectedId]?.loading);
+  const sceneSources = SCENE_SOURCES.filter((s) => allScenes.some((sc) => sc.source === s.id));
+
+  const visibleScenes = useMemo(() => {
+    const q = sceneQuery.trim().toLowerCase();
+    return allScenes.filter((s) =>
+      (sceneSource === 'all' || s.source === sceneSource) &&
+      (!q || s.name.toLowerCase().includes(q)));
+  }, [allScenes, sceneSource, sceneQuery]);
+
+  const shownScenes = scenesExpanded ? visibleScenes : visibleScenes.slice(0, SCENE_PAGE);
 
   // ── State helpers ─────────────────────────────────────────────────────────
   const updateSelected = useCallback((patch) => {
@@ -253,63 +380,119 @@ export default function HomeLightsScreen({ route }) {
   }, [selectedId]);
 
   // ── Control handlers (optimistic UI + API call) ───────────────────────────
+  // Power is the one control we roll back on failure — the switch must never
+  // claim a light is on when the command never reached it.
+  const applyPower = useCallback((dev, next) => {
+    const id = dev.device;
+    setDeviceStates((prev) => ({ ...prev, [id]: { ...(prev[id] ?? DEFAULT_STATE), on: next } }));
+    setPower(goveeApiKey, dev.sku, id, next).catch((e) => {
+      console.error(e);
+      setDeviceStates((prev) => ({ ...prev, [id]: { ...(prev[id] ?? DEFAULT_STATE), on: !next } }));
+    });
+  }, [goveeApiKey]);
+
   const toggleDevice = useCallback((id) => {
     const dev = devices.find((d) => d.device === id);
-    if (!dev || !goveeApiKey) return;
-    const next = !(deviceStates[id]?.on ?? false);
-    setDeviceStates((prev) => ({ ...prev, [id]: { ...(prev[id] ?? DEFAULT_STATE), on: next } }));
-    setPower(goveeApiKey, dev.sku, dev.device, next).catch(console.error);
-  }, [devices, deviceStates, goveeApiKey]);
+    const state = deviceStates[id];
+    if (!dev || !goveeApiKey || !state?.online) return;
+    applyPower(dev, !state.on);
+  }, [devices, deviceStates, goveeApiKey, applyPower]);
 
   const handlePowerToggle = useCallback((v) => {
-    if (!selectedDevice || !goveeApiKey) return;
-    updateSelected({ on: v });
-    setPower(goveeApiKey, selectedDevice.sku, selectedDevice.device, v).catch(console.error);
-  }, [selectedDevice, updateSelected, goveeApiKey]);
+    if (!selectedDevice || !goveeApiKey || !selectedOnline) return;
+    applyPower(selectedDevice, v);
+  }, [selectedDevice, goveeApiKey, selectedOnline, applyPower]);
+
+  // Every control is a no-op while the light is unreachable — nothing local
+  // changes either, so the UI keeps showing the last known real state.
+  const canControl = Boolean(selectedDevice) && Boolean(goveeApiKey) && selectedOnline;
+
+  // Every light-emitting command (brightness, colour, temperature, scene,
+  // music, segments) powers the device on as a side effect, so each one also
+  // flips `on` locally — otherwise the toggle keeps reading off until the next
+  // refresh even though the light is visibly lit.
 
   const handleBrightnessChange = useCallback((v) => {
+    if (!canControl) return;
     const value = Math.round(v);
-    updateSelected({ brightness: value });
+    updateSelected({ brightness: value, on: true });
     clearTimeout(debounce.current.brightness);
     debounce.current.brightness = setTimeout(() => {
-      if (selectedDevice && goveeApiKey) setBrightness(goveeApiKey, selectedDevice.sku, selectedDevice.device, value).catch(console.error);
+      setBrightness(goveeApiKey, selectedDevice.sku, selectedDevice.device, value).catch(console.error);
     }, 300);
-  }, [selectedDevice, updateSelected, goveeApiKey]);
+  }, [canControl, selectedDevice, updateSelected, goveeApiKey]);
 
   const handleColorChange = useCallback((hex) => {
-    if (!selectedDevice || !goveeApiKey) return;
-    updateSelected({ color: hex, scene: null });
+    if (!canControl) return;
+    updateSelected({ color: hex, scene: null, on: true });
     setColor(goveeApiKey, selectedDevice.sku, selectedDevice.device, hex).catch(console.error);
-  }, [selectedDevice, updateSelected, goveeApiKey]);
+  }, [canControl, selectedDevice, updateSelected, goveeApiKey]);
 
   const handleColorTempChange = useCallback((v) => {
+    if (!canControl) return;
     const value = Math.round(v);
-    updateSelected({ colorTem: value });
+    updateSelected({ colorTem: value, on: true });
     clearTimeout(debounce.current.colorTem);
     debounce.current.colorTem = setTimeout(() => {
-      if (selectedDevice && goveeApiKey) setColorTemp(goveeApiKey, selectedDevice.sku, selectedDevice.device, value).catch(console.error);
+      setColorTemp(goveeApiKey, selectedDevice.sku, selectedDevice.device, value).catch(console.error);
     }, 300);
-  }, [selectedDevice, updateSelected, goveeApiKey]);
+  }, [canControl, selectedDevice, updateSelected, goveeApiKey]);
 
-  const handleSceneSelect = useCallback((sceneId) => {
-    if (!selectedDevice || !goveeApiKey) return;
-    const next = selected.scene === sceneId ? null : sceneId;
-    updateSelected({ scene: next });
-    if (next !== null) setScene(goveeApiKey, selectedDevice.sku, selectedDevice.device, next).catch(console.error);
-  }, [selectedDevice, selected.scene, updateSelected, goveeApiKey]);
+  const handleSceneSelect = useCallback((scene) => {
+    if (!canControl) return;
+    // Tapping the active scene clears it locally; there's no "no scene"
+    // command, so nothing is sent — pick a colour to actually leave the scene.
+    if (sceneKey(selected.scene) === scene.key) {
+      updateSelected({ scene: null });
+      return;
+    }
+    updateSelected({ scene: scene.value, on: true });
+    applyScene(goveeApiKey, selectedDevice.sku, selectedDevice.device, scene).catch(console.error);
+  }, [canControl, selectedDevice, selected.scene, updateSelected, goveeApiKey]);
+
+  const toggleSegment = useCallback((seg) => {
+    setSelectedSegments((prev) =>
+      prev.includes(seg) ? prev.filter((s) => s !== seg) : [...prev, seg].sort((a, b) => a - b));
+  }, []);
+
+  const handleSegmentColor = useCallback((hex) => {
+    if (!canControl || selectedSegments.length === 0) return;
+    setSegmentColors((prev) => ({
+      ...prev,
+      [selectedId]: {
+        ...(prev[selectedId] ?? {}),
+        ...Object.fromEntries(selectedSegments.map((s) => [s, hex])),
+      },
+    }));
+    updateSelected({ on: true });
+    setSegmentColor(goveeApiKey, selectedDevice.sku, selectedDevice.device, selectedSegments, hex)
+      .catch(console.error);
+  }, [canControl, selectedSegments, selectedId, selectedDevice, updateSelected, goveeApiKey]);
+
+  const handleSegmentBrightness = useCallback((v) => {
+    const value = Math.round(v);
+    setSegBrightness(value);
+    if (!canControl || selectedSegments.length === 0) return;
+    updateSelected({ on: true });
+    clearTimeout(debounce.current.segment);
+    debounce.current.segment = setTimeout(() => {
+      setSegmentBrightness(goveeApiKey, selectedDevice.sku, selectedDevice.device, selectedSegments, value)
+        .catch(console.error);
+    }, 300);
+  }, [canControl, selectedSegments, selectedDevice, updateSelected, goveeApiKey]);
 
   const handleMusicModeToggle = useCallback((v) => {
-    if (!selectedDevice || !goveeApiKey) return;
+    if (!canControl) return;
     const next = v ? 0 : null;
-    updateSelected({ musicMode: next });
+    updateSelected(next === null ? { musicMode: null } : { musicMode: next, on: true });
     if (next !== null) setMusicMode(goveeApiKey, selectedDevice.sku, selectedDevice.device, next).catch(console.error);
-  }, [selectedDevice, updateSelected, goveeApiKey]);
+  }, [canControl, selectedDevice, updateSelected, goveeApiKey]);
 
   const handleMusicModeSelect = useCallback((modeId) => {
-    if (!selectedDevice || !goveeApiKey) return;
-    updateSelected({ musicMode: modeId });
+    if (!canControl) return;
+    updateSelected({ musicMode: modeId, on: true });
     setMusicMode(goveeApiKey, selectedDevice.sku, selectedDevice.device, modeId).catch(console.error);
-  }, [selectedDevice, updateSelected, goveeApiKey]);
+  }, [canControl, selectedDevice, updateSelected, goveeApiKey]);
 
   // ── Shortcuts ─────────────────────────────────────────────────────────────
   const handleShortcutPatch = useCallback((id, patch) => {
@@ -391,9 +574,13 @@ export default function HomeLightsScreen({ route }) {
     for (const id of shortcutForm.deviceIds) {
       const dev = devices.find((d) => d.device === id);
       for (const s of getScenesFromDevice(dev)) names.add(s.name);
+      // Catalogue scenes are only listed for devices already browsed this
+      // session; the shortcut still resolves any name at run time.
+      const cat = sceneCatalog[id];
+      for (const s of [...(cat?.dynamic ?? []), ...(cat?.diy ?? [])]) names.add(s.name);
     }
     return [...names];
-  }, [shortcutForm.deviceIds, devices]);
+  }, [shortcutForm.deviceIds, devices, sceneCatalog]);
 
   const { startTimer, cancelTimer, activeTimers } = useLightTimer();
 
@@ -455,6 +642,9 @@ export default function HomeLightsScreen({ route }) {
         onScroll={handleScroll}
         scrollEventThrottle={16}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={refreshStates} tintColor={colors.accent} />
+        }
       >
         {/* Header */}
         <Rise index={0}>
@@ -462,7 +652,8 @@ export default function HomeLightsScreen({ route }) {
           <View>
             <Text style={styles.title}>Home Lights</Text>
             <Text style={styles.subtitle}>
-              {devices.filter((d) => deviceStates[d.device]?.on).length} of {devices.length} lights on
+              {onlineOnCount} of {onlineCount} online lights on
+              {offlineCount > 0 ? ` · ${offlineCount} offline` : ''}
             </Text>
           </View>
           <View style={styles.headerBadge}>
@@ -492,16 +683,17 @@ export default function HomeLightsScreen({ route }) {
         <Rise index={2}>
         <View style={styles.sectionLabelRow}>
           <Text style={[styles.sectionLabel, styles.sectionLabelFlat]}>DEVICES</Text>
-          {(() => {
-            const n = devices.filter((d) => deviceStates[d.device]?.on).length;
-            if (!n) return null;
-            return (
-              <View style={styles.activeBadge}>
-                <View style={styles.activeDot} />
-                <Text style={styles.activeBadgeText}>{n} on</Text>
-              </View>
-            );
-          })()}
+          {onlineOnCount > 0 && (
+            <View style={styles.activeBadge}>
+              <View style={styles.activeDot} />
+              <Text style={styles.activeBadgeText}>{onlineOnCount} on</Text>
+            </View>
+          )}
+          {offlineCount > 0 && (
+            <View style={styles.offlineBadge}>
+              <Text style={styles.offlineBadgeText}>{offlineCount} offline</Text>
+            </View>
+          )}
         </View>
         <View style={styles.card}>
           {devices.map((device, i) => (
@@ -526,29 +718,46 @@ export default function HomeLightsScreen({ route }) {
           <Text style={styles.selectedDeviceLabel}>{selectedDevice?.deviceName}</Text>
         </View>
 
+        {selectedDevice && !selectedOnline && (
+          <View style={styles.offlineNotice}>
+            <Ionicons name="cloud-offline-outline" size={16} color={colors.textSecondary} />
+            <Text style={styles.offlineNoticeText}>
+              This light is offline — controls are unavailable. Pull down to refresh.
+            </Text>
+          </View>
+        )}
+
         {/* Power + Brightness */}
-        <View style={styles.card}>
+        <View style={[styles.card, !selectedOnline && styles.offline]}>
           <View style={styles.controlRow}>
             <View style={styles.controlRowLeft}>
-              <View style={[styles.controlIcon, selected.on && styles.controlIconActive]}>
+              <View style={[styles.controlIcon, selectedOn && styles.controlIconActive]}>
                 <Ionicons
-                  name={selected.on ? 'power' : 'power-outline'}
+                  name={selectedOn ? 'power' : 'power-outline'}
                   size={18}
-                  color={selected.on ? colors.accent : colors.textTertiary}
+                  color={selectedOn ? colors.accent : colors.textTertiary}
                 />
               </View>
               <View>
                 <Text style={styles.controlLabel}>Power</Text>
-                <Text style={styles.controlValue}>{selected.on ? 'On' : 'Off'}</Text>
+                <Text style={styles.controlValue}>
+                  {!selectedOnline ? 'Offline' : selected.on ? 'On' : 'Off'}
+                </Text>
               </View>
             </View>
-            <Switch
-              value={selected.on}
-              onValueChange={handlePowerToggle}
-              trackColor={{ false: colors.muted, true: colors.accent }}
-              thumbColor="#fff"
-              ios_backgroundColor={colors.muted}
-            />
+            {selectedOnline ? (
+              <Switch
+                value={selectedOn}
+                onValueChange={handlePowerToggle}
+                trackColor={{ false: colors.muted, true: colors.accent }}
+                thumbColor="#fff"
+                ios_backgroundColor={colors.muted}
+              />
+            ) : (
+              <View style={styles.switchSlot}>
+                <Text style={styles.switchSlotDash}>—</Text>
+              </View>
+            )}
           </View>
 
           {supports('brightness') && (
@@ -574,6 +783,7 @@ export default function HomeLightsScreen({ route }) {
                   minimumTrackTintColor={colors.accent}
                   maximumTrackTintColor={colors.muted}
                   thumbTintColor={colors.accent}
+                  disabled={!selectedOnline}
                   accessibilityLabel="Brightness slider"
                 />
               </View>
@@ -585,7 +795,7 @@ export default function HomeLightsScreen({ route }) {
         {supports('color') && (
           <>
             <Text style={styles.sectionLabel}>COLOR</Text>
-            <View style={styles.card}>
+            <View style={[styles.card, !selectedOnline && styles.offline]}>
               <View style={[styles.colorPreview, { backgroundColor: selected.color }]}>
                 <Text style={[styles.colorHex, { color: selected.color === '#FFFFFF' ? '#333' : '#fff' }]}>
                   {selected.color}
@@ -614,7 +824,7 @@ export default function HomeLightsScreen({ route }) {
         {supports('colorTem') && (
           <>
             <Text style={styles.sectionLabel}>COLOR TEMPERATURE</Text>
-            <View style={styles.card}>
+            <View style={[styles.card, !selectedOnline && styles.offline]}>
               <View style={styles.controlCol}>
                 <View style={styles.controlRowLeft}>
                   <View style={styles.controlIcon}>
@@ -635,6 +845,7 @@ export default function HomeLightsScreen({ route }) {
                   minimumTrackTintColor="#FFD580"
                   maximumTrackTintColor={colors.muted}
                   thumbTintColor="#FFD580"
+                  disabled={!selectedOnline}
                   accessibilityLabel="Color temperature slider"
                 />
                 <View style={styles.colorTemRow}>
@@ -646,25 +857,66 @@ export default function HomeLightsScreen({ route }) {
           </>
         )}
 
-        {/* Scenes — only shown when the device reports scenes in its capabilities */}
-        {supports('scene') && deviceScenes.length > 0 && (
+        {/* Scenes — device's own list plus the built-in and DIY catalogues */}
+        {(allScenes.length > 0 || scenesLoading) && (
           <>
-            <Text style={styles.sectionLabel}>SCENES</Text>
-            <View style={styles.scenesGrid}>
-              {deviceScenes.map((scene, i) => {
-                const active = selected.scene === scene.id;
+            <View style={styles.sectionHeaderRow}>
+              <Text style={styles.sectionLabel}>SCENES</Text>
+              {scenesLoading && <ActivityIndicator size="small" color={colors.accent} />}
+            </View>
+
+            {sceneSources.length > 1 && (
+              <View style={styles.chipRow}>
+                {[{ id: 'all', label: 'All' }, ...sceneSources].map((src) => {
+                  const active = sceneSource === src.id;
+                  return (
+                    <TouchableOpacity
+                      key={src.id}
+                      style={[styles.sceneChip, active && styles.sceneChipActive]}
+                      onPress={() => { setSceneSource(src.id); setScenesExpanded(false); }}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: active }}
+                    >
+                      <Text style={[styles.sceneChipLabel, active && { color: colors.accent }]}>
+                        {src.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            )}
+
+            {allScenes.length > SCENE_PAGE && (
+              <TextInput
+                style={styles.sceneSearch}
+                value={sceneQuery}
+                onChangeText={setSceneQuery}
+                placeholder="Search scenes…"
+                placeholderTextColor={colors.textTertiary}
+                autoCorrect={false}
+                accessibilityLabel="Search scenes"
+              />
+            )}
+
+            <View style={[styles.scenesGrid, !selectedOnline && styles.offline]}>
+              {shownScenes.map((scene, i) => {
+                const active = sceneKey(selected.scene) === scene.key;
                 const visual = SCENE_VISUALS[i % SCENE_VISUALS.length];
                 return (
                   <TouchableOpacity
-                    key={scene.id}
+                    key={`${scene.source}-${scene.key}`}
                     style={[styles.sceneCard, active && styles.sceneCardActive]}
-                    onPress={() => handleSceneSelect(scene.id)}
+                    onPress={() => handleSceneSelect(scene)}
                     accessibilityRole="button"
                     accessibilityLabel={`${scene.name} scene`}
                     accessibilityState={{ selected: active }}
                   >
                     <View style={[styles.sceneIcon, { backgroundColor: visual.color + '33' }]}>
-                      <Ionicons name={visual.icon} size={20} color={visual.color} />
+                      <Ionicons
+                        name={scene.source === 'diy' ? 'color-wand' : visual.icon}
+                        size={20}
+                        color={visual.color}
+                      />
                     </View>
                     <Text
                       style={[styles.sceneName, active && { color: colors.accent }]}
@@ -676,6 +928,20 @@ export default function HomeLightsScreen({ route }) {
                 );
               })}
             </View>
+
+            {visibleScenes.length > shownScenes.length && (
+              <TouchableOpacity
+                style={styles.showAllBtn}
+                onPress={() => setScenesExpanded(true)}
+                accessibilityRole="button"
+              >
+                <Text style={styles.showAllLabel}>Show all {visibleScenes.length}</Text>
+              </TouchableOpacity>
+            )}
+
+            {visibleScenes.length === 0 && !scenesLoading && (
+              <Text style={styles.timerHint}>No scenes match “{sceneQuery}”</Text>
+            )}
           </>
         )}
 
@@ -683,7 +949,7 @@ export default function HomeLightsScreen({ route }) {
         {supports('musicMode') && (
           <>
             <Text style={styles.sectionLabel}>MUSIC MODE</Text>
-            <View style={styles.card}>
+            <View style={[styles.card, !selectedOnline && styles.offline]}>
               <View style={styles.musicHeader}>
                 <View style={styles.controlRowLeft}>
                   <View style={[styles.controlIcon, selected.musicMode !== null && styles.controlIconActive]}>
@@ -732,21 +998,91 @@ export default function HomeLightsScreen({ route }) {
         )}
 
         {/* Segment Control */}
-        {supports('segment') && (
+        {segmentCount > 0 && (
           <>
             <Text style={styles.sectionLabel}>SEGMENT CONTROL</Text>
-            <View style={styles.card}>
-              <Text style={{ color: colors.textSecondary, marginBottom: 12, ...type.caption }}>
-                Control individual light segments independently
-              </Text>
+            <View style={[styles.card, !selectedOnline && styles.offline]}>
+              <View style={styles.segmentHeader}>
+                <Text style={styles.controlLabel}>
+                  {selectedSegments.length > 0
+                    ? `${selectedSegments.length} of ${segmentCount} selected`
+                    : 'Tap segments to select'}
+                </Text>
+                <TouchableOpacity
+                  onPress={() => setSelectedSegments(
+                    selectedSegments.length === segmentCount
+                      ? []
+                      : Array.from({ length: segmentCount }, (_, i) => i),
+                  )}
+                  accessibilityRole="button"
+                >
+                  <Text style={styles.segmentAction}>
+                    {selectedSegments.length === segmentCount ? 'Clear' : 'Select all'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
               <View style={styles.segmentRow}>
-                {[1, 2, 3, 4, 5, 6, 7, 8].map((seg) => (
-                  <View key={seg} style={[styles.segment, { backgroundColor: selected.color }]}>
-                    <Text style={styles.segmentLabel}>{seg}</Text>
-                  </View>
+                {Array.from({ length: segmentCount }, (_, seg) => {
+                  const active = selectedSegments.includes(seg);
+                  const segColor = segmentColors[selectedId]?.[seg];
+                  return (
+                    <TouchableOpacity
+                      key={seg}
+                      style={[
+                        styles.segment,
+                        segColor ? { backgroundColor: segColor } : null,
+                        active && styles.segmentActive,
+                      ]}
+                      onPress={() => toggleSegment(seg)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Segment ${seg + 1}`}
+                      accessibilityState={{ selected: active }}
+                    >
+                      <Text style={[styles.segmentLabel, !segColor && { color: colors.textTertiary }]}>
+                        {seg + 1}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              <View style={styles.divider} />
+
+              <Text style={styles.controlLabel}>Colour</Text>
+              <View style={styles.colorGrid}>
+                {PRESET_COLORS.map((hex) => (
+                  <TouchableOpacity
+                    key={hex}
+                    style={[styles.colorSwatch, { backgroundColor: hex }]}
+                    onPress={() => handleSegmentColor(hex)}
+                    disabled={selectedSegments.length === 0}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Set selected segments to ${hex}`}
+                  />
                 ))}
               </View>
-              <Text style={styles.timerHint}>Individual segment colors available via Govee segment API</Text>
+
+              <View style={styles.divider} />
+
+              <View style={styles.controlRow}>
+                <Text style={styles.controlLabel}>Brightness</Text>
+                <Text style={styles.colorHex}>{segBrightness}%</Text>
+              </View>
+              <Slider
+                minimumValue={1}
+                maximumValue={100}
+                value={segBrightness}
+                onValueChange={handleSegmentBrightness}
+                minimumTrackTintColor={colors.accent}
+                maximumTrackTintColor={colors.muted}
+                thumbTintColor={colors.accent}
+                disabled={selectedSegments.length === 0}
+              />
+
+              {selectedSegments.length === 0 && (
+                <Text style={styles.timerHint}>Select one or more segments to change them</Text>
+              )}
             </View>
           </>
         )}
@@ -755,7 +1091,7 @@ export default function HomeLightsScreen({ route }) {
         {selectedDevice && (
           <>
             <Text style={styles.sectionLabel}>TIMER</Text>
-            <View style={styles.card}>
+            <View style={[styles.card, !selectedOnline && styles.offline]}>
               <View style={styles.timerRow}>
                 {['15 min', '30 min', '1 hr', '2 hr'].map((label) => {
                   const active = activeTimers[selectedDevice.device]?.label === label;
@@ -1096,6 +1432,25 @@ const makeStyles = (colors) => StyleSheet.create({
   },
   activeDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.accent },
   activeBadgeText: { ...type.caption, color: colors.accent, fontWeight: '700' },
+  offlineBadge: {
+    backgroundColor: colors.muted,
+    paddingHorizontal: 8, paddingVertical: 3,
+    borderRadius: radius.full,
+  },
+  offlineBadgeText: { ...type.caption, color: colors.textTertiary, fontWeight: '700' },
+
+  offline: { opacity: 0.5 },
+  offlineLabel: { ...type.caption, color: colors.textTertiary, fontWeight: '700' },
+  switchSlot: { width: 51, alignItems: 'center', justifyContent: 'center' },
+  switchSlotDash: { ...type.body, color: colors.textTertiary },
+  offlineNotice: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: colors.muted,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  offlineNoticeText: { ...type.caption, color: colors.textSecondary, flex: 1 },
 
   controlsHeader: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
@@ -1178,6 +1533,18 @@ const makeStyles = (colors) => StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   sceneName: { ...type.caption, color: colors.textSecondary, textAlign: 'center' },
+  sectionHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: spacing.sm },
+  sceneSearch: {
+    ...type.body, color: colors.text,
+    backgroundColor: colors.surface,
+    borderWidth: 1, borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md, paddingVertical: 10,
+    marginBottom: spacing.sm,
+  },
+  showAllBtn: { alignSelf: 'center', paddingVertical: spacing.sm },
+  showAllLabel: { ...type.caption, color: colors.accent, fontWeight: '700' },
 
   musicHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   musicModes:  { flexDirection: 'row', gap: 8, marginTop: 4 },
@@ -1201,12 +1568,19 @@ const makeStyles = (colors) => StyleSheet.create({
   timerBtnLabelActive: { color: colors.accent },
   timerHint: { ...type.caption, color: colors.textTertiary, textAlign: 'center', marginTop: 4 },
 
-  segmentRow: { flexDirection: 'row', gap: 6, marginBottom: spacing.sm },
-  segment: {
-    flex: 1, height: 40, borderRadius: radius.sm,
-    alignItems: 'center', justifyContent: 'center',
-    opacity: 0.85,
+  segmentHeader: {
+    flexDirection: 'row', alignItems: 'center',
+    justifyContent: 'space-between', marginBottom: spacing.sm,
   },
+  segmentAction: { ...type.caption, color: colors.accent, fontWeight: '700' },
+  segmentRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: spacing.sm },
+  segment: {
+    width: 40, height: 40, borderRadius: radius.sm,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: colors.muted,
+    borderWidth: 2, borderColor: 'transparent',
+  },
+  segmentActive: { borderColor: colors.accent },
   segmentLabel: { ...type.caption, color: '#fff', fontWeight: '700' },
 
   modalBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.6)' },

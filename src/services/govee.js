@@ -40,6 +40,26 @@ export async function controlDevice(apiKey, sku, device, capability) {
   });
 }
 
+// The full dynamic-scene catalogue for a device — much larger than the handful
+// of scenes echoed back in the device list. Limited to 30 req/min per device.
+export async function getDynamicScenes(apiKey, sku, device) {
+  const json = await goveeRequest(apiKey, '/device/scenes', {
+    method: 'POST',
+    body: JSON.stringify({ requestId: rid(), payload: { sku, device } }),
+  });
+  return scenesFromCapabilities(json.payload?.capabilities ?? [], 'dynamic');
+}
+
+// Scenes the user built in the Govee app. These come back under a different
+// capability (diy_color_setting / diyScene) than the built-in ones.
+export async function getDiyScenes(apiKey, sku, device) {
+  const json = await goveeRequest(apiKey, '/device/diy-scenes', {
+    method: 'POST',
+    body: JSON.stringify({ requestId: rid(), payload: { sku, device } }),
+  });
+  return scenesFromCapabilities(json.payload?.capabilities ?? [], 'diy');
+}
+
 // ── Capability commands ───────────────────────────────────────────────────────
 
 export const setPower = (apiKey, sku, device, on) =>
@@ -77,6 +97,30 @@ export const setScene = (apiKey, sku, device, sceneValue) =>
     value: sceneValue,
   });
 
+// Applies a scene object from getScenesFromDevice / getDynamicScenes /
+// getDiyScenes. Each source declares its own capability type and instance
+// (DIY scenes come back as diy_color_setting), so they're echoed back verbatim.
+export const applyScene = (apiKey, sku, device, scene) =>
+  controlDevice(apiKey, sku, device, {
+    type: scene.type,
+    instance: scene.instance,
+    value: scene.value,
+  });
+
+export const setSegmentColor = (apiKey, sku, device, segments, hex) =>
+  controlDevice(apiKey, sku, device, {
+    type: 'devices.capabilities.segment_color_setting',
+    instance: 'segmentedColorRgb',
+    value: { segment: segments, rgb: hexToRgbInt(hex) },
+  });
+
+export const setSegmentBrightness = (apiKey, sku, device, segments, brightness) =>
+  controlDevice(apiKey, sku, device, {
+    type: 'devices.capabilities.segment_color_setting',
+    instance: 'segmentedBrightness',
+    value: { segment: segments, brightness },
+  });
+
 export const setMusicMode = (apiKey, sku, device, mode) =>
   controlDevice(apiKey, sku, device, {
     type: 'devices.capabilities.music_setting',
@@ -92,6 +136,9 @@ export const setMusicMode = (apiKey, sku, device, mode) =>
 export async function applyActionsToDevice(apiKey, device, actions) {
   const { sku, device: id } = device;
   const patch = {};
+  // Brightness, colour, temperature and scenes all power the light on as a side
+  // effect, so the patch has to say so even when the shortcut left power alone.
+  let lit = false;
   if (actions.power != null) {
     await setPower(apiKey, sku, id, actions.power);
     patch.on = actions.power;
@@ -100,25 +147,49 @@ export async function applyActionsToDevice(apiKey, device, actions) {
   if (actions.brightness != null && hasCap(device, 'devices.capabilities.range', 'brightness')) {
     await setBrightness(apiKey, sku, id, actions.brightness);
     patch.brightness = actions.brightness;
+    lit = true;
   }
   if (actions.colorMode === 'color' && hasCap(device, 'devices.capabilities.color_setting', 'colorRgb')) {
     await setColor(apiKey, sku, id, actions.color);
     patch.color = actions.color;
     patch.scene = null;
+    lit = true;
   } else if (actions.colorMode === 'colorTem' && hasCap(device, 'devices.capabilities.color_setting', 'colorTemperatureK')) {
     await setColorTemp(apiKey, sku, id, actions.colorTem);
     patch.colorTem = actions.colorTem;
     patch.scene = null;
+    lit = true;
   } else if (actions.colorMode === 'scene') {
-    // Scene values are device-specific, so shortcuts store the name and each
-    // device resolves it against its own scene list.
-    const scene = getScenesFromDevice(device).find((s) => s.name === actions.sceneName);
+    const scene = await resolveSceneByName(apiKey, device, actions.sceneName);
     if (scene) {
-      await setScene(apiKey, sku, id, scene.id);
-      patch.scene = scene.id;
+      await applyScene(apiKey, sku, id, scene);
+      patch.scene = scene.value;
+      lit = true;
     }
   }
+  if (lit) patch.on = true;
   return patch;
+}
+
+// Scene values are device-specific, so shortcuts store the name and each device
+// resolves it against its own lists. The device list is checked first (free);
+// the dynamic and DIY catalogues are only fetched when the name isn't there,
+// since each costs a request against the per-device rate limit.
+export async function resolveSceneByName(apiKey, device, name) {
+  if (!name) return null;
+  const local = getScenesFromDevice(device).find((s) => s.name === name);
+  if (local) return local;
+
+  const { sku, device: id } = device;
+  for (const fetchScenes of [getDynamicScenes, getDiyScenes]) {
+    try {
+      const match = (await fetchScenes(apiKey, sku, id)).find((s) => s.name === name);
+      if (match) return match;
+    } catch {
+      // Not every device exposes both catalogues — keep looking.
+    }
+  }
+  return null;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -151,16 +222,50 @@ export function getCapParam(device, type, instance) {
   )?.parameters;
 }
 
+// Scene values are integers for built-in and DIY scenes but objects
+// ({ paramId, id }) for dynamic ones, so they can't be compared with === or
+// used as React keys directly. This flattens any of them to a stable string.
+export function sceneKey(value) {
+  if (value == null) return null;
+  if (typeof value === 'object') return `${value.paramId ?? ''}:${value.id ?? ''}`;
+  return String(value);
+}
+
+// Normalises the three scene sources (device list, /device/scenes,
+// /device/diy-scenes) to one shape. `type`/`instance` are carried along so
+// applyScene can echo the right capability back without re-deriving it.
+function normalizeSceneOptions(options, type, instance, source) {
+  return options.map((opt, i) => ({
+    key: sceneKey(opt.value) ?? `${source}-${i}`,
+    name: opt.name ?? `Scene ${i + 1}`,
+    value: opt.value,
+    type,
+    instance,
+    source,
+  }));
+}
+
+function scenesFromCapabilities(caps, source) {
+  return caps.flatMap((cap) =>
+    normalizeSceneOptions(cap.parameters?.options ?? [], cap.type, cap.instance, source),
+  );
+}
+
 export function getScenesFromDevice(device) {
   if (!device) return [];
   const cap = (device.capabilities ?? []).find(
     (c) => c.type === 'devices.capabilities.dynamic_scene' && c.instance === 'lightScene',
   );
-  const options = cap?.parameters?.options ?? [];
-  return options.map((opt, i) => ({
-    id: opt.value,
-    name: opt.name ?? `Scene ${i + 1}`,
-  }));
+  if (!cap) return [];
+  return normalizeSceneOptions(cap.parameters?.options ?? [], cap.type, cap.instance, 'static');
+}
+
+// Number of addressable segments, read from the `segment` field's option list.
+export function getSegmentCount(device) {
+  const params = getCapParam(device, 'devices.capabilities.segment_color_setting', 'segmentedColorRgb')
+    ?? getCapParam(device, 'devices.capabilities.segment_color_setting', 'segmentedBrightness');
+  const field = (params?.fields ?? []).find((f) => f.fieldName === 'segment');
+  return field?.options?.length ?? 0;
 }
 
 export function stateFromCapabilities(caps) {
@@ -171,10 +276,15 @@ export function stateFromCapabilities(caps) {
     colorTem: 4000,
     scene: null,
     musicMode: null,
+    // Not every device reports the online capability — assume reachable unless
+    // the API explicitly says otherwise.
+    online: true,
   };
   for (const cap of caps) {
     const val = cap.state?.value;
-    if (cap.type === 'devices.capabilities.on_off' && cap.instance === 'powerSwitch') {
+    if (cap.type === 'devices.capabilities.online' && cap.instance === 'online') {
+      if (val != null) state.online = val === true || val === 1;
+    } else if (cap.type === 'devices.capabilities.on_off' && cap.instance === 'powerSwitch') {
       state.on = val === 1;
     } else if (cap.type === 'devices.capabilities.range' && cap.instance === 'brightness') {
       if (val != null) state.brightness = val;

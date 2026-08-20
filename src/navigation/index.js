@@ -13,6 +13,9 @@ import SignInScreen         from '../screens/auth/SignInScreen';
 import HouseholdScreen      from '../screens/auth/HouseholdScreen';
 import HomeScreen           from '../screens/home/HomeScreen';
 import GroceryListScreen    from '../screens/grocery/GroceryListScreen';
+import PriceHistoryScreen   from '../screens/grocery/PriceHistoryScreen';
+import PriceDetailScreen    from '../screens/grocery/PriceDetailScreen';
+import ReceiptImportScreen  from '../screens/grocery/ReceiptImportScreen';
 import RecipesScreen        from '../screens/recipes/RecipesScreen';
 import RecipeDetailScreen   from '../screens/recipes/RecipeDetailScreen';
 import AddRecipeScreen      from '../screens/recipes/AddRecipeScreen';
@@ -48,6 +51,17 @@ function BillsStack() {
   );
 }
 
+function GroceryStack() {
+  return (
+    <Stack.Navigator screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="GroceryHome"  component={GroceryListScreen}  />
+      <Stack.Screen name="PriceHistory" component={PriceHistoryScreen} />
+      <Stack.Screen name="PriceDetail"   component={PriceDetailScreen}   />
+      <Stack.Screen name="ReceiptImport" component={ReceiptImportScreen} />
+    </Stack.Navigator>
+  );
+}
+
 function RecipesStack() {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
@@ -67,7 +81,7 @@ function MainTabs() {
       screenOptions={{ headerShown: false }}
     >
       <Tab.Screen name="Home"      component={HomeScreen}        />
-      <Tab.Screen name="Grocery"   component={GroceryListScreen} />
+      <Tab.Screen name="Grocery"   component={GroceryStack}      />
       <Tab.Screen name="Recipes"   component={RecipesStack}      />
       <Tab.Screen name="Pantry"    component={PantryScreen}      />
       <Tab.Screen name="Nutrition"  component={NutritionScreen}   />

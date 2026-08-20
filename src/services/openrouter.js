@@ -58,6 +58,30 @@ const STATEMENT_SCHEMA = {
   required: ['transactions'],
 };
 
+const RECEIPT_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    store: { type: 'string' },   // shop name, "" if unreadable
+    date:  { type: 'string' },   // ISO yyyy-MM-dd, "" if unreadable
+    lines: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          name:     { type: 'string' },  // product as printed, tidied
+          price:    { type: 'number' },  // total paid for the line, positive
+          quantity: { type: 'number' },  // units/weight bought, 1 if not shown
+          unit:     { type: 'string' },  // kg, g, L, ml, pcs …
+        },
+        required: ['name', 'price', 'quantity', 'unit'],
+      },
+    },
+  },
+  required: ['store', 'date', 'lines'],
+};
+
 function assertKey(apiKey) {
   if (!apiKey) throw new Error('OpenRouter API key not set. Add it in Household settings.');
 }
@@ -218,6 +242,71 @@ export function parseBankStatement(apiKey, base64Pdf, cats = {}, model = DEFAULT
     plugins: [{ id: 'file-parser', pdf: { engine } }],
     schema: STATEMENT_SCHEMA,
     schemaName: 'transactions',
+    model,
+  });
+}
+
+const RECEIPT_PROMPT =
+  'This is a grocery shop receipt. Extract every purchased product line as a structured record.\n' +
+  '- name: the product name, expanded from receipt shorthand into normal words where obvious ' +
+  '(e.g. "SEMI SKIM MLK 1L" -> "Semi Skimmed Milk"). Do not include the size in the name.\n' +
+  '- price: the total actually paid for that line as a positive number, after any discount ' +
+  'shown against it. Never negative.\n' +
+  '- quantity: how much was bought — the item count, or the weight/volume if sold by measure ' +
+  '(e.g. "0.482 kg @ 2.99/kg" -> quantity 0.482, unit "kg"). Use 1 when no quantity is printed.\n' +
+  '- unit: the unit the quantity is in — one of kg, g, L, ml, pcs, pack, bottle, can, box, bag. ' +
+  'Use "pcs" for plain item counts.\n' +
+  '- store: the shop name from the header, or "" if unreadable.\n' +
+  '- date: the purchase date as yyyy-MM-dd, or "" if unreadable.\n' +
+  'Ignore subtotals, totals, tax lines, loyalty points, change, payment method rows, and ' +
+  'standalone discount lines. Only real products. Skip any line with no readable price.';
+
+/**
+ * Extract purchased line items from a shop receipt.
+ * @param {string} apiKey
+ * @param {{ base64: string, mimeType: string }} file - receipt photo or PDF, base64 with no data: prefix
+ * @param {string} [model] - OpenRouter model id
+ * @returns {Promise<{store: string, date: string, lines: Array}>}
+ */
+export async function parseReceipt(apiKey, { base64, mimeType }, model = DEFAULT_AI_MODEL) {
+  const isPdf = /pdf/i.test(mimeType || '');
+
+  if (isPdf) {
+    // Same path as bank statements: native file input when the model supports
+    // it, else OpenRouter's free OCR plugin.
+    const engine = getAiModel(model)?.files ? 'native' : 'cloudflare-ai';
+    return completeJson(apiKey, {
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: RECEIPT_PROMPT },
+          { type: 'file', file: { filename: 'receipt.pdf', file_data: `data:application/pdf;base64,${base64}` } },
+        ],
+      }],
+      plugins: [{ id: 'file-parser', pdf: { engine } }],
+      schema: RECEIPT_SCHEMA,
+      schemaName: 'receipt',
+      model,
+    });
+  }
+
+  if (!getAiModel(model)?.vision) {
+    throw new Error(
+      'The selected AI model cannot read images. Choose a vision-capable model in ' +
+      'Household settings, or upload the receipt as a PDF.',
+    );
+  }
+
+  return completeJson(apiKey, {
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'text', text: RECEIPT_PROMPT },
+        { type: 'image_url', image_url: { url: `data:${mimeType || 'image/jpeg'};base64,${base64}` } },
+      ],
+    }],
+    schema: RECEIPT_SCHEMA,
+    schemaName: 'receipt',
     model,
   });
 }
