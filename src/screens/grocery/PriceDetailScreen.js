@@ -10,6 +10,7 @@ import { format, parseISO } from 'date-fns';
 
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
+import { useNavScrollProps } from '../../context/NavScrollContext';
 import { useAlert } from '../../context/AlertContext';
 import { useNotification } from '../../context/NotificationContext';
 import useVisualViewportHeight from '../../hooks/useVisualViewportHeight';
@@ -95,6 +96,7 @@ export default function PriceDetailScreen() {
   const isDesktop = useIsDesktop();
   const windowHeight = useVisualViewportHeight();
   const styles = useMemo(() => makeStyles(colors), [colors]);
+  const navScrollProps = useNavScrollProps();
 
   const itemKey = route.params?.itemKey;
   const [entries, setEntries] = useState([]);
@@ -282,6 +284,7 @@ export default function PriceDetailScreen() {
         style={Platform.OS === 'web' ? { height: windowHeight } : { flex: 1 }}
         contentContainerStyle={[styles.container, isDesktop && styles.containerDesktop]}
         showsVerticalScrollIndicator={false}
+        {...navScrollProps}
       >
         {header}
 

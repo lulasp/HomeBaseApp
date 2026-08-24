@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect, useCallback } from 'react';
+import React, { useMemo, useState, useCallback } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, StyleSheet, Image,
   Modal, ActivityIndicator, Animated,
@@ -10,7 +10,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { useAlert } from '../../context/AlertContext';
 import { useNotification } from '../../context/NotificationContext';
-import { useNavScroll } from '../../context/NavScrollContext';
+import { useNavScroll, useNavScrollProps, useNavCompact } from '../../context/NavScrollContext';
 import { saveRecipe, deleteRecipe, getRecipe, getPantryItems, getGroceryItems, addGroceryItem } from '../../services/firestore';
 import { spacing, radius, type } from '../../theme/colors';
 import { useIsDesktop, useMobileNavClearance, MOBILE_NAV_COMPACT_SHIFT, SIDEBAR_WIDTH, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
@@ -41,19 +41,13 @@ export default function RecipeDetailScreen({ route, navigation }) {
   const isDesktop = useIsDesktop();
   const windowHeight = useVisualViewportHeight();
   const navClearance = useMobileNavClearance();
-  const { handleScroll, resetCompact, compactAnim } = useNavScroll();
+  const { compactAnim } = useNavScroll();
+  const navScrollProps = useNavScrollProps();
   const isOwnCustomRecipe = !isSearch && recipe.sourceType === 'custom' && recipe.createdBy === user?.uid;
 
-  // The nav's scroll offset is shared; clear the list's offset so this screen starts expanded
-  useFocusEffect(useCallback(() => { resetCompact(); }, [resetCompact]));
-
-  // Collapse the action bar in step with the nav: drop the labels (layout change,
-  // hence state) and slide down into the space the section switcher vacated.
-  const [navCompact, setNavCompact] = useState(false);
-  useEffect(() => {
-    const id = compactAnim.addListener(({ value }) => setNavCompact(value > 0.5));
-    return () => compactAnim.removeListener(id);
-  }, [compactAnim]);
+  // Collapse the action bar in step with the nav: drop the labels and slide down
+  // into the space the section switcher vacated.
+  const navCompact = useNavCompact();
 
   const actionBarShift = compactAnim.interpolate({
     inputRange: [0, 1],
@@ -147,8 +141,7 @@ export default function RecipeDetailScreen({ route, navigation }) {
       <ScrollView
         key={contentKey}
         showsVerticalScrollIndicator={false}
-        onScroll={handleScroll}
-        scrollEventThrottle={16}
+        {...navScrollProps}
         contentContainerStyle={{
           paddingBottom: isDesktop
             ? 120

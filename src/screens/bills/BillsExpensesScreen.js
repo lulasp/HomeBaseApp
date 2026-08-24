@@ -14,6 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { format } from 'date-fns';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
+import { useNavScrollProps } from '../../context/NavScrollContext';
 import { useAlert } from '../../context/AlertContext';
 import {
   subscribeBills, addBill, updateBill, deleteBill,
@@ -420,6 +421,7 @@ export default function BillsExpensesScreen({ navigation }) {
   const windowHeight = useVisualViewportHeight();
   const fab           = useFabHideOnScroll();
   const styles        = useMemo(() => makeStyles(colors), [colors]);
+  const navScrollProps = useNavScrollProps();
   const { animationsEnabled } = useHousehold();
 
   const [activeTab,       setActiveTab]       = useState('overview');
@@ -705,7 +707,7 @@ export default function BillsExpensesScreen({ navigation }) {
           styles.container,
           isDesktop && { maxWidth: DESKTOP_MAX_CONTENT, alignSelf: 'center', width: '100%' },
         ]}
-        onScroll={fab.onScroll}
+        onScroll={(e) => { navScrollProps.onScroll(e); fab.onScroll(e); }}
         scrollEventThrottle={16}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"

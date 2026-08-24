@@ -6,6 +6,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../context/ThemeContext';
+import { useNavScrollProps } from '../../context/NavScrollContext';
 import { useAuth } from '../../context/AuthContext';
 import { useHousehold } from '../../context/HouseholdContext';
 import { useAlert } from '../../context/AlertContext';
@@ -26,6 +27,7 @@ function ChatTab({ colors, styles, apiKey, aiModel }) {
   const [loading, setLoading]   = useState(false);
   const { showAlert }           = useAlert();
   const listRef                 = useRef(null);
+  const navScrollProps          = useNavScrollProps();
 
   const scrollToBottom = () => listRef.current?.scrollToEnd({ animated: true });
 
@@ -120,6 +122,7 @@ function ChatTab({ colors, styles, apiKey, aiModel }) {
           contentContainerStyle={styles.chatList}
           showsVerticalScrollIndicator={false}
           onContentSizeChange={scrollToBottom}
+          {...navScrollProps}
         />
       )}
 
@@ -290,6 +293,7 @@ function RecipeSuggesterTab({ colors, styles, apiKey, aiModel }) {
   const [inputText, setInputText] = useState('');
   const [loading, setLoading]     = useState(false);
   const [recipes, setRecipes]     = useState(null);
+  const navScrollProps            = useNavScrollProps();
   const [pantryItems, setPantryItems] = useState([]);
 
   useEffect(() => {
@@ -349,6 +353,7 @@ function RecipeSuggesterTab({ colors, styles, apiKey, aiModel }) {
       contentContainerStyle={styles.suggesterContent}
       keyboardShouldPersistTaps="handled"
       showsVerticalScrollIndicator={false}
+      {...navScrollProps}
     >
       <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>What's in your kitchen?</Text>
       <Text style={[styles.sectionSubtitle, { color: colors.textSecondary }]}>
