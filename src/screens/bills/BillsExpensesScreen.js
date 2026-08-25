@@ -698,271 +698,276 @@ export default function BillsExpensesScreen({ navigation }) {
       Platform.OS === 'web' ? { height: windowHeight } : null,
       Platform.OS === 'android' && { paddingTop: 24 },
     ]}>
-      <ScrollView
-        // Web: explicit pixel height (not flex:1) so the scroll container has a
-        // real, bounded height instead of growing to fit all content. Same fix
-        // that made StatementImportScreen scroll.
-        style={Platform.OS === 'web' ? { height: windowHeight } : { flex: 1 }}
-        contentContainerStyle={[
-          styles.container,
-          isDesktop && { maxWidth: DESKTOP_MAX_CONTENT, alignSelf: 'center', width: '100%' },
-        ]}
-        onScroll={(e) => { navScrollProps.onScroll(e); fab.onScroll(e); }}
-        scrollEventThrottle={16}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
-      >
-        {/* Header */}
-        <View style={styles.header}>
-          <View>
-            <Text style={styles.title}>Finances</Text>
-            <Text style={styles.subtitle}>Cash flow, budgets & bills</Text>
-          </View>
-          <TouchableOpacity
-            style={styles.importBtn}
-            onPress={() => navigation.navigate('StatementImport')}
-            accessibilityRole="button"
-            accessibilityLabel="Import bank statement"
-          >
-            <Ionicons name="document-attach-outline" size={16} color={colors.accent} />
-            <Text style={styles.importBtnText}>Import</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Tab switcher */}
-        <View style={styles.tabRow}>
-          {[['overview', 'Overview'], ['bills', 'Bills'], ['expenses', 'Expenses'], ['budgets', 'Budgets']].map(([key, label]) => (
-            <TouchableOpacity
-              key={key}
-              style={[styles.tabBtn, activeTab === key && styles.tabBtnActive]}
-              onPress={() => setActiveTab(key)}
-              accessibilityRole="tab"
-              accessibilityState={{ selected: activeTab === key }}
-            >
-              <Text style={[styles.tabBtnLabel, activeTab === key && styles.tabBtnLabelActive]} numberOfLines={1}>
-                {label}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-
-        {/* Tab content — keyed so it remounts and replays entrance anims on focus */}
-        <View key={contentKey}>
-        {/* ── Overview tab ──────────────────────────────────────────────── */}
-        {activeTab === 'overview' && expenses.length === 0 && (
-          <View style={styles.emptyState}>
-            <Ionicons name="stats-chart-outline" size={48} color={colors.textTertiary} />
-            <Text style={styles.emptyTitle}>No activity yet</Text>
-            <Text style={styles.emptySub}>Add expenses or import a statement to see your cash flow and trends.</Text>
-          </View>
-        )}
-
-        {activeTab === 'overview' && expenses.length > 0 && (
-          <>
-            {/* Cash-flow hero */}
-            <Rise index={0}>
-            <View style={styles.flowCard}>
-              <Text style={styles.flowLabel}>Net this month</Text>
-              <Text style={[styles.flowNet, { color: flow.net >= 0 ? colors.sage : colors.danger }]}>
-                {flow.net >= 0 ? '' : '−'}{fmtCurrency(Math.abs(flow.net))}
-              </Text>
-              <View style={styles.flowRow}>
-                <View style={styles.flowStat}>
-                  <View style={styles.flowStatHead}>
-                    <Ionicons name="arrow-down-circle" size={14} color={colors.sage} />
-                    <Text style={styles.flowStatLabel}>Money in</Text>
-                  </View>
-                  <Text style={[styles.flowStatValue, { color: colors.sage }]}>{fmtCurrency(flow.income)}</Text>
-                </View>
-                <View style={styles.flowDivider} />
-                <View style={styles.flowStat}>
-                  <View style={styles.flowStatHead}>
-                    <Ionicons name="arrow-up-circle" size={14} color={colors.amber} />
-                    <Text style={styles.flowStatLabel}>Money out</Text>
-                  </View>
-                  <Text style={[styles.flowStatValue, { color: colors.amber }]}>{fmtCurrency(flow.spending)}</Text>
-                </View>
-                <View style={styles.flowDivider} />
-                <View style={styles.flowStat}>
-                  <View style={styles.flowStatHead}>
-                    <Ionicons name="pie-chart" size={13} color={colors.textSecondary} />
-                    <Text style={styles.flowStatLabel}>Saved</Text>
-                  </View>
-                  <Text style={styles.flowStatValue}>
-                    {flow.income > 0 ? `${Math.round(flow.savingsRate * 100)}%` : '—'}
-                  </Text>
-                </View>
-              </View>
+      {/* Content column — also the box the FAB anchors its corners to, so the
+          button stays with the page instead of the full-width scene (Pantry). */}
+      <View style={[
+        styles.contentWrapper,
+        isDesktop && styles.contentWrapperDesktop,
+        Platform.OS === 'web' ? { height: windowHeight } : null,
+      ]}>
+        <ScrollView
+          // Web: explicit pixel height (not flex:1) so the scroll container has a
+          // real, bounded height instead of growing to fit all content. Same fix
+          // that made StatementImportScreen scroll.
+          style={Platform.OS === 'web' ? { height: windowHeight } : { flex: 1 }}
+          contentContainerStyle={styles.container}
+          onScroll={(e) => { navScrollProps.onScroll(e); fab.onScroll(e); }}
+          scrollEventThrottle={16}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          {/* Header */}
+          <View style={styles.header}>
+            <View>
+              <Text style={styles.title}>Finances</Text>
+              <Text style={styles.subtitle}>Cash flow, budgets & bills</Text>
             </View>
-            </Rise>
+            <TouchableOpacity
+              style={styles.importBtn}
+              onPress={() => navigation.navigate('StatementImport')}
+              accessibilityRole="button"
+              accessibilityLabel="Import bank statement"
+            >
+              <Ionicons name="document-attach-outline" size={16} color={colors.accent} />
+              <Text style={styles.importBtnText}>Import</Text>
+            </TouchableOpacity>
+          </View>
 
-            {/* Spending trend */}
-            <Rise index={1}>
-              <TrendChart data={trend} colors={colors} styles={styles} />
-            </Rise>
-          </>
-        )}
+          {/* Tab switcher */}
+          <View style={styles.tabRow}>
+            {[['overview', 'Overview'], ['bills', 'Bills'], ['expenses', 'Expenses'], ['budgets', 'Budgets']].map(([key, label]) => (
+              <TouchableOpacity
+                key={key}
+                style={[styles.tabBtn, activeTab === key && styles.tabBtnActive]}
+                onPress={() => setActiveTab(key)}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: activeTab === key }}
+              >
+                <Text style={[styles.tabBtnLabel, activeTab === key && styles.tabBtnLabelActive]} numberOfLines={1}>
+                  {label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
 
-        {/* ── Bills tab ─────────────────────────────────────────────────── */}
-        {activeTab === 'bills' && (
-          <>
-            {bills.length > 0 && (
-              <Rise index={0} style={styles.summaryRow}>
-                <View style={styles.summaryCard}>
-                  <Text style={styles.summaryValue}>{fmtCurrency(monthlyTotal)}</Text>
-                  <Text style={styles.summaryLabel}>Monthly</Text>
-                </View>
-                <View style={styles.summaryCard}>
-                  <Text style={[styles.summaryValue, { color: colors.sage }]}>{fmtCurrency(paidAmount)}</Text>
-                  <Text style={styles.summaryLabel}>Paid {paidCount}/{bills.length}</Text>
-                </View>
-                <View style={styles.summaryCard}>
-                  <Text style={[styles.summaryValue, { color: outstanding > 0 ? colors.danger : colors.sage }]}>
-                    {fmtCurrency(outstanding)}
-                  </Text>
-                  <Text style={styles.summaryLabel}>Outstanding</Text>
-                </View>
-              </Rise>
-            )}
+          {/* Tab content — keyed so it remounts and replays entrance anims on focus */}
+          <View key={contentKey}>
+          {/* ── Overview tab ──────────────────────────────────────────────── */}
+          {activeTab === 'overview' && expenses.length === 0 && (
+            <View style={styles.emptyState}>
+              <Ionicons name="stats-chart-outline" size={48} color={colors.textTertiary} />
+              <Text style={styles.emptyTitle}>No activity yet</Text>
+              <Text style={styles.emptySub}>Add expenses or import a statement to see your cash flow and trends.</Text>
+            </View>
+          )}
 
-            {bills.length === 0 ? (
-              <View style={styles.emptyState}>
-                <Ionicons name="receipt-outline" size={48} color={colors.textTertiary} />
-                <Text style={styles.emptyTitle}>No bills yet</Text>
-                <Text style={styles.emptySub}>Add your first recurring bill — rent, electricity, internet…</Text>
-              </View>
-            ) : (
-              <View style={styles.list}>
-                {bills.map((bill, i) => (
-                  <Rise key={bill.id} index={Math.min(i + 1, 8)}>
-                    <BillCard
-                      bill={bill}
-                      cats={allBillCats}
-                      monthKey={monthKey}
-                      onEdit={openEditBill}
-                      onDelete={handleDeleteBill}
-                      onTogglePaid={handleTogglePaid}
-                      colors={colors}
-                      styles={styles}
-                    />
-                  </Rise>
-                ))}
-              </View>
-            )}
-          </>
-        )}
-
-        {/* ── Expenses tab ──────────────────────────────────────────────── */}
-        {activeTab === 'expenses' && (
-          <>
-            {expenses.length > 0 && (
-              <Rise index={0} style={[styles.summaryRow, { gap: spacing.md }]}>
-                <View style={[styles.summaryCard, { flex: 1 }]}>
-                  <Text style={[styles.summaryValue, { color: colors.amber }]}>{fmtCurrency(thisMonthTotal)}</Text>
-                  <Text style={styles.summaryLabel}>This month</Text>
-                </View>
-                <View style={[styles.summaryCard, { flex: 1 }]}>
-                  <Text style={styles.summaryValue}>{fmtCurrency(thisYearTotal)}</Text>
-                  <Text style={styles.summaryLabel}>This year</Text>
-                </View>
-              </Rise>
-            )}
-
-            {groupedExpenses.length === 0 ? (
-              <View style={styles.emptyState}>
-                <Ionicons name="cash-outline" size={48} color={colors.textTertiary} />
-                <Text style={styles.emptyTitle}>No expenses yet</Text>
-                <Text style={styles.emptySub}>Track household spending — repairs, cleaning, appliances…</Text>
-              </View>
-            ) : (
-              <View style={styles.list}>
-                {groupedExpenses.map(([key, items]) => (
-                  <View key={key} style={styles.monthGroup}>
-                    <View style={styles.monthGroupHeader}>
-                      <Text style={styles.monthGroupLabel}>{fmtMonthGroup(key)}</Text>
-                      <Text style={styles.monthGroupTotal}>
-                        {fmtCurrency(items.reduce((s, e) => s + spentAmount(e), 0))}
-                      </Text>
+          {activeTab === 'overview' && expenses.length > 0 && (
+            <>
+              {/* Cash-flow hero */}
+              <Rise index={0}>
+              <View style={styles.flowCard}>
+                <Text style={styles.flowLabel}>Net this month</Text>
+                <Text style={[styles.flowNet, { color: flow.net >= 0 ? colors.sage : colors.danger }]}>
+                  {flow.net >= 0 ? '' : '−'}{fmtCurrency(Math.abs(flow.net))}
+                </Text>
+                <View style={styles.flowRow}>
+                  <View style={styles.flowStat}>
+                    <View style={styles.flowStatHead}>
+                      <Ionicons name="arrow-down-circle" size={14} color={colors.sage} />
+                      <Text style={styles.flowStatLabel}>Money in</Text>
                     </View>
-                    {items.map((expense, i) => (
-                      <Rise key={expense.id} index={Math.min(i + 1, 8)}>
-                        <ExpenseCard
-                          expense={expense}
-                          cats={allExpenseCats}
-                          onEdit={openEditExpense}
-                          onDelete={handleDeleteExpense}
-                          colors={colors}
-                          styles={styles}
-                        />
-                      </Rise>
-                    ))}
+                    <Text style={[styles.flowStatValue, { color: colors.sage }]}>{fmtCurrency(flow.income)}</Text>
                   </View>
-                ))}
+                  <View style={styles.flowDivider} />
+                  <View style={styles.flowStat}>
+                    <View style={styles.flowStatHead}>
+                      <Ionicons name="arrow-up-circle" size={14} color={colors.amber} />
+                      <Text style={styles.flowStatLabel}>Money out</Text>
+                    </View>
+                    <Text style={[styles.flowStatValue, { color: colors.amber }]}>{fmtCurrency(flow.spending)}</Text>
+                  </View>
+                  <View style={styles.flowDivider} />
+                  <View style={styles.flowStat}>
+                    <View style={styles.flowStatHead}>
+                      <Ionicons name="pie-chart" size={13} color={colors.textSecondary} />
+                      <Text style={styles.flowStatLabel}>Saved</Text>
+                    </View>
+                    <Text style={styles.flowStatValue}>
+                      {flow.income > 0 ? `${Math.round(flow.savingsRate * 100)}%` : '—'}
+                    </Text>
+                  </View>
+                </View>
               </View>
-            )}
-          </>
-        )}
-
-        {/* ── Budgets tab ───────────────────────────────────────────────── */}
-        {activeTab === 'budgets' && (
-          <>
-            {budgetRows.length > 0 && (
-              <Rise index={0} style={styles.summaryRow}>
-                <View style={styles.summaryCard}>
-                  <Text style={styles.summaryValue}>{fmtCurrency(budgetTotals.budgeted)}</Text>
-                  <Text style={styles.summaryLabel}>Budgeted</Text>
-                </View>
-                <View style={styles.summaryCard}>
-                  <Text style={[styles.summaryValue, { color: colors.amber }]}>{fmtCurrency(budgetTotals.spent)}</Text>
-                  <Text style={styles.summaryLabel}>Spent</Text>
-                </View>
-                <View style={styles.summaryCard}>
-                  <Text style={[styles.summaryValue, { color: budgetTotals.remaining < 0 ? colors.danger : colors.sage }]}>
-                    {fmtCurrency(budgetTotals.remaining)}
-                  </Text>
-                  <Text style={styles.summaryLabel}>
-                    {budgetTotals.overCount > 0 ? `${budgetTotals.overCount} over` : 'Left'}
-                  </Text>
-                </View>
               </Rise>
-            )}
 
-            {budgetRows.length === 0 ? (
-              <View style={styles.emptyState}>
-                <Ionicons name="wallet-outline" size={48} color={colors.textTertiary} />
-                <Text style={styles.emptyTitle}>No budgets yet</Text>
-                <Text style={styles.emptySub}>Set a monthly limit per category and track spending against it.</Text>
-              </View>
-            ) : (
-              <View style={styles.list}>
-                {budgetRows.map((row, i) => (
-                  <Rise key={row.category} index={Math.min(i + 1, 8)}>
-                    <BudgetRow
-                      row={row}
-                      cat={budgetCatById[row.category] || { key: row.category, label: row.category, icon: 'cash', colorKey: 'textSecondary' }}
-                      colors={colors}
-                      styles={styles}
-                      onEdit={openEditBudget}
-                      onDelete={handleDeleteBudget}
-                    />
-                  </Rise>
-                ))}
-              </View>
-            )}
-          </>
-        )}
+              {/* Spending trend */}
+              <Rise index={1}>
+                <TrendChart data={trend} colors={colors} styles={styles} />
+              </Rise>
+            </>
+          )}
 
-        </View>
-        <View style={{ height: 230 }} />
-      </ScrollView>
+          {/* ── Bills tab ─────────────────────────────────────────────────── */}
+          {activeTab === 'bills' && (
+            <>
+              {bills.length > 0 && (
+                <Rise index={0} style={styles.summaryRow}>
+                  <View style={styles.summaryCard}>
+                    <Text style={styles.summaryValue}>{fmtCurrency(monthlyTotal)}</Text>
+                    <Text style={styles.summaryLabel}>Monthly</Text>
+                  </View>
+                  <View style={styles.summaryCard}>
+                    <Text style={[styles.summaryValue, { color: colors.sage }]}>{fmtCurrency(paidAmount)}</Text>
+                    <Text style={styles.summaryLabel}>Paid {paidCount}/{bills.length}</Text>
+                  </View>
+                  <View style={styles.summaryCard}>
+                    <Text style={[styles.summaryValue, { color: outstanding > 0 ? colors.danger : colors.sage }]}>
+                      {fmtCurrency(outstanding)}
+                    </Text>
+                    <Text style={styles.summaryLabel}>Outstanding</Text>
+                  </View>
+                </Rise>
+              )}
 
-      {/* FAB */}
-      <FloatingActionButton
-        onPress={openNew}
-        accessibilityLabel={`Add ${activeTab === 'bills' ? 'bill' : activeTab === 'budgets' ? 'budget' : 'expense'}`}
-        hideAnim={fab.hideAnim}
-        interactive={fab.interactive}
-      />
+              {bills.length === 0 ? (
+                <View style={styles.emptyState}>
+                  <Ionicons name="receipt-outline" size={48} color={colors.textTertiary} />
+                  <Text style={styles.emptyTitle}>No bills yet</Text>
+                  <Text style={styles.emptySub}>Add your first recurring bill — rent, electricity, internet…</Text>
+                </View>
+              ) : (
+                <View style={styles.list}>
+                  {bills.map((bill, i) => (
+                    <Rise key={bill.id} index={Math.min(i + 1, 8)}>
+                      <BillCard
+                        bill={bill}
+                        cats={allBillCats}
+                        monthKey={monthKey}
+                        onEdit={openEditBill}
+                        onDelete={handleDeleteBill}
+                        onTogglePaid={handleTogglePaid}
+                        colors={colors}
+                        styles={styles}
+                      />
+                    </Rise>
+                  ))}
+                </View>
+              )}
+            </>
+          )}
+
+          {/* ── Expenses tab ──────────────────────────────────────────────── */}
+          {activeTab === 'expenses' && (
+            <>
+              {expenses.length > 0 && (
+                <Rise index={0} style={[styles.summaryRow, { gap: spacing.md }]}>
+                  <View style={[styles.summaryCard, { flex: 1 }]}>
+                    <Text style={[styles.summaryValue, { color: colors.amber }]}>{fmtCurrency(thisMonthTotal)}</Text>
+                    <Text style={styles.summaryLabel}>This month</Text>
+                  </View>
+                  <View style={[styles.summaryCard, { flex: 1 }]}>
+                    <Text style={styles.summaryValue}>{fmtCurrency(thisYearTotal)}</Text>
+                    <Text style={styles.summaryLabel}>This year</Text>
+                  </View>
+                </Rise>
+              )}
+
+              {groupedExpenses.length === 0 ? (
+                <View style={styles.emptyState}>
+                  <Ionicons name="cash-outline" size={48} color={colors.textTertiary} />
+                  <Text style={styles.emptyTitle}>No expenses yet</Text>
+                  <Text style={styles.emptySub}>Track household spending — repairs, cleaning, appliances…</Text>
+                </View>
+              ) : (
+                <View style={styles.list}>
+                  {groupedExpenses.map(([key, items]) => (
+                    <View key={key} style={styles.monthGroup}>
+                      <View style={styles.monthGroupHeader}>
+                        <Text style={styles.monthGroupLabel}>{fmtMonthGroup(key)}</Text>
+                        <Text style={styles.monthGroupTotal}>
+                          {fmtCurrency(items.reduce((s, e) => s + spentAmount(e), 0))}
+                        </Text>
+                      </View>
+                      {items.map((expense, i) => (
+                        <Rise key={expense.id} index={Math.min(i + 1, 8)}>
+                          <ExpenseCard
+                            expense={expense}
+                            cats={allExpenseCats}
+                            onEdit={openEditExpense}
+                            onDelete={handleDeleteExpense}
+                            colors={colors}
+                            styles={styles}
+                          />
+                        </Rise>
+                      ))}
+                    </View>
+                  ))}
+                </View>
+              )}
+            </>
+          )}
+
+          {/* ── Budgets tab ───────────────────────────────────────────────── */}
+          {activeTab === 'budgets' && (
+            <>
+              {budgetRows.length > 0 && (
+                <Rise index={0} style={styles.summaryRow}>
+                  <View style={styles.summaryCard}>
+                    <Text style={styles.summaryValue}>{fmtCurrency(budgetTotals.budgeted)}</Text>
+                    <Text style={styles.summaryLabel}>Budgeted</Text>
+                  </View>
+                  <View style={styles.summaryCard}>
+                    <Text style={[styles.summaryValue, { color: colors.amber }]}>{fmtCurrency(budgetTotals.spent)}</Text>
+                    <Text style={styles.summaryLabel}>Spent</Text>
+                  </View>
+                  <View style={styles.summaryCard}>
+                    <Text style={[styles.summaryValue, { color: budgetTotals.remaining < 0 ? colors.danger : colors.sage }]}>
+                      {fmtCurrency(budgetTotals.remaining)}
+                    </Text>
+                    <Text style={styles.summaryLabel}>
+                      {budgetTotals.overCount > 0 ? `${budgetTotals.overCount} over` : 'Left'}
+                    </Text>
+                  </View>
+                </Rise>
+              )}
+
+              {budgetRows.length === 0 ? (
+                <View style={styles.emptyState}>
+                  <Ionicons name="wallet-outline" size={48} color={colors.textTertiary} />
+                  <Text style={styles.emptyTitle}>No budgets yet</Text>
+                  <Text style={styles.emptySub}>Set a monthly limit per category and track spending against it.</Text>
+                </View>
+              ) : (
+                <View style={styles.list}>
+                  {budgetRows.map((row, i) => (
+                    <Rise key={row.category} index={Math.min(i + 1, 8)}>
+                      <BudgetRow
+                        row={row}
+                        cat={budgetCatById[row.category] || { key: row.category, label: row.category, icon: 'cash', colorKey: 'textSecondary' }}
+                        colors={colors}
+                        styles={styles}
+                        onEdit={openEditBudget}
+                        onDelete={handleDeleteBudget}
+                      />
+                    </Rise>
+                  ))}
+                </View>
+              )}
+            </>
+          )}
+
+          </View>
+          <View style={{ height: 230 }} />
+        </ScrollView>
+
+        {/* FAB */}
+        <FloatingActionButton
+          onPress={openNew}
+          accessibilityLabel={`Add ${activeTab === 'bills' ? 'bill' : activeTab === 'budgets' ? 'budget' : 'expense'}`}
+          hideAnim={fab.hideAnim}
+          interactive={fab.interactive}
+        />
+      </View>
 
       {/* Add / Edit modal */}
       <Modal
@@ -1189,6 +1194,8 @@ export default function BillsExpensesScreen({ navigation }) {
 
 const makeStyles = (colors) => StyleSheet.create({
   root:      { flex: 1, minHeight: 0, backgroundColor: colors.background },
+  contentWrapper:        { flex: 1, minHeight: 0 },
+  contentWrapperDesktop: { maxWidth: DESKTOP_MAX_CONTENT, alignSelf: 'center', width: '100%' },
   container: { paddingHorizontal: spacing.xl, paddingTop: spacing.xl },
 
   header: {
