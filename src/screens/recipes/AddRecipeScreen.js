@@ -7,6 +7,7 @@ import useVisualViewportHeight from '../../hooks/useVisualViewportHeight';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
+import { useNavScrollProps } from '../../context/NavScrollContext';
 import { saveRecipe, updateRecipe, setMealSlot, subscribePantryItems } from '../../services/firestore';
 import { useAlert } from '../../context/AlertContext';
 import { useNotification } from '../../context/NotificationContext';
@@ -134,6 +135,7 @@ export default function AddRecipeScreen({ navigation, route, onClose }) {
   const contentKey = useEntranceReplay();
   const isDesktop = useIsDesktop();
   const windowHeight = useVisualViewportHeight();
+  const navScrollProps = useNavScrollProps();
 
   const [pantryItems, setPantryItems]     = useState([]);
   const [title, setTitle]                 = useState(existing?.title ?? '');
@@ -273,6 +275,7 @@ export default function AddRecipeScreen({ navigation, route, onClose }) {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
+        {...navScrollProps}
       >
 
         {/* ── Details ── */}

@@ -8,7 +8,7 @@ import useVisualViewportHeight from '../../hooks/useVisualViewportHeight';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
-import { useNavScroll } from '../../context/NavScrollContext';
+import { useNavScrollProps } from '../../context/NavScrollContext';
 import { useAlert } from '../../context/AlertContext';
 import { useNotification } from '../../context/NotificationContext';
 import { subscribeRecipes, saveRecipe, deleteRecipe } from '../../services/firestore';
@@ -219,7 +219,7 @@ const RecipeCard = memo(({ recipe, onPress, onLongPress, onSave, onUnsave, isSav
 export default function RecipesScreen({ navigation }) {
   const { householdId } = useAuth();
   const { colors } = useTheme();
-  const { handleScroll } = useNavScroll();
+  const navScrollProps = useNavScrollProps();
   const { showAlert, showConfirm } = useAlert();
   const { notify } = useNotification();
   const styles = useMemo(() => makeStyles(colors), [colors]);
@@ -598,8 +598,7 @@ export default function RecipesScreen({ navigation }) {
           style={{ height: windowHeight }}
           data={activeTab === 'saved' ? savedRecipes : searchResults}
           keyExtractor={(_, i) => String(i)}
-          onScroll={handleScroll}
-          scrollEventThrottle={16}
+          {...navScrollProps}
           contentContainerStyle={styles.recipeGrid}
           numColumns={columnCount}
           columnWrapperStyle={columnCount > 1 ? { gap: 12 } : undefined}

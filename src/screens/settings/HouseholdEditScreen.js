@@ -8,6 +8,7 @@ import * as Clipboard from 'expo-clipboard';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
+import { useNavScrollProps } from '../../context/NavScrollContext';
 import { useAlert } from '../../context/AlertContext';
 import { useNotification } from '../../context/NotificationContext';
 import {
@@ -97,6 +98,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
   const isDesktop = useIsDesktop();
   const insets    = useSafeAreaInsets();
   const windowHeight = useVisualViewportHeight();
+  const navScrollProps = useNavScrollProps();
 
   const [household, setHousehold]           = useState(null);
   const [loading, setLoading]               = useState(true);
@@ -739,6 +741,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
             isDesktop && { maxWidth: DESKTOP_MAX_CONTENT, alignSelf: 'center', width: '100%' },
           ]}
           showsVerticalScrollIndicator={false}
+          {...navScrollProps}
         >
 
           {/* ═══ Household ═══ */}

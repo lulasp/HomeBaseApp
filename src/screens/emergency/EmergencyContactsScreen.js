@@ -6,7 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
-import { useNavScroll } from '../../context/NavScrollContext';
+import { useNavScrollProps } from '../../context/NavScrollContext';
 import { subscribeEmergencyContacts } from '../../services/firestore';
 import { spacing, radius, type } from '../../theme/colors';
 import { useIsDesktop, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
@@ -15,7 +15,7 @@ import { Rise, useEntranceReplay } from '../../components/Motion';
 export default function EmergencyContactsScreen() {
   const { householdId } = useAuth();
   const { colors } = useTheme();
-  const { handleScroll } = useNavScroll();
+  const navScrollProps = useNavScrollProps();
   const isDesktop = useIsDesktop();
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
@@ -39,8 +39,7 @@ export default function EmergencyContactsScreen() {
       <ScrollView
         key={contentKey}
         style={{ flex: 1 }}
-        onScroll={handleScroll}
-        scrollEventThrottle={16}
+        {...navScrollProps}
         contentContainerStyle={[
           styles.container,
           isDesktop && { maxWidth: DESKTOP_MAX_CONTENT, alignSelf: 'center', width: '100%' },

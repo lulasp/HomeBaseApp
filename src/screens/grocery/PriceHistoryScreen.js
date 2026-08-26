@@ -11,7 +11,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { useAlert } from '../../context/AlertContext';
 import { useNotification } from '../../context/NotificationContext';
-import { useNavScroll } from '../../context/NavScrollContext';
+import { useNavScrollProps } from '../../context/NavScrollContext';
 import useFabHideOnScroll from '../../hooks/useFabHideOnScroll';
 import FloatingActionButton from '../../components/FloatingActionButton';
 import {
@@ -85,7 +85,7 @@ export default function PriceHistoryScreen() {
   const { colors } = useTheme();
   const { showAlert } = useAlert();
   const { notify } = useNotification();
-  const { handleScroll } = useNavScroll();
+  const navScrollProps = useNavScrollProps();
   const navigation = useNavigation();
   const isDesktop = useIsDesktop();
   const styles = useMemo(() => makeStyles(colors), [colors]);
@@ -329,7 +329,7 @@ export default function PriceHistoryScreen() {
           keyExtractor={(item) => item.itemKey}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
-          onScroll={(e) => { handleScroll(e); fab.onScroll(e); }}
+          onScroll={(e) => { navScrollProps.onScroll(e); fab.onScroll(e); }}
           scrollEventThrottle={16}
           ListHeaderComponent={
             comparison.comparable ? (

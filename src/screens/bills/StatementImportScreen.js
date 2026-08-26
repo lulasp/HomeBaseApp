@@ -12,6 +12,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
+import { useNavScrollProps } from '../../context/NavScrollContext';
 import { useAlert } from '../../context/AlertContext';
 import { useNotification } from '../../context/NotificationContext';
 import {
@@ -194,6 +195,7 @@ export default function StatementImportScreen({ navigation }) {
   const windowHeight = useVisualViewportHeight();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const contentKey = useEntranceReplay();
+  const navScrollProps = useNavScrollProps();
 
   const [customBillCats, setCustomBillCats] = useState([]);
   const [customExpCats, setCustomExpCats] = useState([]);
@@ -361,6 +363,7 @@ export default function StatementImportScreen({ navigation }) {
         contentContainerStyle={[styles.container, contentWidth]}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
+        {...navScrollProps}
       >
         {/* Header */}
         <Rise index={0}>

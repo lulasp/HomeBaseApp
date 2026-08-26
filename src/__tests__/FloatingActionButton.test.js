@@ -19,9 +19,11 @@ jest.mock('../navigation/TabBar', () => ({
 }));
 
 import React from 'react';
-import { render, screen } from '@testing-library/react-native';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react-native';
 
-import FloatingActionButton, { computeAnchors } from '../components/FloatingActionButton';
+import FloatingActionButton, {
+  computeAnchors, cornerFromDrop, createPressGuard,
+} from '../components/FloatingActionButton';
 import { ThemeProvider } from '../context/ThemeContext';
 import { FabPositionProvider } from '../context/FabPositionContext';
 
@@ -101,6 +103,97 @@ describe('computeAnchors', () => {
     expect(anchors.bottomRight.x).toBe(SIDE_INSET);
     expect(anchors.bottomLeft.x).toBe(SIDE_INSET);
   });
+
+  it('takes a smaller bottom clearance (desktop has no floating nav to clear)', () => {
+    const anchors = computeAnchors({
+      boxWidth: COLUMN_WIDTH, boxHeight: 800, viewportHeight: 900, bottomClearance: SIDE_INSET,
+    });
+    expect(anchors.bottomRight.y).toBe(800 - SIDE_INSET - FAB_SIZE);
+    expect(anchors.topRight.y).toBe(TOP_CLEARANCE); // top is unaffected
+  });
+});
+
+describe('cornerFromDrop', () => {
+  const box = { boxWidth: 1000, boxHeight: 800 };
+  const dropAt = (centerX, centerY) => cornerFromDrop({ ...box, centerX, centerY });
+
+  it('picks the corner of the quadrant the button was dropped in', () => {
+    expect(dropAt(100, 100)).toBe('topLeft');
+    expect(dropAt(900, 100)).toBe('topRight');
+    expect(dropAt(100, 700)).toBe('bottomLeft');
+    expect(dropAt(900, 700)).toBe('bottomRight');
+  });
+
+  it('resolves the midpoint to the bottom-right quadrant', () => {
+    expect(dropAt(500, 400)).toBe('bottomRight');
+  });
+
+  it('splits on the container midlines, not the window', () => {
+    // Just left of center is still Left, even though it is far right on screen.
+    expect(dropAt(499, 700)).toBe('bottomLeft');
+    expect(dropAt(501, 700)).toBe('bottomRight');
+    expect(dropAt(900, 399)).toBe('topRight');
+    expect(dropAt(900, 401)).toBe('bottomRight');
+  });
+
+  it('handles a drop dragged outside the container bounds', () => {
+    expect(dropAt(-200, -200)).toBe('topLeft');
+    expect(dropAt(5000, 5000)).toBe('bottomRight');
+  });
+});
+
+describe('createPressGuard', () => {
+  beforeEach(() => { jest.useFakeTimers(); });
+  afterEach(() => { jest.useRealTimers(); });
+
+  it('lets a press through when nothing was dragged', () => {
+    const guard = createPressGuard();
+    expect(guard.shouldSwallowPress()).toBe(false);
+  });
+
+  it('swallows the click a drop generates', () => {
+    const guard = createPressGuard();
+    guard.armAfterDrag();
+    expect(guard.shouldSwallowPress()).toBe(true);
+  });
+
+  it('swallows only one press per drag', () => {
+    const guard = createPressGuard();
+    guard.armAfterDrag();
+    guard.shouldSwallowPress();
+    // The next tap is a real one — dropping it would make the button feel dead.
+    expect(guard.shouldSwallowPress()).toBe(false);
+  });
+
+  it('disarms itself when the drop produces no click at all', () => {
+    const guard = createPressGuard({ delay: 400 });
+    guard.armAfterDrag();
+    jest.advanceTimersByTime(401);
+    expect(guard.shouldSwallowPress()).toBe(false);
+  });
+
+  it('stays armed until the delay elapses', () => {
+    const guard = createPressGuard({ delay: 400 });
+    guard.armAfterDrag();
+    jest.advanceTimersByTime(399);
+    expect(guard.shouldSwallowPress()).toBe(true);
+  });
+
+  it('restarts the window when a second drag follows the first', () => {
+    const guard = createPressGuard({ delay: 400 });
+    guard.armAfterDrag();
+    jest.advanceTimersByTime(300);
+    guard.armAfterDrag();
+    jest.advanceTimersByTime(300); // past the first timer, inside the second
+    expect(guard.shouldSwallowPress()).toBe(true);
+  });
+
+  it('does not fire a pending timer after dispose', () => {
+    const guard = createPressGuard({ delay: 400 });
+    guard.armAfterDrag();
+    guard.dispose();
+    expect(jest.getTimerCount()).toBe(0);
+  });
 });
 
 describe('FloatingActionButton', () => {
@@ -113,5 +206,18 @@ describe('FloatingActionButton', () => {
       </ThemeProvider>,
     );
     expect(screen.getByLabelText('Add item')).toBeTruthy();
+  });
+
+  it('calls onPress for an ordinary press', async () => {
+    const onPress = jest.fn();
+    await render(
+      <ThemeProvider>
+        <FabPositionProvider>
+          <FloatingActionButton onPress={onPress} accessibilityLabel="Add item" />
+        </FabPositionProvider>
+      </ThemeProvider>,
+    );
+    fireEvent.press(await waitFor(() => screen.getByLabelText('Add item')));
+    expect(onPress).toHaveBeenCalledTimes(1);
   });
 });

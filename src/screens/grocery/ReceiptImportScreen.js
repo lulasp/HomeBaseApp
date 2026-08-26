@@ -9,6 +9,7 @@ import * as DocumentPicker from 'expo-document-picker';
 
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
+import { useNavScrollProps } from '../../context/NavScrollContext';
 import { useAlert } from '../../context/AlertContext';
 import { useNotification } from '../../context/NotificationContext';
 import useVisualViewportHeight from '../../hooks/useVisualViewportHeight';
@@ -123,6 +124,7 @@ export default function ReceiptImportScreen({ navigation }) {
   const isDesktop = useIsDesktop();
   const windowHeight = useVisualViewportHeight();
   const styles = useMemo(() => makeStyles(colors), [colors]);
+  const navScrollProps = useNavScrollProps();
 
   const [apiKey, setApiKey]   = useState('');
   const [aiModel, setAiModel] = useState(DEFAULT_AI_MODEL);
@@ -241,6 +243,7 @@ export default function ReceiptImportScreen({ navigation }) {
         contentContainerStyle={[styles.container, isDesktop && styles.containerDesktop]}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
+        {...navScrollProps}
       >
         <View style={styles.header}>
           <TouchableOpacity

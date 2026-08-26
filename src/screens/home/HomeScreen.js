@@ -13,7 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { format, startOfWeek } from 'date-fns';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
-import { useNavScroll } from '../../context/NavScrollContext';
+import { useNavScrollProps } from '../../context/NavScrollContext';
 import { useNotification } from '../../context/NotificationContext';
 import {
   getHouseholdWithPrivate, subscribePantryItems, subscribeGroceryItems,
@@ -414,7 +414,7 @@ function WeeklyCalendar({ householdId, weekKey, todayFull, colors }) {
 export default function HomeScreen({ navigation }) {
   const { user, householdId, displayName } = useAuth();
   const { colors } = useTheme();
-  const { handleScroll } = useNavScroll();
+  const navScrollProps = useNavScrollProps();
   const isDesktop = useIsDesktop();
   const { animationsEnabled } = useHousehold();
 
@@ -528,8 +528,7 @@ export default function HomeScreen({ navigation }) {
         style={{ flex: 1 }}
         contentContainerStyle={[styles.content, isDesktop && styles.contentDesktop]}
         showsVerticalScrollIndicator={false}
-        onScroll={handleScroll}
-        scrollEventThrottle={16}
+        {...navScrollProps}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />}
       >
 

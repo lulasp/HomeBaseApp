@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Animated, PanResponder, StyleSheet, TouchableOpacity, View, useWindowDimensions,
+  Animated, PanResponder, Platform, StyleSheet, TouchableOpacity, View, useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -15,6 +15,7 @@ const SIDE_INSET = 20;         // gap from the left/right edge
 const BOTTOM_CLEARANCE = 160;  // clear the floating tab bar
 const TOP_CLEARANCE = 96;      // clear the header
 const DRAG_THRESHOLD = 6;      // px moved before a touch counts as a drag, not a tap
+const PRESS_GUARD_MS = 400;    // how long a drop suppresses the click it triggers
 
 // Pixel anchor (top-left of the FAB) for each corner, in the coordinate space of
 // the box the button is absolutely positioned within.
@@ -24,12 +25,14 @@ const DRAG_THRESHOLD = 6;      // px moved before a touch counts as a drag, not 
 // window coordinates put it hundreds of px off-screen (see FloatingActionButton
 // test). `viewportHeight` only caps the vertical anchor, so the button stays
 // reachable when the web keyboard shrinks the visible area.
-export function computeAnchors({ boxWidth, boxHeight, viewportHeight, insetTop = 0 }) {
+export function computeAnchors({
+  boxWidth, boxHeight, viewportHeight, insetTop = 0, bottomClearance = BOTTOM_CLEARANCE,
+}) {
   const left = SIDE_INSET;
   const right = Math.max(boxWidth - SIDE_INSET - FAB_SIZE, SIDE_INSET);
   const top = insetTop + TOP_CLEARANCE;
   const usableHeight = Math.min(boxHeight, viewportHeight);
-  const bottom = Math.max(usableHeight - BOTTOM_CLEARANCE - FAB_SIZE, top);
+  const bottom = Math.max(usableHeight - bottomClearance - FAB_SIZE, top);
   return {
     topLeft:     { x: left,  y: top },
     topRight:    { x: right, y: top },
@@ -38,9 +41,46 @@ export function computeAnchors({ boxWidth, boxHeight, viewportHeight, insetTop =
   };
 }
 
-// Reusable floating "+" button. On mobile it can be dragged and snaps to the
-// nearest of the four screen corners (remembered via FabPositionContext); on
-// desktop it stays put. Entrance + hide-on-scroll animations are passed in from
+/**
+ * A drag ends with the browser firing a click on whatever the pointer was
+ * released over — and since the button follows the pointer, that's the button
+ * itself. Without this, every drop would also open the add modal.
+ *
+ * Arms after a drag and swallows the single press that follows. The timeout is
+ * the fallback for when no click arrives at all (native, or a drop that lands
+ * outside the button), so a later genuine tap isn't eaten.
+ */
+export function createPressGuard({ delay = PRESS_GUARD_MS } = {}) {
+  let armed = false;
+  let timer = null;
+
+  return {
+    armAfterDrag() {
+      armed = true;
+      clearTimeout(timer);
+      timer = setTimeout(() => { armed = false; }, delay);
+    },
+    /** True if this press was the tail of a drag and should be ignored. */
+    shouldSwallowPress() {
+      if (!armed) return false;
+      armed = false;
+      clearTimeout(timer);
+      return true;
+    },
+    dispose() { clearTimeout(timer); },
+  };
+}
+
+/** Which corner a button dropped at this point (its center) belongs to. */
+export function cornerFromDrop({ centerX, centerY, boxWidth, boxHeight }) {
+  const horiz = centerX < boxWidth / 2 ? 'Left' : 'Right';
+  const vert = centerY < boxHeight / 2 ? 'top' : 'bottom';
+  return `${vert}${horiz}`; // e.g. topLeft, bottomRight
+}
+
+// Reusable floating "+" button. Drag it (touch or mouse) and it snaps to the
+// nearest of the four corners of its container, remembered via
+// FabPositionContext. Entrance + hide-on-scroll animations are passed in from
 // the host screen so the button composes with the existing behaviour.
 export default function FloatingActionButton({
   onPress,
@@ -65,9 +105,14 @@ export default function FloatingActionButton({
   const boxWidth  = box?.width  ?? windowWidth;
   const boxHeight = box?.height ?? viewportHeight;
 
+  // BOTTOM_CLEARANCE exists to clear the floating mobile nav; desktop's nav is a
+  // sidebar, so the bottom corners can sit at the edge inset like the sides.
   const anchors = useMemo(
-    () => computeAnchors({ boxWidth, boxHeight, viewportHeight, insetTop: insets.top }),
-    [boxWidth, boxHeight, viewportHeight, insets.top],
+    () => computeAnchors({
+      boxWidth, boxHeight, viewportHeight, insetTop: insets.top,
+      bottomClearance: isDesktop ? SIDE_INSET : BOTTOM_CLEARANCE,
+    }),
+    [boxWidth, boxHeight, viewportHeight, insets.top, isDesktop],
   );
 
   const anchor = anchors[corner] || anchors.bottomRight;
@@ -80,12 +125,22 @@ export default function FloatingActionButton({
   const cornerRef = useRef(corner);
   const dimsRef = useRef({ width: boxWidth, height: boxHeight });
   const setCornerRef = useRef(setCorner);
-  const canDragRef = useRef(!isDesktop);
   anchorsRef.current = anchors;
   cornerRef.current = corner;
   dimsRef.current = { width: boxWidth, height: boxHeight };
   setCornerRef.current = setCorner;
-  canDragRef.current = !isDesktop;
+
+  // Web-only affordance: the cursor has to say the button is draggable.
+  const [dragging, setDragging] = useState(false);
+
+  // Keeps the click a drop generates from opening the add modal.
+  const pressGuard = useRef(createPressGuard()).current;
+  useEffect(() => () => pressGuard.dispose(), [pressGuard]);
+
+  const handlePress = () => {
+    if (pressGuard.shouldSwallowPress()) return;
+    onPress?.();
+  };
 
   // Keep the button on its anchor when the anchor moves (rotation, keyboard,
   // corner change) — but never yank it mid-drag.
@@ -109,9 +164,8 @@ export default function FloatingActionButton({
     PanResponder.create({
       onStartShouldSetPanResponder: () => false,
       onMoveShouldSetPanResponder: (_, gs) =>
-        canDragRef.current &&
-        (Math.abs(gs.dx) > DRAG_THRESHOLD || Math.abs(gs.dy) > DRAG_THRESHOLD),
-      onPanResponderGrant: () => { draggingRef.current = true; },
+        Math.abs(gs.dx) > DRAG_THRESHOLD || Math.abs(gs.dy) > DRAG_THRESHOLD,
+      onPanResponderGrant: () => { draggingRef.current = true; setDragging(true); },
       onPanResponderMove: (_, gs) => {
         const a = anchorsRef.current[cornerRef.current];
         pos.setValue({ x: a.x + gs.dx, y: a.y + gs.dy });
@@ -119,16 +173,19 @@ export default function FloatingActionButton({
       onPanResponderTerminationRequest: () => false,
       onPanResponderRelease: (_, gs) => {
         draggingRef.current = false;
+        setDragging(false);
+        pressGuard.armAfterDrag();
         const { width: W, height: H } = dimsRef.current;
         // Snap by where the button ended up *inside its container*. gs.moveX/Y
         // are page coordinates, which no longer line up with the container once
         // it's inset or centered — derive from the anchor plus the drag delta.
         const a = anchorsRef.current[cornerRef.current];
-        const centerX = a.x + gs.dx + FAB_SIZE / 2;
-        const centerY = a.y + gs.dy + FAB_SIZE / 2;
-        const horiz = centerX < W / 2 ? 'Left' : 'Right';
-        const vert = centerY < H / 2 ? 'top' : 'bottom';
-        const next = `${vert}${horiz}`; // e.g. topLeft, bottomRight
+        const next = cornerFromDrop({
+          centerX: a.x + gs.dx + FAB_SIZE / 2,
+          centerY: a.y + gs.dy + FAB_SIZE / 2,
+          boxWidth: W,
+          boxHeight: H,
+        });
         setCornerRef.current(next);
         Animated.spring(pos, {
           toValue: anchorsRef.current[next], useNativeDriver: false,
@@ -137,6 +194,8 @@ export default function FloatingActionButton({
       },
       onPanResponderTerminate: () => {
         draggingRef.current = false;
+        setDragging(false);
+        pressGuard.armAfterDrag();
         Animated.spring(pos, {
           toValue: anchorsRef.current[cornerRef.current], useNativeDriver: false,
           friction: 8, tension: 80,
@@ -170,12 +229,16 @@ export default function FloatingActionButton({
       <Animated.View
         style={[styles.base, { transform: pos.getTranslateTransform() }]}
         pointerEvents={interactive ? 'auto' : 'none'}
-        {...(isDesktop ? {} : panResponder.panHandlers)}
+        {...panResponder.panHandlers}
       >
         <Animated.View style={{ opacity, transform: [{ scale }] }}>
           <TouchableOpacity
-            style={[styles.button, { backgroundColor: colors.accent, shadowColor: colors.accent }]}
-            onPress={onPress}
+            style={[
+              styles.button,
+              { backgroundColor: colors.accent, shadowColor: colors.accent },
+              Platform.OS === 'web' && { cursor: dragging ? 'grabbing' : 'grab', userSelect: 'none' },
+            ]}
+            onPress={handlePress}
             accessibilityRole="button"
             accessibilityLabel={accessibilityLabel}
           >

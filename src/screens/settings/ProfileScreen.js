@@ -7,7 +7,7 @@ import useVisualViewportHeight from '../../hooks/useVisualViewportHeight';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
-import { useNavScroll } from '../../context/NavScrollContext';
+import { useNavScrollProps } from '../../context/NavScrollContext';
 import { useAlert } from '../../context/AlertContext';
 import { useNotification } from '../../context/NotificationContext';
 import {
@@ -23,7 +23,7 @@ export default function ProfileScreen({ navigation }) {
     saveHouseholdId, switchHousehold, updateDisplayName, signOut,
   } = useAuth();
   const { colors, theme, toggleTheme } = useTheme();
-  const { handleScroll } = useNavScroll();
+  const navScrollProps = useNavScrollProps();
   const contentKey = useEntranceReplay();
   const { showAlert, showConfirm } = useAlert();
   const { notify } = useNotification();
@@ -100,8 +100,7 @@ export default function ProfileScreen({ navigation }) {
       <ScrollView
         key={contentKey}
         style={{ flex: 1, marginLeft: isDesktop ? SIDEBAR_WIDTH : 0 }}
-        onScroll={handleScroll}
-        scrollEventThrottle={16}
+        {...navScrollProps}
         contentContainerStyle={[
           styles.scrollContent,
           isDesktop && { maxWidth: DESKTOP_MAX_CONTENT, alignSelf: 'center', width: '100%' },

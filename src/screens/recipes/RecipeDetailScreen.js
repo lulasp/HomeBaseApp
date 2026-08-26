@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useCallback } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, StyleSheet, Image,
-  Modal, ActivityIndicator,
+  Modal, ActivityIndicator, Animated,
 } from 'react-native';
 import useVisualViewportHeight from '../../hooks/useVisualViewportHeight';
 import { Ionicons } from '@expo/vector-icons';
@@ -10,10 +10,14 @@ import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { useAlert } from '../../context/AlertContext';
 import { useNotification } from '../../context/NotificationContext';
+import { useNavScroll, useNavScrollProps, useNavCompact } from '../../context/NavScrollContext';
 import { saveRecipe, deleteRecipe, getRecipe, getPantryItems, getGroceryItems, addGroceryItem } from '../../services/firestore';
 import { spacing, radius, type } from '../../theme/colors';
-import { useIsDesktop, useMobileNavClearance, SIDEBAR_WIDTH, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
+import { useIsDesktop, useMobileNavClearance, MOBILE_NAV_COMPACT_SHIFT, SIDEBAR_WIDTH, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
 import { Rise, useEntranceReplay } from '../../components/Motion';
+
+// Compact action bar: 40px pill + vertical padding + top border (see buttonCompact)
+const COMPACT_ACTION_BAR_HEIGHT = 40 + spacing.sm * 2 + 1;
 
 export default function RecipeDetailScreen({ route, navigation }) {
   const { isSearch } = route.params;
@@ -37,8 +41,20 @@ export default function RecipeDetailScreen({ route, navigation }) {
   const isDesktop = useIsDesktop();
   const windowHeight = useVisualViewportHeight();
   const navClearance = useMobileNavClearance();
-  const [actionBarH, setActionBarH] = useState(0);
+  const { compactAnim } = useNavScroll();
+  const navScrollProps = useNavScrollProps();
   const isOwnCustomRecipe = !isSearch && recipe.sourceType === 'custom' && recipe.createdBy === user?.uid;
+
+  // Collapse the action bar in step with the nav: drop the labels and slide down
+  // into the space the section switcher vacated.
+  const navCompact = useNavCompact();
+
+  const actionBarShift = compactAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, isDesktop ? 0 : MOBILE_NAV_COMPACT_SHIFT],
+    extrapolate: 'clamp',
+  });
+  const compactActions = navCompact && !isDesktop;
 
   const [groceryModal, setGroceryModal]     = useState(false);
   const [groceryToAdd, setGroceryToAdd]     = useState([]);
@@ -125,7 +141,14 @@ export default function RecipeDetailScreen({ route, navigation }) {
       <ScrollView
         key={contentKey}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: isDesktop ? 120 : actionBarH + navClearance + spacing.md }}
+        {...navScrollProps}
+        contentContainerStyle={{
+          paddingBottom: isDesktop
+            ? 120
+            // You only reach the end of the page scrolled down, i.e. with the nav
+            // and action bar compact — pad for that, not for the expanded bar.
+            : COMPACT_ACTION_BAR_HEIGHT + navClearance - MOBILE_NAV_COMPACT_SHIFT + spacing.md,
+        }}
       >
 
         {/* Back button — first item in scroll content, always visible, no z-index issues */}
@@ -211,20 +234,60 @@ export default function RecipeDetailScreen({ route, navigation }) {
         </View>
       </ScrollView>
 
-      <View
-        onLayout={(e) => setActionBarH(e.nativeEvent.layout.height)}
+      <Animated.View
         style={[
           styles.bottomActionBar,
           // Sit above the floating mobile nav instead of behind it
-          !isDesktop && { bottom: navClearance, paddingBottom: spacing.md },
+          !isDesktop && { bottom: navClearance, paddingBottom: spacing.md, transform: [{ translateY: actionBarShift }] },
+          compactActions && { paddingTop: spacing.sm, paddingBottom: spacing.sm, paddingHorizontal: spacing.md },
           isDesktop && { maxWidth: DESKTOP_MAX_CONTENT, alignSelf: 'center', width: '100%', left: undefined, right: undefined, position: 'relative', borderTopWidth: 0, paddingBottom: spacing.xl },
         ]}
       >
         {isSearch ? (
-          <TouchableOpacity style={styles.saveButton} onPress={handleSave} accessibilityRole="button">
-            <Ionicons name="bookmark" size={18} color="#fff" />
+          <TouchableOpacity
+            style={[styles.saveButton, compactActions && { height: 40 }]}
+            onPress={handleSave}
+            accessibilityRole="button"
+          >
+            <Ionicons name="bookmark" size={compactActions ? 16 : 18} color="#fff" />
             <Text style={styles.saveButtonLabel}>Save to My Recipes</Text>
           </TouchableOpacity>
+        ) : compactActions ? (
+          // Compact: one row of icon-only pills, matching the nav dropping its labels
+          <View style={styles.actionRow}>
+            {recipe.ingredients?.length > 0 && (
+              <TouchableOpacity
+                style={[styles.addToGroceryButton, styles.buttonCompact]}
+                onPress={handleAddToGrocery}
+                disabled={groceryLoading}
+                accessibilityRole="button"
+                accessibilityLabel="Add ingredients to grocery list"
+              >
+                {groceryLoading
+                  ? <ActivityIndicator size="small" color={colors.accent} />
+                  : <Ionicons name="cart-outline" size={16} color={colors.accent} />
+                }
+              </TouchableOpacity>
+            )}
+            {isOwnCustomRecipe && (
+              <TouchableOpacity
+                style={[styles.editButton, styles.buttonCompact]}
+                onPress={() => navigation.navigate('AddRecipe', { recipe })}
+                accessibilityRole="button"
+                accessibilityLabel="Edit recipe"
+              >
+                <Ionicons name="pencil-outline" size={16} color={colors.accent} />
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity
+              style={[styles.deleteButton, styles.buttonCompact]}
+              onPress={handleDelete}
+              accessibilityRole="button"
+              accessibilityLabel="Delete recipe"
+            >
+              <Ionicons name="trash-outline" size={16} color={colors.danger} />
+            </TouchableOpacity>
+          </View>
         ) : (
           <View style={{ gap: 10 }}>
             {recipe.ingredients?.length > 0 && (
@@ -260,7 +323,7 @@ export default function RecipeDetailScreen({ route, navigation }) {
             </View>
           </View>
         )}
-      </View>
+      </Animated.View>
       <Modal visible={groceryModal} animationType="slide" transparent statusBarTranslucent>
         <View style={styles.groceryOverlay}>
           <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setGroceryModal(false)} />
@@ -381,6 +444,8 @@ const makeStyles = (colors) => StyleSheet.create({
     borderTopWidth: 1, borderTopColor: colors.border,
   },
   actionRow: { flexDirection: 'row', gap: 10 },
+  // Icon-only pill used while the nav is compact
+  buttonCompact: { flex: 1, height: 40, paddingHorizontal: 0 },
 
   addToGroceryButton: {
     height: 52, backgroundColor: colors.accentSoft, borderRadius: radius.md,

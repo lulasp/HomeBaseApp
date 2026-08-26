@@ -7,7 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { useHousehold } from '../../context/HouseholdContext';
-import { useNavScroll } from '../../context/NavScrollContext';
+import { useNavScrollProps } from '../../context/NavScrollContext';
 import useFabHideOnScroll from '../../hooks/useFabHideOnScroll';
 import FloatingActionButton from '../../components/FloatingActionButton';
 import { useAlert } from '../../context/AlertContext';
@@ -105,7 +105,7 @@ export default function GroceryListScreen() {
   const { householdId, user } = useAuth();
   const { colors } = useTheme();
   const { animationsEnabled } = useHousehold();
-  const { handleScroll } = useNavScroll();
+  const navScrollProps = useNavScrollProps();
   const { showAlert, showConfirm } = useAlert();
   const { notify } = useNotification();
   const styles = useMemo(() => makeStyles(colors), [colors]);
@@ -572,7 +572,7 @@ export default function GroceryListScreen() {
           keyExtractor={(row) => row.id ?? row.label}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
-          onScroll={(e) => { handleScroll(e); fab.onScroll(e); }}
+          onScroll={(e) => { navScrollProps.onScroll(e); fab.onScroll(e); }}
           scrollEventThrottle={16}
           ListEmptyComponent={
             <View style={styles.emptyStateContainer}>

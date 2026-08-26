@@ -45,6 +45,13 @@ export function useIsDesktop() {
 // Pill bar (64) + gap + section switcher (40) stacked above it
 const MOBILE_NAV_STACK_HEIGHT = 112;
 
+/**
+ * How much lower the mobile nav's top edge sits when compact: the section
+ * switcher (40 + 8 gap) is hidden and the pill bar shifts down 16.
+ * Screens with their own bottom bar shift by this to stay tucked against it.
+ */
+export const MOBILE_NAV_COMPACT_SHIFT = 64;
+
 function useMobileNavBottom() {
   const insets = useSafeAreaInsets();
   return Platform.OS === 'ios' ? Math.max(insets.bottom + 8, 24) : 24;

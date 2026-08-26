@@ -8,7 +8,7 @@ import Slider from '@react-native-community/slider';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { useTheme } from '../../context/ThemeContext';
-import { useNavScroll } from '../../context/NavScrollContext';
+import { useNavScrollProps } from '../../context/NavScrollContext';
 import { useAuth } from '../../context/AuthContext';
 import { useAlert } from '../../context/AlertContext';
 import { spacing, radius, type } from '../../theme/colors';
@@ -179,7 +179,7 @@ function DeviceCard({ device, isSelected, isOn, isOnline, onSelect, onToggle }) 
 
 export default function HomeLightsScreen({ route }) {
   const { colors } = useTheme();
-  const { handleScroll } = useNavScroll();
+  const navScrollProps = useNavScrollProps();
   const { householdId } = useAuth();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const isDesktop = useIsDesktop();
@@ -639,8 +639,7 @@ export default function HomeLightsScreen({ route }) {
         key={contentKey}
         style={{ flex: 1 }}
         contentContainerStyle={[styles.container, innerStyle]}
-        onScroll={handleScroll}
-        scrollEventThrottle={16}
+        {...navScrollProps}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={refreshStates} tintColor={colors.accent} />
