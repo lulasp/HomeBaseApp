@@ -492,6 +492,15 @@ export default function GroceryListScreen() {
               )}
               <TouchableOpacity
                 style={styles.priceHistoryButton}
+                onPress={() => navigation.navigate('ReceiptImport')}
+                accessibilityRole="button"
+                accessibilityLabel="Scan a receipt"
+              >
+                <Ionicons name="camera-outline" size={14} color={colors.textSecondary} />
+                <Text style={styles.priceHistoryLabel}>Scan</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.priceHistoryButton}
                 onPress={() => navigation.navigate('PriceHistory')}
                 accessibilityRole="button"
                 accessibilityLabel="Price history"

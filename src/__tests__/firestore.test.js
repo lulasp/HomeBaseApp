@@ -12,8 +12,11 @@ const mockSetDoc = jest.fn().mockResolvedValue(undefined);
 const mockServerTimestamp = jest.fn(() => 'SERVER_TIMESTAMP');
 const mockDeleteField = jest.fn(() => 'DELETE_FIELD');
 const mockBatchSet = jest.fn();
+const mockBatchUpdate = jest.fn();
 const mockBatchCommit = jest.fn().mockResolvedValue(undefined);
-const mockWriteBatch = jest.fn(() => ({ set: mockBatchSet, commit: mockBatchCommit }));
+const mockWriteBatch = jest.fn(() => ({
+  set: mockBatchSet, update: mockBatchUpdate, commit: mockBatchCommit,
+}));
 
 jest.mock('firebase/firestore', () => ({
   collection: (...args) => mockCollection(...args),
@@ -30,6 +33,7 @@ jest.mock('firebase/firestore', () => ({
   serverTimestamp: () => mockServerTimestamp(),
   deleteField: () => mockDeleteField(),
   writeBatch: (...args) => mockWriteBatch(...args),
+  increment: (n) => ({ __increment: n }),
 }));
 
 import {
@@ -61,6 +65,8 @@ import {
   deletePriceEntry,
   deletePriceEntriesForItem,
   addPriceEntriesBatch,
+  applyPantryReceiptOps,
+  saveReceiptAliases,
 } from '../services/firestore';
 import { onSnapshot, where } from 'firebase/firestore';
 
@@ -649,6 +655,94 @@ describe('price entries', () => {
     await addPriceEntriesBatch(householdId, undefined);
     expect(mockWriteBatch).not.toHaveBeenCalled();
     expect(mockBatchCommit).not.toHaveBeenCalled();
+  });
+});
+
+// ── applyPantryReceiptOps ─────────────────────────────────────────────────────
+
+describe('applyPantryReceiptOps', () => {
+  const householdId = 'hh1';
+
+  it('tops up existing rows and creates new ones in one batch', async () => {
+    await applyPantryReceiptOps(householdId, {
+      merges:  [{ id: 'p1', quantity: '3' }],
+      creates: [{ name: 'Eggs', quantity: '6', unit: 'pcs', category: 'Other' }],
+    });
+    expect(mockWriteBatch).toHaveBeenCalledTimes(1);
+    expect(mockBatchUpdate).toHaveBeenCalledTimes(1);
+    expect(mockBatchUpdate.mock.calls[0][1]).toEqual({ quantity: '3', updatedAt: 'SERVER_TIMESTAMP' });
+    expect(mockBatchSet).toHaveBeenCalledTimes(1);
+    expect(mockBatchSet.mock.calls[0][1]).toMatchObject({ name: 'Eggs', createdAt: 'SERVER_TIMESTAMP' });
+    expect(mockBatchCommit).toHaveBeenCalledTimes(1);
+  });
+
+  it('targets the pantry doc named by the merge id', async () => {
+    await applyPantryReceiptOps(householdId, { merges: [{ id: 'p1', quantity: '3' }] });
+    // doc() is mocked to join its segments, and collection() supplies the path.
+    expect(mockBatchUpdate.mock.calls[0][0]).toContain('p1');
+  });
+
+  it('does not write the id itself into the document', async () => {
+    await applyPantryReceiptOps(householdId, { merges: [{ id: 'p1', quantity: '3' }] });
+    expect(mockBatchUpdate.mock.calls[0][1]).not.toHaveProperty('id');
+  });
+
+  it('does not open a batch when there is nothing to do', async () => {
+    await applyPantryReceiptOps(householdId, { merges: [], creates: [] });
+    await applyPantryReceiptOps(householdId, {});
+    await applyPantryReceiptOps(householdId);
+    expect(mockWriteBatch).not.toHaveBeenCalled();
+    expect(mockBatchCommit).not.toHaveBeenCalled();
+  });
+});
+
+// ── saveReceiptAliases ────────────────────────────────────────────────────────
+
+describe('saveReceiptAliases', () => {
+  const householdId = 'hh1';
+  const aliasDoc = {
+    id: 'r:deterg-e-prod-limpeza__pastilhas-finish__continente',
+    lookupKey: 'r:deterg e prod limpeza',
+    rawText: 'DETERG. E PROD LIMPEZA',
+    itemKey: 'pastilhas finish',
+    itemName: 'Pastilhas Finish',
+    uses: 1,
+  };
+
+  it('upserts each mapping as a merge, so a re-import does not duplicate it', async () => {
+    await saveReceiptAliases(householdId, [aliasDoc]);
+    expect(mockBatchSet).toHaveBeenCalledTimes(1);
+    expect(mockBatchSet.mock.calls[0][2]).toEqual({ merge: true });
+    expect(mockBatchCommit).toHaveBeenCalledTimes(1);
+  });
+
+  it('counts a confirmation as an increment rather than a fixed value', async () => {
+    // Two devices importing at once must both be counted, not clobber.
+    await saveReceiptAliases(householdId, [aliasDoc]);
+    expect(mockBatchSet.mock.calls[0][1].uses).toEqual({ __increment: 1 });
+  });
+
+  it('writes the mapping fields and a server timestamp, but not the id', async () => {
+    await saveReceiptAliases(householdId, [aliasDoc]);
+    const written = mockBatchSet.mock.calls[0][1];
+    expect(written).toMatchObject({
+      lookupKey: 'r:deterg e prod limpeza',
+      itemKey: 'pastilhas finish',
+      itemName: 'Pastilhas Finish',
+      updatedAt: 'SERVER_TIMESTAMP',
+    });
+    expect(written).not.toHaveProperty('id');
+  });
+
+  it('targets the document named by the alias id', async () => {
+    await saveReceiptAliases(householdId, [aliasDoc]);
+    expect(mockBatchSet.mock.calls[0][0]).toContain(aliasDoc.id);
+  });
+
+  it('does not open a batch when nothing was learned', async () => {
+    await saveReceiptAliases(householdId, []);
+    await saveReceiptAliases(householdId, undefined);
+    expect(mockWriteBatch).not.toHaveBeenCalled();
   });
 });
 

@@ -13,6 +13,7 @@ import {
   serverTimestamp,
   deleteField,
   writeBatch,
+  increment,
 } from 'firebase/firestore';
 
 import { db } from '../config/firebase';
@@ -180,6 +181,39 @@ export const addPriceEntriesBatch = (householdId, entries) => {
   const col = collection(db, 'households', householdId, 'priceEntries');
   for (const entry of entries) {
     batch.set(doc(col), { ...entry, createdAt: serverTimestamp() });
+  }
+  return batch.commit();
+};
+
+// ── Receipt aliases ──────────────────────────────────────
+// Learned "this printed line means this item" mappings. Small per household and
+// grouped client-side in src/utils/receiptAliases.js, so the whole collection is
+// subscribed at once — same shape as priceEntries, and no index needed.
+export const subscribeReceiptAliases = (householdId, callback) =>
+  onSnapshot(
+    collection(db, 'households', householdId, 'receiptAliases'),
+    (snap) => callback(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+  );
+
+export const getReceiptAliases = async (householdId) => {
+  const snap = await getDocs(collection(db, 'households', householdId, 'receiptAliases'));
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+};
+
+// Record what an import confirmed. The doc id is derived from the mapping
+// itself (see aliasDocId), so this is an idempotent upsert — re-importing the
+// same receipt strengthens the mapping rather than duplicating it. `uses` is an
+// increment so two devices importing at once can't clobber each other's count.
+export const saveReceiptAliases = (householdId, docs) => {
+  if (!docs?.length) return Promise.resolve();
+  const batch = writeBatch(db);
+  const col = collection(db, 'households', householdId, 'receiptAliases');
+  for (const { id, uses, ...fields } of docs) {
+    batch.set(
+      doc(col, id),
+      { ...fields, uses: increment(uses ?? 1), updatedAt: serverTimestamp() },
+      { merge: true },
+    );
   }
   return batch.commit();
 };
@@ -385,6 +419,23 @@ export const addPantryItem = (householdId, item) =>
     ...item,
     createdAt: serverTimestamp(),
   });
+
+// Apply a scanned receipt's pantry side in one batch: top up the rows that
+// already exist, create the rest. `ops` must come from toPantryOps() so the
+// quantities are the pre-summed strings the pantry stores.
+export const applyPantryReceiptOps = (householdId, { merges = [], creates = [] } = {}) => {
+  if (!merges.length && !creates.length) return Promise.resolve();
+  const batch = writeBatch(db);
+  const col = collection(db, 'households', householdId, 'pantryItems');
+
+  for (const { id, ...data } of merges) {
+    batch.update(doc(col, id), { ...data, updatedAt: serverTimestamp() });
+  }
+  for (const item of creates) {
+    batch.set(doc(col), { ...item, createdAt: serverTimestamp() });
+  }
+  return batch.commit();
+};
 
 export const updatePantryItem = (householdId, itemId, data) =>
   updateDoc(doc(db, 'households', householdId, 'pantryItems', itemId), data);
