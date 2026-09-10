@@ -150,7 +150,7 @@ describe('parseReceipt', () => {
     expect(body.response_format.json_schema.name).toBe('receipt');
     const props = body.response_format.json_schema.schema.properties;
     expect(Object.keys(props.lines.items.properties).sort())
-      .toEqual(['name', 'price', 'quantity', 'unit']);
+      .toEqual(['code', 'name', 'price', 'quantity', 'rawName', 'unit']);
   });
 
   it('rejects an image when the model has no vision support', async () => {

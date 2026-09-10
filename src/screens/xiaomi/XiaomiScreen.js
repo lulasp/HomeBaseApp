@@ -6,7 +6,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../context/ThemeContext';
-import { useNavScroll } from '../../context/NavScrollContext';
+import { useNavScrollProps } from '../../context/NavScrollContext';
 import { useAuth } from '../../context/AuthContext';
 import { spacing, radius, type } from '../../theme/colors';
 import { useIsDesktop, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
@@ -443,7 +443,7 @@ function VacuumCard({ device, state, onStart, onPause, onDock, onFind, onSetSuct
 
 export default function XiaomiScreen() {
   const { colors } = useTheme();
-  const { handleScroll } = useNavScroll();
+  const navScrollProps = useNavScrollProps();
   const { householdId } = useAuth();
   const styles    = useMemo(() => makeStyles(colors), [colors]);
   const isDesktop = useIsDesktop();
@@ -616,8 +616,7 @@ export default function XiaomiScreen() {
         style={{ flex: 1 }}
         contentContainerStyle={[styles.container, innerStyle]}
         showsVerticalScrollIndicator={false}
-        onScroll={handleScroll}
-        scrollEventThrottle={16}
+        {...navScrollProps}
       >
         {/* Header */}
         <Rise index={0}>

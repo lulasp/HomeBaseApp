@@ -71,11 +71,13 @@ const RECEIPT_SCHEMA = {
         additionalProperties: false,
         properties: {
           name:     { type: 'string' },  // product as printed, tidied
+          rawName:  { type: 'string' },  // product exactly as printed — the identity key
+          code:     { type: 'string' },  // article/SKU code if printed, "" otherwise
           price:    { type: 'number' },  // total paid for the line, positive
           quantity: { type: 'number' },  // units/weight bought, 1 if not shown
           unit:     { type: 'string' },  // kg, g, L, ml, pcs …
         },
-        required: ['name', 'price', 'quantity', 'unit'],
+        required: ['name', 'rawName', 'code', 'price', 'quantity', 'unit'],
       },
     },
   },
@@ -248,8 +250,16 @@ export function parseBankStatement(apiKey, base64Pdf, cats = {}, model = DEFAULT
 
 const RECEIPT_PROMPT =
   'This is a grocery shop receipt. Extract every purchased product line as a structured record.\n' +
-  '- name: the product name, expanded from receipt shorthand into normal words where obvious ' +
-  '(e.g. "SEMI SKIM MLK 1L" -> "Semi Skimmed Milk"). Do not include the size in the name.\n' +
+  '- rawName: the product text EXACTLY as printed on the receipt, character for character. ' +
+  'Do not expand, translate, tidy, re-case or correct it. This is used to recognise the same ' +
+  'line on a future receipt, so it must be reproducible.\n' +
+  '- name: the same line expanded from receipt shorthand into normal words where obvious ' +
+  '(e.g. "SEMI SKIM MLK 1L" -> "Semi Skimmed Milk"). Do not include the size in the name. ' +
+  'If the printed text is a department or category heading rather than a product ' +
+  '(e.g. "DETERG. E PROD LIMPEZA", "FRUTAS E LEGUMES"), copy rawName unchanged instead of ' +
+  'inventing a product — the shopper will identify it.\n' +
+  '- code: the article, PLU or SKU number printed against the line, as a plain string. ' +
+  'Use "" when the receipt prints no code for that line. Never invent one.\n' +
   '- price: the total actually paid for that line as a positive number, after any discount ' +
   'shown against it. Never negative.\n' +
   '- quantity: how much was bought — the item count, or the weight/volume if sold by measure ' +

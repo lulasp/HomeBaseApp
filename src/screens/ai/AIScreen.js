@@ -6,6 +6,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../context/ThemeContext';
+import { useNavScrollProps } from '../../context/NavScrollContext';
 import { useAuth } from '../../context/AuthContext';
 import { useHousehold } from '../../context/HouseholdContext';
 import { useAlert } from '../../context/AlertContext';
@@ -14,7 +15,8 @@ import { sendChatMessage, suggestRecipes } from '../../services/openrouter';
 import { DEFAULT_AI_MODEL } from '../../utils/aiModels';
 import { useNotification } from '../../context/NotificationContext';
 import { spacing, radius, type } from '../../theme/colors';
-import { useIsDesktop, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
+import { useIsDesktop, useMobileNavClearance, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
+import useKeyboardVisible from '../../hooks/useKeyboardVisible';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Chat tab
@@ -26,6 +28,16 @@ function ChatTab({ colors, styles, apiKey, aiModel }) {
   const [loading, setLoading]   = useState(false);
   const { showAlert }           = useAlert();
   const listRef                 = useRef(null);
+  const navScrollProps          = useNavScrollProps();
+  const navClearance            = useMobileNavClearance();
+  const keyboardVisible         = useKeyboardVisible();
+
+  // The mobile nav floats over the bottom of the screen, so the composer has to
+  // clear it. With the keyboard up on iOS the nav is behind the keyboard while
+  // KeyboardAvoidingView lifts the composer, so the clearance is only in the way;
+  // on Android the window resizes and the nav rides above the keyboard.
+  const navOverlapsComposer = !(keyboardVisible && Platform.OS === 'ios');
+  const composerClearance = navOverlapsComposer ? navClearance : 0;
 
   const scrollToBottom = () => listRef.current?.scrollToEnd({ animated: true });
 
@@ -120,6 +132,7 @@ function ChatTab({ colors, styles, apiKey, aiModel }) {
           contentContainerStyle={styles.chatList}
           showsVerticalScrollIndicator={false}
           onContentSizeChange={scrollToBottom}
+          {...navScrollProps}
         />
       )}
 
@@ -130,7 +143,11 @@ function ChatTab({ colors, styles, apiKey, aiModel }) {
         </View>
       )}
 
-      <View style={[styles.inputBar, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+      <View style={[
+        styles.inputBar,
+        { backgroundColor: colors.surface, borderColor: colors.border },
+        { marginBottom: composerClearance + spacing.md },
+      ]}>
         <TextInput
           style={[styles.chatInput, { color: colors.textPrimary }]}
           placeholder="Message AI…"
@@ -290,6 +307,8 @@ function RecipeSuggesterTab({ colors, styles, apiKey, aiModel }) {
   const [inputText, setInputText] = useState('');
   const [loading, setLoading]     = useState(false);
   const [recipes, setRecipes]     = useState(null);
+  const navScrollProps            = useNavScrollProps();
+  const navClearance              = useMobileNavClearance();
   const [pantryItems, setPantryItems] = useState([]);
 
   useEffect(() => {
@@ -346,9 +365,10 @@ function RecipeSuggesterTab({ colors, styles, apiKey, aiModel }) {
   return (
     <ScrollView
       style={{ flex: 1 }}
-      contentContainerStyle={styles.suggesterContent}
+      contentContainerStyle={[styles.suggesterContent, { paddingBottom: navClearance + spacing.md }]}
       keyboardShouldPersistTaps="handled"
       showsVerticalScrollIndicator={false}
+      {...navScrollProps}
     >
       <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>What's in your kitchen?</Text>
       <Text style={[styles.sectionSubtitle, { color: colors.textSecondary }]}>
