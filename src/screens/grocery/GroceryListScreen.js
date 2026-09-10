@@ -9,6 +9,7 @@ import { useTheme } from '../../context/ThemeContext';
 import { useHousehold } from '../../context/HouseholdContext';
 import { useNavScrollProps } from '../../context/NavScrollContext';
 import useFabHideOnScroll from '../../hooks/useFabHideOnScroll';
+import useVisualViewportHeight from '../../hooks/useVisualViewportHeight';
 import FloatingActionButton from '../../components/FloatingActionButton';
 import { useAlert } from '../../context/AlertContext';
 import { useNotification } from '../../context/NotificationContext';
@@ -26,7 +27,7 @@ import {
 } from '../../utils/pricing';
 import DatePickerInput from '../../components/DatePickerInput';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
-import { useIsDesktop, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
+import { useIsDesktop, useMobileNavClearance, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
 
 const applyOrder = (all, order) => {
   if (!order.length) return all;
@@ -110,7 +111,13 @@ export default function GroceryListScreen() {
   const { notify } = useNotification();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const isDesktop = useIsDesktop();
+  const navClearance = useMobileNavClearance();
+  const viewportHeight = useVisualViewportHeight();
   const navigation = useNavigation();
+
+  // Measured so the list can be given a definite pixel height on web (see the
+  // ScrollView height note at the render below).
+  const [headerHeight, setHeaderHeight] = useState(0);
 
   const [items, setItems] = useState([]);
   const [priceEntries, setPriceEntries] = useState([]);
@@ -464,15 +471,21 @@ export default function GroceryListScreen() {
   }, [progressRatio, animationsEnabled]);
 
   return (
-    <SafeAreaView style={styles.screenRoot}>
+    <SafeAreaView style={[
+      styles.screenRoot,
+      Platform.OS === 'web' ? { height: viewportHeight } : null,
+    ]}>
       <View style={[styles.contentWrapper, isDesktop && styles.contentWrapperDesktop]}>
 
-        <Animated.View style={[styles.headerSection, {
-          opacity: headerAnim,
-          transform: [{ translateY: headerAnim.interpolate({ inputRange: [0, 1], outputRange: [14, 0] }) }],
-        }]}>
+        <Animated.View
+          onLayout={(e) => setHeaderHeight(e.nativeEvent.layout.height)}
+          style={[styles.headerSection, {
+            opacity: headerAnim,
+            transform: [{ translateY: headerAnim.interpolate({ inputRange: [0, 1], outputRange: [14, 0] }) }],
+          }]}
+        >
           <View style={styles.headerTopRow}>
-            <View>
+            <View style={styles.headerTitleBlock}>
               <Text style={styles.screenTitle}>Grocery List</Text>
               <Text style={styles.screenSubtitle}>
                 {pendingCount} remaining · {checkedCount} done
@@ -487,9 +500,18 @@ export default function GroceryListScreen() {
                   accessibilityLabel="Clear checked items"
                 >
                   <Ionicons name="checkmark-done-outline" size={14} color={colors.accent} />
-                  <Text style={styles.clearCheckedLabel}>Clear done</Text>
+                  <Text style={styles.clearCheckedLabel} numberOfLines={1}>Clear done</Text>
                 </TouchableOpacity>
               )}
+              <TouchableOpacity
+                style={styles.priceHistoryButton}
+                onPress={() => navigation.navigate('ReceiptImport')}
+                accessibilityRole="button"
+                accessibilityLabel="Scan a receipt"
+              >
+                <Ionicons name="camera-outline" size={14} color={colors.textSecondary} />
+                <Text style={styles.priceHistoryLabel} numberOfLines={1}>Scan</Text>
+              </TouchableOpacity>
               <TouchableOpacity
                 style={styles.priceHistoryButton}
                 onPress={() => navigation.navigate('PriceHistory')}
@@ -497,7 +519,7 @@ export default function GroceryListScreen() {
                 accessibilityLabel="Price history"
               >
                 <Ionicons name="pricetags-outline" size={14} color={colors.textSecondary} />
-                <Text style={styles.priceHistoryLabel}>Prices</Text>
+                <Text style={styles.priceHistoryLabel} numberOfLines={1}>Prices</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -570,7 +592,15 @@ export default function GroceryListScreen() {
         <FlatList
           data={groups}
           keyExtractor={(row) => row.id ?? row.label}
-          contentContainerStyle={styles.listContent}
+          // Web: this screen sits inside GroceryStack, and `flex: 1` never
+          // resolves to a definite height through a nav stack — the list then
+          // grows to fit its content and the page stops scrolling. The height
+          // has to be on the scroller itself, not just an ancestor.
+          style={Platform.OS === 'web'
+            ? { height: Math.max(viewportHeight - headerHeight, 0) }
+            : styles.list}
+          // Just enough to clear the floating nav (0 on desktop — sidebar nav).
+          contentContainerStyle={[styles.listContent, { paddingBottom: navClearance || spacing.xl }]}
           showsVerticalScrollIndicator={false}
           onScroll={(e) => { navScrollProps.onScroll(e); fab.onScroll(e); }}
           scrollEventThrottle={16}
@@ -848,11 +878,16 @@ export default function GroceryListScreen() {
 }
 
 const makeStyles = (colors) => StyleSheet.create({
-  screenRoot:             { flex: 1, backgroundColor: colors.background },
-  contentWrapper:         { flex: 1 },
+  screenRoot:             { flex: 1, minHeight: 0, backgroundColor: colors.background },
+  contentWrapper:         { flex: 1, minHeight: 0 },
   contentWrapperDesktop:  { maxWidth: DESKTOP_MAX_CONTENT, alignSelf: 'center', width: '100%' },
 
+  // The list owns the space the header leaves; without an explicit flex it sizes
+  // to its content and stops scrolling once the header grows.
+  list: { flex: 1, minHeight: 0 },
+
   headerSection: {
+    flexShrink: 0,
     paddingHorizontal: spacing.xl,
     paddingTop: spacing.xl,
     paddingBottom: spacing.lg,
@@ -860,13 +895,20 @@ const makeStyles = (colors) => StyleSheet.create({
   },
   headerTopRow: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start',
+    flexWrap: 'wrap', gap: spacing.sm,
   },
+  headerTitleBlock: { flexShrink: 1 },
   screenTitle:    { ...type.h2, color: colors.textPrimary },
   screenSubtitle: { ...type.bodySm, color: colors.textSecondary, marginTop: 3 },
 
-  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  // Three pills don't fit next to the title on a phone — let them wrap to their
+  // own line rather than squeezing the labels into multi-line pills.
+  headerActions: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    flexShrink: 1, flexWrap: 'wrap', justifyContent: 'flex-end',
+  },
   clearCheckedButton: {
-    flexDirection: 'row', alignItems: 'center', gap: 5,
+    flexDirection: 'row', alignItems: 'center', gap: 5, flexShrink: 0,
     backgroundColor: colors.accentSoft,
     paddingHorizontal: 12, paddingVertical: 7,
     borderRadius: radius.full,
@@ -874,7 +916,7 @@ const makeStyles = (colors) => StyleSheet.create({
   clearCheckedLabel: { ...type.label, color: colors.accent },
 
   priceHistoryButton: {
-    flexDirection: 'row', alignItems: 'center', gap: 5,
+    flexDirection: 'row', alignItems: 'center', gap: 5, flexShrink: 0,
     backgroundColor: colors.surface,
     borderWidth: 1, borderColor: colors.border,
     paddingHorizontal: 12, paddingVertical: 7,
@@ -919,7 +961,7 @@ const makeStyles = (colors) => StyleSheet.create({
   filterPillLabel:       { ...type.label, color: colors.textSecondary },
   filterPillLabelActive: { color: colors.accent },
 
-  listContent: { paddingHorizontal: spacing.xl, paddingBottom: 230 },
+  listContent: { paddingHorizontal: spacing.xl },
 
   emptyStateContainer: { alignItems: 'center', paddingTop: 60, gap: 12 },
   emptyStateIcon: {

@@ -6,6 +6,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
+import * as ImagePicker from 'expo-image-picker';
 
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
@@ -15,15 +16,22 @@ import { useNotification } from '../../context/NotificationContext';
 import useVisualViewportHeight from '../../hooks/useVisualViewportHeight';
 import DatePickerInput from '../../components/DatePickerInput';
 import {
-  getHouseholdWithPrivate, subscribePriceEntries, addPriceEntriesBatch,
+  getHouseholdWithPrivate, subscribePriceEntries, subscribePantryItems,
+  subscribeReceiptAliases, addPriceEntriesBatch, applyPantryReceiptOps,
+  saveReceiptAliases,
 } from '../../services/firestore';
 import { parseReceipt } from '../../services/openrouter';
 import {
   normalizeReceipt, matchReceiptLines, selectedTotal, toPriceEntryDocs,
+  toPantryOps, findPantryMatch,
 } from '../../utils/receiptImport';
 import {
-  buildPriceHistory, recentStores, formatPrice, todayKey,
+  buildAliasIndex, applyAliases, bindLineToItem, aliasDocsFromLines,
+} from '../../utils/receiptAliases';
+import {
+  buildPriceHistory, recentStores, formatPrice, todayKey, itemKeyOf,
 } from '../../utils/pricing';
+import { PANTRY_CATEGORIES, NON_FOOD_CATEGORIES, UNITS } from '../../utils/categories';
 import { DEFAULT_AI_MODEL, getAiModel, visionModels } from '../../utils/aiModels';
 import { spacing, radius, type } from '../../theme/colors';
 import { useIsDesktop, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
@@ -48,68 +56,243 @@ function uriToBase64(uri) {
 
 // ── Reviewed line ──────────────────────────────────────────────────────────────
 
-function LineRow({ line, index, onToggle, onChange, colors, styles }) {
+function LineRow({
+  line, index, expanded, onToggle, onTogglePantry, onExpand, onChange, onLink,
+  units, categoryDefs, iconFor, linkResults, linkSearch, onLinkSearch, colors, styles,
+}) {
+  // Several known meanings for one printed line — the department-heading case.
+  // Nothing is guessed here; the shopper picks.
+  const needsChoice = !line.aliasApplied && line.aliasOptions?.length > 1;
+
   return (
-    <View style={[styles.lineRow, !line.include && styles.lineRowExcluded]}>
-      <TouchableOpacity
-        onPress={onToggle}
-        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-        accessibilityRole="checkbox"
-        accessibilityState={{ checked: line.include }}
-        accessibilityLabel={`${line.name}, ${line.include ? 'included' : 'excluded'}`}
-      >
-        <View style={[styles.checkbox, line.include && styles.checkboxChecked]}>
-          {line.include && <Ionicons name="checkmark" size={12} color="#fff" />}
-        </View>
-      </TouchableOpacity>
+    <View style={[styles.lineWrap, !line.include && !line.toPantry && styles.lineRowExcluded]}>
+      <View style={styles.lineRow}>
+        <TouchableOpacity
+          onPress={onToggle}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityRole="checkbox"
+          accessibilityState={{ checked: line.include }}
+          accessibilityLabel={`Log a price for ${line.name}`}
+        >
+          <View style={[styles.checkbox, line.include && styles.checkboxChecked]}>
+            {line.include && <Ionicons name="checkmark" size={12} color="#fff" />}
+          </View>
+        </TouchableOpacity>
 
-      <View style={{ flex: 1, gap: 4 }}>
-        <TextInput
-          style={styles.lineName}
-          value={line.name}
-          onChangeText={(name) => onChange(index, { name })}
-          placeholderTextColor={colors.textTertiary}
-          accessibilityLabel={`Name for line ${index + 1}`}
-        />
-        <View style={styles.lineTags}>
-          {line.matchedItem ? (
-            <View style={[styles.tag, { backgroundColor: colors.successSoft }]}>
-              <Text style={[styles.tagLabel, { color: colors.success }]}>
-                {line.matchedItem.itemName}
-              </Text>
-            </View>
-          ) : (
-            <View style={[styles.tag, { backgroundColor: colors.accentSoft }]}>
-              <Text style={[styles.tagLabel, { color: colors.accent }]}>New item</Text>
-            </View>
-          )}
-          {line.lastPrice != null && (
-            <Text style={styles.lineHint}>last {formatPrice(line.lastPrice)}</Text>
-          )}
-          {line.unitMismatch && (
-            <Text style={[styles.lineHint, { color: colors.warning }]}>different unit</Text>
-          )}
+        <View style={{ flex: 1, gap: 4 }}>
+          <TextInput
+            style={styles.lineName}
+            value={line.name}
+            onChangeText={(name) => onChange(index, { name })}
+            placeholderTextColor={colors.textTertiary}
+            accessibilityLabel={`Name for line ${index + 1}`}
+          />
+          <View style={styles.lineTags}>
+            {needsChoice && (
+              <View style={[styles.tag, { backgroundColor: colors.warningSoft }]}>
+                <Text style={[styles.tagLabel, { color: colors.warning }]}>Pick item</Text>
+              </View>
+            )}
+            {line.aliasApplied && (
+              <View style={styles.pantryTag}>
+                <Ionicons name="link-outline" size={11} color={colors.textSecondary} />
+                <Text style={styles.lineHint} numberOfLines={1}>{line.rawName}</Text>
+              </View>
+            )}
+            {line.matchedItem ? (
+              <View style={[styles.tag, { backgroundColor: colors.successSoft }]}>
+                <Text style={[styles.tagLabel, { color: colors.success }]}>
+                  {line.matchedItem.itemName}
+                </Text>
+              </View>
+            ) : (
+              <View style={[styles.tag, { backgroundColor: colors.accentSoft }]}>
+                <Text style={[styles.tagLabel, { color: colors.accent }]}>New item</Text>
+              </View>
+            )}
+            {line.toPantry && (
+              <View style={styles.pantryTag}>
+                <Ionicons
+                  name={line.pantryMatch ? 'add-circle-outline' : 'file-tray-stacked-outline'}
+                  size={11}
+                  color={colors.textSecondary}
+                />
+                <Text style={styles.lineHint}>
+                  {line.pantryMatch ? `+ on ${line.pantryMatch.quantity} ${line.pantryMatch.unit}` : 'to pantry'}
+                </Text>
+              </View>
+            )}
+            {line.lastPrice != null && (
+              <Text style={styles.lineHint}>last {formatPrice(line.lastPrice)}</Text>
+            )}
+            {line.unitMismatch && (
+              <Text style={[styles.lineHint, { color: colors.warning }]}>different unit</Text>
+            )}
+          </View>
         </View>
-      </View>
 
-      <View style={styles.lineNumbers}>
+        <View style={styles.lineNumbers}>
+          <TextInput
+            style={styles.lineQty}
+            value={String(line.quantity)}
+            onChangeText={(v) => onChange(index, { quantity: v.replace(/[^0-9.]/g, '') })}
+            keyboardType="decimal-pad"
+            accessibilityLabel={`Quantity for ${line.name}`}
+          />
+          <Text style={styles.lineUnit}>{line.unit}</Text>
+        </View>
+
         <TextInput
-          style={styles.lineQty}
-          value={String(line.quantity)}
-          onChangeText={(v) => onChange(index, { quantity: v.replace(/[^0-9.]/g, '') })}
+          style={styles.linePrice}
+          value={String(line.price)}
+          onChangeText={(v) => onChange(index, { price: v.replace(/[^0-9.]/g, '') })}
           keyboardType="decimal-pad"
-          accessibilityLabel={`Quantity for ${line.name}`}
+          accessibilityLabel={`Price for ${line.name}`}
         />
-        <Text style={styles.lineUnit}>{line.unit}</Text>
+
+        <TouchableOpacity
+          onPress={onExpand}
+          hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+          accessibilityRole="button"
+          accessibilityState={{ expanded }}
+          accessibilityLabel={`${expanded ? 'Hide' : 'Show'} details for ${line.name}`}
+        >
+          <Ionicons
+            name={expanded ? 'chevron-up' : 'chevron-down'}
+            size={16}
+            color={colors.textTertiary}
+          />
+        </TouchableOpacity>
       </View>
 
-      <TextInput
-        style={styles.linePrice}
-        value={String(line.price)}
-        onChangeText={(v) => onChange(index, { price: v.replace(/[^0-9.]/g, '') })}
-        keyboardType="decimal-pad"
-        accessibilityLabel={`Price for ${line.name}`}
-      />
+      {expanded && (
+        <View style={styles.lineDetail}>
+          <Text style={styles.detailLabel}>Printed on the receipt</Text>
+          <Text style={styles.rawText}>
+            {line.rawName}{line.code ? `  ·  #${line.code}` : ''}
+          </Text>
+
+          {line.aliasOptions?.length > 1 && (
+            <>
+              <Text style={styles.warnText}>
+                This line has meant different products before — pick which one it is.
+              </Text>
+              <View style={styles.chipRow}>
+                {line.aliasOptions.map((opt) => (
+                  <TouchableOpacity
+                    key={opt.itemKey}
+                    style={[styles.chip, line.itemKey === opt.itemKey && styles.chipActive]}
+                    onPress={() => onLink(index, opt)}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: line.itemKey === opt.itemKey }}
+                  >
+                    <Text style={[styles.chipLabel, line.itemKey === opt.itemKey && styles.chipLabelActive]}>
+                      {opt.itemName}
+                      {opt.lastPrice != null ? ` · ${formatPrice(opt.lastPrice)}` : ''}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </>
+          )}
+
+          <Text style={styles.detailLabel}>Link to a tracked item</Text>
+          <TextInput
+            style={styles.textInput}
+            value={linkSearch}
+            onChangeText={onLinkSearch}
+            placeholder="Search your items"
+            placeholderTextColor={colors.textTertiary}
+            accessibilityLabel="Search tracked items to link this line to"
+          />
+          <View style={styles.chipRow}>
+            {linkResults.map((target) => (
+              <TouchableOpacity
+                key={target.itemKey}
+                style={[styles.chip, line.itemKey === target.itemKey && styles.chipActive]}
+                onPress={() => onLink(index, target)}
+                accessibilityRole="button"
+                accessibilityState={{ selected: line.itemKey === target.itemKey }}
+              >
+                <Text style={[styles.chipLabel, line.itemKey === target.itemKey && styles.chipLabelActive]}>
+                  {target.itemName}
+                </Text>
+              </TouchableOpacity>
+            ))}
+            {linkResults.length === 0 && (
+              <Text style={styles.lineHint}>
+                No match — the name above starts a new item.
+              </Text>
+            )}
+          </View>
+          <Text style={styles.lineHint}>
+            Whatever you pick is remembered for “{line.rawName}”, so the next receipt files it
+            for you.
+          </Text>
+
+          <Text style={styles.detailLabel}>Unit</Text>
+          <View style={styles.chipRow}>
+            {units.map((u) => (
+              <TouchableOpacity
+                key={u}
+                style={[styles.chip, line.unit === u && styles.chipActive]}
+                onPress={() => onChange(index, { unit: u })}
+                accessibilityRole="button"
+                accessibilityState={{ selected: line.unit === u }}
+              >
+                <Text style={[styles.chipLabel, line.unit === u && styles.chipLabelActive]}>{u}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <Text style={styles.detailLabel}>Category</Text>
+          <View style={styles.chipRow}>
+            {categoryDefs.map((cat) => (
+              <TouchableOpacity
+                key={cat.label}
+                style={[styles.chip, line.category === cat.label && styles.chipActive]}
+                onPress={() => onChange(index, { category: cat.label })}
+                accessibilityRole="button"
+                accessibilityState={{ selected: line.category === cat.label }}
+              >
+                <Text style={[styles.chipLabel, line.category === cat.label && styles.chipLabelActive]}>
+                  {iconFor(cat.label)} {cat.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <TouchableOpacity
+            style={styles.pantryToggle}
+            onPress={onTogglePantry}
+            accessibilityRole="switch"
+            accessibilityState={{ checked: line.toPantry }}
+            accessibilityLabel={`Add ${line.name} to the pantry`}
+          >
+            <View style={[styles.checkbox, line.toPantry && styles.checkboxChecked]}>
+              {line.toPantry && <Ionicons name="checkmark" size={12} color="#fff" />}
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.pantryToggleLabel}>Add to pantry</Text>
+              {line.pantryMatch && (
+                <Text style={styles.lineHint}>
+                  Tops up “{line.pantryMatch.name}” — {line.pantryMatch.quantity} {line.pantryMatch.unit} on hand
+                </Text>
+              )}
+            </View>
+          </TouchableOpacity>
+
+          {line.toPantry && (
+            <>
+              <Text style={styles.detailLabel}>Expires (optional)</Text>
+              <DatePickerInput
+                value={line.expiryDate}
+                onChange={(expiryDate) => onChange(index, { expiryDate })}
+              />
+            </>
+          )}
+        </View>
+      )}
     </View>
   );
 }
@@ -129,10 +312,24 @@ export default function ReceiptImportScreen({ navigation }) {
   const [apiKey, setApiKey]   = useState('');
   const [aiModel, setAiModel] = useState(DEFAULT_AI_MODEL);
   const [entries, setEntries] = useState([]);
+  const [pantryItems, setPantryItems] = useState([]);
+  const [aliases, setAliases] = useState([]);
+  const [units, setUnits] = useState(UNITS);
+  const [categoryDefs, setCategoryDefs] = useState([
+    ...PANTRY_CATEGORIES, ...NON_FOOD_CATEGORIES,
+  ]);
+  // Categories that default to *not* being stocked — kept separate from
+  // categoryDefs because a custom non-food category is otherwise
+  // indistinguishable from a custom food one once the two lists are merged.
+  const [nonFoodLabels, setNonFoodLabels] = useState(
+    NON_FOOD_CATEGORIES.map((c) => c.label),
+  );
 
   const [file, setFile]           = useState(null);   // { uri, name, mimeType }
   const [analyzing, setAnalyzing] = useState(false);
   const [lines, setLines]         = useState(null);   // null = not analyzed yet
+  const [expanded, setExpanded]   = useState(null);   // index of the open line
+  const [linkSearch, setLinkSearch] = useState('');    // item search in the open line
   const [store, setStore]         = useState('');
   const [date, setDate]           = useState('');
   const [saving, setSaving]       = useState(false);
@@ -142,12 +339,51 @@ export default function ReceiptImportScreen({ navigation }) {
     getHouseholdWithPrivate(householdId).then((hh) => {
       setApiKey(hh?.openRouterApiKey ?? '');
       setAiModel(hh?.aiModel ?? DEFAULT_AI_MODEL);
-    }).catch(() => { /* surfaced when analyzing */ });
-    return subscribePriceEntries(householdId, setEntries);
+      // Same unit/category choices the grocery and pantry screens offer.
+      setUnits([...(hh?.enabledUnits ?? UNITS), ...(hh?.customUnits ?? [])]);
+      const nonFood = [...NON_FOOD_CATEGORIES, ...(hh?.nonFoodCustomCategories ?? [])];
+      setCategoryDefs([
+        ...PANTRY_CATEGORIES, ...(hh?.pantryCustomCategories ?? []), ...nonFood,
+      ]);
+      setNonFoodLabels(nonFood.map((c) => c.label));
+    }).catch(() => { /* surfaced when analyzing; pickers fall back to defaults */ });
+
+    const unsubPrices  = subscribePriceEntries(householdId, setEntries);
+    const unsubPantry  = subscribePantryItems(householdId, setPantryItems);
+    const unsubAliases = subscribeReceiptAliases(householdId, setAliases);
+    return () => { unsubPrices(); unsubPantry(); unsubAliases(); };
   }, [householdId]);
 
   const history = useMemo(() => buildPriceHistory(entries), [entries]);
   const stores  = useMemo(() => recentStores(entries, 12), [entries]);
+  const aliasIndex = useMemo(() => buildAliasIndex(aliases), [aliases]);
+
+  // Everything a receipt line can be linked to: priced items first, plus
+  // pantry-only items that have never been through the price tracker.
+  const linkTargets = useMemo(() => {
+    const byKey = new Map(history.map((item) => [
+      item.itemKey, { itemKey: item.itemKey, itemName: item.itemName, category: item.category },
+    ]));
+    for (const item of pantryItems) {
+      const key = itemKeyOf(item?.name);
+      if (!key || byKey.has(key)) continue;
+      byKey.set(key, { itemKey: key, itemName: item.name, category: item.category });
+    }
+    return [...byKey.values()].sort((a, b) => a.itemName.localeCompare(b.itemName));
+  }, [history, pantryItems]);
+
+  const linkResults = useMemo(() => {
+    const q = linkSearch.trim().toLowerCase();
+    const pool = q
+      ? linkTargets.filter((t) => t.itemName.toLowerCase().includes(q))
+      : linkTargets;
+    return pool.slice(0, 20);
+  }, [linkTargets, linkSearch]);
+
+  const iconFor = useMemo(() => {
+    const map = new Map(categoryDefs.map((c) => [c.label, c.icon]));
+    return (label) => map.get(label) ?? '🛒';
+  }, [categoryDefs]);
 
   const model     = getAiModel(aiModel);
   const isPdf     = /pdf/i.test(file?.mimeType || '');
@@ -155,6 +391,13 @@ export default function ReceiptImportScreen({ navigation }) {
 
   const total = useMemo(() => selectedTotal(lines ?? []), [lines]);
   const includedCount = (lines ?? []).filter((l) => l.include).length;
+  const pantryCount   = (lines ?? []).filter((l) => l.toPantry).length;
+
+  const takeFile = (asset) => {
+    setFile(asset);
+    setLines(null);
+    setExpanded(null);
+  };
 
   const pickFile = async () => {
     try {
@@ -163,10 +406,40 @@ export default function ReceiptImportScreen({ navigation }) {
         copyToCacheDirectory: true,
       });
       if (res.canceled || !res.assets?.length) return;
-      setFile(res.assets[0]);
-      setLines(null);
+      takeFile(res.assets[0]);
     } catch {
       showAlert({ title: 'Could not open file', message: 'Please try selecting the receipt again.', type: 'error' });
+    }
+  };
+
+  // Shoot the receipt straight from the phone camera. Native only — on web the
+  // file picker already covers "upload a photo", and a webcam shot of a till
+  // receipt is never the flow anyone wants.
+  const shootReceipt = async () => {
+    try {
+      const perm = await ImagePicker.requestCameraPermissionsAsync();
+      if (!perm.granted) {
+        showAlert({
+          title: 'Camera access needed',
+          message: 'Allow camera access in Settings to photograph a receipt, or pick an existing photo instead.',
+          type: 'warning',
+        });
+        return;
+      }
+      const res = await ImagePicker.launchCameraAsync({
+        mediaTypes: ['images'],
+        quality: 0.7,           // a till receipt stays legible, the upload stays small
+        allowsEditing: true,    // crop away the counter before it costs vision tokens
+      });
+      if (res.canceled || !res.assets?.length) return;
+      const shot = res.assets[0];
+      takeFile({
+        uri: shot.uri,
+        name: shot.fileName || 'receipt.jpg',
+        mimeType: shot.mimeType || 'image/jpeg',
+      });
+    } catch (e) {
+      showAlert({ title: 'Could not open the camera', message: e.message, type: 'error' });
     }
   };
 
@@ -193,8 +466,15 @@ export default function ReceiptImportScreen({ navigation }) {
         });
         return;
       }
-      setLines(matchReceiptLines(receipt.lines, history));
-      setStore(receipt.store || stores[0] || '');
+      const shopStore = receipt.store || stores[0] || '';
+      // Aliases first: they rewrite a line's identity, and everything after —
+      // history match, category, pantry match — keys off that identity.
+      const aliased = applyAliases(receipt.lines, aliasIndex, { store: shopStore });
+      setLines(matchReceiptLines(aliased, history, {
+        pantryItems,
+        nonFoodCategories: nonFoodLabels,
+      }));
+      setStore(shopStore);
       setDate(receipt.date || todayKey());
     } catch (e) {
       showAlert({ title: 'Could not read receipt', message: e.message, type: 'error' });
@@ -204,23 +484,74 @@ export default function ReceiptImportScreen({ navigation }) {
   };
 
   const updateLine = (index, patch) => {
-    setLines((prev) => prev.map((line, i) => (i === index ? { ...line, ...patch } : line)));
+    setLines((prev) => prev.map((line, i) => {
+      if (i !== index) return line;
+      const next = { ...line, ...patch };
+      // Editing the name or unit can change which pantry row this tops up, so
+      // re-link rather than leaving the parse-time match in place.
+      if (patch.name !== undefined || patch.unit !== undefined) {
+        next.itemKey     = itemKeyOf(next.name);
+        next.pantryMatch = findPantryMatch(next, pantryItems);
+      }
+      return next;
+    }));
   };
 
   const toggleLine = (index) => {
     setLines((prev) => prev.map((line, i) => (i === index ? { ...line, include: !line.include } : line)));
   };
 
+  const togglePantry = (index) => {
+    setLines((prev) => prev.map((line, i) => (i === index ? { ...line, toPantry: !line.toPantry } : line)));
+  };
+
+  // Point a line at a tracked item — a suggestion chip, or a hit from the link
+  // search. This is what teaches the alias table; the raw receipt text on the
+  // line is untouched, so the mapping saved at import is the useful direction.
+  const linkLine = (index, target) => {
+    setLines((prev) => prev.map((line, i) => {
+      if (i !== index) return line;
+      const bound = bindLineToItem(line, target);
+      return { ...bound, pantryMatch: findPantryMatch(bound, pantryItems) };
+    }));
+    setLinkSearch('');
+  };
+
+  const openLine = (index) => {
+    setExpanded(expanded === index ? null : index);
+    setLinkSearch('');
+  };
+
   const save = async () => {
     const docs = toPriceEntryDocs(lines, { store, date, addedBy: user.uid });
-    if (!docs.length) {
-      showAlert({ title: 'Nothing to import', message: 'Select at least one line with a valid price.', type: 'warning' });
+    const pantryOps = toPantryOps(lines, { addedBy: user.uid });
+    const pantryTotal = pantryOps.creates.length + pantryOps.merges.length;
+
+    if (!docs.length && !pantryTotal) {
+      showAlert({
+        title: 'Nothing to import',
+        message: 'Select at least one line to log a price for, or to add to the pantry.',
+        type: 'warning',
+      });
       return;
     }
     setSaving(true);
     try {
+      // Two batches rather than one: they hit different collections and a
+      // partial failure is worth reporting precisely, not rolling back a good
+      // price import because one pantry row vanished mid-scan.
       await addPriceEntriesBatch(householdId, docs);
-      notify('Receipt imported', `${docs.length} price${docs.length !== 1 ? 's' : ''} logged from ${store || 'this receipt'}.`, { type: 'success' });
+      await applyPantryReceiptOps(householdId, pantryOps);
+      // Remember what this receipt's printed lines turned out to mean, so the
+      // next one recognises them without being told again. Best-effort: a
+      // failure here costs the next import a bit of typing, not this import.
+      await saveReceiptAliases(householdId, aliasDocsFromLines(lines, { store }))
+        .catch(() => { /* the import itself already succeeded */ });
+
+      const parts = [];
+      if (docs.length)   parts.push(`${docs.length} price${docs.length !== 1 ? 's' : ''} logged`);
+      if (pantryTotal)   parts.push(`${pantryTotal} pantry item${pantryTotal !== 1 ? 's' : ''} stocked`);
+      notify('Receipt imported', `${parts.join(' · ')} from ${store || 'this receipt'}.`, { type: 'success' });
       navigation.goBack();
     } catch (e) {
       showAlert({ title: 'Error', message: e.message, type: 'error' });
@@ -260,6 +591,18 @@ export default function ReceiptImportScreen({ navigation }) {
 
         {/* Pick + analyze */}
         <View style={styles.card}>
+          {Platform.OS !== 'web' && (
+            <TouchableOpacity
+              style={styles.cameraButton}
+              onPress={shootReceipt}
+              accessibilityRole="button"
+              accessibilityLabel="Photograph a receipt"
+            >
+              <Ionicons name="camera-outline" size={18} color="#fff" />
+              <Text style={styles.cameraButtonLabel}>Photograph receipt</Text>
+            </TouchableOpacity>
+          )}
+
           <TouchableOpacity style={styles.pickButton} onPress={pickFile} accessibilityRole="button">
             <Ionicons name="receipt-outline" size={18} color={colors.accent} />
             <Text style={styles.pickButtonLabel} numberOfLines={1}>
@@ -325,15 +668,27 @@ export default function ReceiptImportScreen({ navigation }) {
             <View style={styles.card}>
               <View style={styles.cardHeader}>
                 <Text style={styles.cardTitle}>Lines</Text>
-                <Text style={styles.cardHint}>{includedCount} of {lines.length} selected</Text>
+                <Text style={styles.cardHint}>
+                  {includedCount} priced · {pantryCount} to pantry
+                </Text>
               </View>
               {lines.map((line, i) => (
                 <LineRow
-                  key={`${line.itemKey}-${i}`}
+                  key={i}
                   line={line}
                   index={i}
+                  expanded={expanded === i}
                   onToggle={() => toggleLine(i)}
+                  onTogglePantry={() => togglePantry(i)}
+                  onExpand={() => openLine(i)}
                   onChange={updateLine}
+                  onLink={linkLine}
+                  units={units}
+                  categoryDefs={categoryDefs}
+                  iconFor={iconFor}
+                  linkResults={linkResults}
+                  linkSearch={linkSearch}
+                  onLinkSearch={setLinkSearch}
                   colors={colors}
                   styles={styles}
                 />
@@ -344,6 +699,7 @@ export default function ReceiptImportScreen({ navigation }) {
               </View>
               <Text style={styles.hintText}>
                 Compare this against the receipt's printed total to spot a misread line.
+                Tap a line to set its unit, category or expiry date.
               </Text>
             </View>
 
@@ -357,6 +713,7 @@ export default function ReceiptImportScreen({ navigation }) {
                 ? <ActivityIndicator color="#fff" />
                 : <Text style={styles.primaryButtonLabel}>
                     Import {includedCount} price{includedCount !== 1 ? 's' : ''}
+                    {pantryCount > 0 ? ` · ${pantryCount} to pantry` : ''}
                   </Text>}
             </TouchableOpacity>
           </>
@@ -393,6 +750,12 @@ const makeStyles = (colors) => StyleSheet.create({
   },
   pickButtonLabel: { ...type.body, color: colors.textPrimary, flex: 1 },
 
+  cameraButton: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    height: 50, borderRadius: radius.md, backgroundColor: colors.accent,
+  },
+  cameraButtonLabel: { ...type.bodyMed, color: '#fff', fontWeight: '700' },
+
   primaryButton: {
     height: 50, alignItems: 'center', justifyContent: 'center',
     borderRadius: radius.md, backgroundColor: colors.accent,
@@ -422,11 +785,28 @@ const makeStyles = (colors) => StyleSheet.create({
   chipLabel:       { ...type.label, color: colors.textSecondary },
   chipLabelActive: { color: colors.accent },
 
+  lineWrap: { borderTopWidth: 1, borderTopColor: colors.border },
   lineRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 10,
-    paddingVertical: 10, borderTopWidth: 1, borderTopColor: colors.border,
+    flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10,
   },
   lineRowExcluded: { opacity: 0.45 },
+
+  lineDetail: {
+    gap: spacing.sm, paddingBottom: spacing.md, paddingLeft: 30,
+  },
+  detailLabel: { ...type.label, color: colors.textSecondary, textTransform: 'uppercase' },
+  rawText: {
+    ...type.bodySm, color: colors.textSecondary,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: radius.sm, paddingHorizontal: 8, paddingVertical: 6,
+  },
+  pantryTag: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  pantryToggle: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    paddingVertical: 6,
+  },
+  pantryToggleLabel: { ...type.bodyMed, color: colors.textPrimary },
   checkbox: {
     width: 20, height: 20, borderRadius: 6,
     borderWidth: 2, borderColor: colors.border,
