@@ -14,6 +14,7 @@ import { NavScrollProvider } from './src/context/NavScrollContext';
 import { FabPositionProvider } from './src/context/FabPositionContext';
 import AppNavigator from './src/navigation/index';
 import { installWebViewportFix } from './src/utils/webViewportFix';
+import { installNotificationHandler } from './src/services/notifications';
 
 function AppContent() {
   const { theme } = useTheme();
@@ -27,6 +28,7 @@ function AppContent() {
 
 export default function App() {
   useEffect(() => installWebViewportFix(), []);
+  useEffect(() => installNotificationHandler(), []);
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>

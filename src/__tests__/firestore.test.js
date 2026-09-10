@@ -866,6 +866,33 @@ describe('weekly todos', () => {
     });
   });
 
+  it('sets a reminder time and its owner', async () => {
+    await updateWeeklyTodo(householdId, 't1', { remindTime: '18:30', remindFor: 'u1' });
+    expect(mockUpdateDoc).toHaveBeenCalledWith('households/hh1/weeklyTodos/t1', {
+      remindTime: '18:30',
+      remindFor: 'u1',
+      updatedAt: 'SERVER_TIMESTAMP',
+    });
+  });
+
+  it('removes the field rather than storing null when a reminder is cleared', async () => {
+    await updateWeeklyTodo(householdId, 't1', { remindTime: null, remindFor: null });
+    expect(mockUpdateDoc).toHaveBeenCalledWith('households/hh1/weeklyTodos/t1', {
+      remindTime: 'DELETE_FIELD',
+      remindFor: 'DELETE_FIELD',
+      updatedAt: 'SERVER_TIMESTAMP',
+    });
+  });
+
+  it('leaves falsy-but-meaningful values alone', async () => {
+    await updateWeeklyTodo(householdId, 't1', { text: '', done: false });
+    expect(mockUpdateDoc).toHaveBeenCalledWith('households/hh1/weeklyTodos/t1', {
+      text: '',
+      done: false,
+      updatedAt: 'SERVER_TIMESTAMP',
+    });
+  });
+
   it('deletes a todo', async () => {
     await deleteWeeklyTodo(householdId, 't1');
     expect(mockDeleteDoc).toHaveBeenCalledWith('households/hh1/weeklyTodos/t1');

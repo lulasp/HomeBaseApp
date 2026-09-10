@@ -620,11 +620,16 @@ export const addWeeklyTodo = (householdId, weekKey, day, text) =>
 export const toggleWeeklyTodo = (householdId, todoId, done) =>
   updateDoc(doc(db, 'households', householdId, 'weeklyTodos', todoId), { done });
 
-// Partial update — used for editing the text and moving a task to another day.
-export const updateWeeklyTodo = (householdId, todoId, data) =>
-  updateDoc(doc(db, 'households', householdId, 'weeklyTodos', todoId), {
-    ...data, updatedAt: serverTimestamp(),
-  });
+// Partial update — editing the text, moving a task to another day, setting or
+// clearing its reminder. A null value removes the field rather than storing
+// null, so cleared reminders leave no residue on the doc.
+export const updateWeeklyTodo = (householdId, todoId, data) => {
+  const patch = { updatedAt: serverTimestamp() };
+  for (const [key, value] of Object.entries(data)) {
+    patch[key] = value === null ? deleteField() : value;
+  }
+  return updateDoc(doc(db, 'households', householdId, 'weeklyTodos', todoId), patch);
+};
 
 export const deleteWeeklyTodo = (householdId, todoId) =>
   deleteDoc(doc(db, 'households', householdId, 'weeklyTodos', todoId));

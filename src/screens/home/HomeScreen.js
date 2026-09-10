@@ -24,6 +24,11 @@ import {
 } from '../../services/firestore';
 import { getDevices } from '../../services/govee';
 import LightShortcutsRow from '../../components/LightShortcutsRow';
+import TimePickerChip from '../../components/TimePickerChip';
+import {
+  remindersSupported, ensureNotificationPermission, syncTodoReminders,
+} from '../../services/notifications';
+import { formatReminderLabel } from '../../utils/reminders';
 import { spacing, radius, type } from '../../theme/colors';
 import { useIsDesktop, SIDEBAR_WIDTH } from '../../navigation/TabBar';
 import { MEAL_TYPES, FULL_DAYS, DAYS_OF_WEEK } from '../../utils/categories';
@@ -237,12 +242,16 @@ function StatPill({ value, label, icon, color, soft, onPress }) {
 function WeeklyCalendar({ householdId, weekKey, todayFull, colors }) {
   const { notify } = useNotification();
   const { showConfirm } = useAlert();
+  const { user } = useAuth();
+  const uid = user?.uid;
   const [todos, setTodos] = useState([]);
   const [selectedDay, setSelectedDay] = useState(todayFull);
   const [inputText, setInputText] = useState('');
   const [editingId, setEditingId] = useState(null);
   const [editText, setEditText] = useState('');
   const [editDay, setEditDay] = useState(null);
+  const [editRemindTime, setEditRemindTime] = useState(null);
+  const scheduledRef = useRef(new Map());
 
   useEffect(() => {
     if (!householdId) return;
@@ -250,6 +259,17 @@ function WeeklyCalendar({ householdId, weekKey, todayFull, colors }) {
       notify('Tasks are out of sync', err?.message || 'Could not load this week.', { type: 'error' });
     });
   }, [householdId, weekKey, notify]);
+
+  // Reminders are local notifications, so each device schedules its own — only
+  // for tasks this user set a reminder on. No-ops on web.
+  useEffect(() => {
+    if (!remindersSupported() || !uid) return;
+    let cancelled = false;
+    syncTodoReminders(todos, uid, scheduledRef.current)
+      .then((next) => { if (!cancelled) scheduledRef.current = next; })
+      .catch((err) => console.error('Could not sync reminders', err));
+    return () => { cancelled = true; };
+  }, [todos, uid]);
 
   // Pending server timestamps read back as null, so a just-added task would
   // jump to the top before settling — sort those to the end where they land.
@@ -275,13 +295,31 @@ function WeeklyCalendar({ householdId, weekKey, todayFull, colors }) {
     setEditingId(todo.id);
     setEditText(todo.text);
     setEditDay(todo.day);
+    setEditRemindTime(todo.remindTime || null);
   }, []);
 
   const cancelEdit = useCallback(() => {
     setEditingId(null);
     setEditText('');
     setEditDay(null);
+    setEditRemindTime(null);
   }, []);
+
+  // Ask for notification permission the first time a reminder is actually set,
+  // rather than prompting on app launch.
+  const pickRemindTime = useCallback(async (next) => {
+    if (next && remindersSupported()) {
+      const granted = await ensureNotificationPermission();
+      if (!granted) {
+        notify(
+          'Notifications are off',
+          'Enable notifications for HomeBase in Settings to get reminders.',
+          { type: 'warning' },
+        );
+      }
+    }
+    setEditRemindTime(next);
+  }, [notify]);
 
   const saveEdit = useCallback(async (todo) => {
     const text = editText.trim();
@@ -291,16 +329,23 @@ function WeeklyCalendar({ householdId, weekKey, todayFull, colors }) {
       notify('Day is full', `${movedTo} already has ${MAX_TODOS_PER_DAY} tasks.`, { type: 'warning' });
       return;
     }
-    if (text === todo.text && !movedTo) { cancelEdit(); return; }
+    const remindChanged = (editRemindTime || null) !== (todo.remindTime || null);
+    if (text === todo.text && !movedTo && !remindChanged) { cancelEdit(); return; }
     cancelEdit();
     try {
-      await updateWeeklyTodo(householdId, todo.id, movedTo ? { text, day: movedTo } : { text });
+      const patch = { text };
+      if (movedTo) patch.day = movedTo;
+      if (remindChanged) {
+        patch.remindTime = editRemindTime || null;
+        patch.remindFor = editRemindTime ? uid : null;
+      }
+      await updateWeeklyTodo(householdId, todo.id, patch);
       if (movedTo) notify('Task moved', `Moved to ${movedTo}.`, { type: 'info' });
     } catch (err) {
       console.error(err);
       notify('Could not save task', err?.message || 'Please try again.', { type: 'error' });
     }
-  }, [editText, editDay, countsByDay, householdId, notify, cancelEdit]);
+  }, [editText, editDay, editRemindTime, countsByDay, householdId, uid, notify, cancelEdit]);
 
   const handleDelete = useCallback(async (todo) => {
     const confirmed = await showConfirm({
@@ -475,6 +520,16 @@ function WeeklyCalendar({ householdId, weekKey, todayFull, colors }) {
                     <Ionicons name="trash-outline" size={16} color={colors.danger} />
                   </TouchableOpacity>
                 </View>
+
+                {/* Reminder */}
+                <View style={styles.remindRow}>
+                  <TimePickerChip value={editRemindTime} onChange={pickRemindTime} />
+                  {editRemindTime && !remindersSupported() && (
+                    <Text style={[styles.remindHint, { color: colors.textTertiary }]}>
+                      Fires on your phone
+                    </Text>
+                  )}
+                </View>
               </View>
             ) : (
               <>
@@ -512,6 +567,19 @@ function WeeklyCalendar({ householdId, weekKey, todayFull, colors }) {
                   >
                     {todo.text}
                   </Text>
+                  {todo.remindTime && (
+                    <View style={styles.remindBadge}>
+                      <Ionicons
+                        name={todo.done ? 'notifications-off-outline' : 'notifications-outline'}
+                        size={11}
+                        color={colors.textTertiary}
+                      />
+                      <Text style={[styles.remindBadgeText, { color: colors.textTertiary }]}>
+                        {formatReminderLabel(todo.remindTime)}
+                        {todo.remindFor && todo.remindFor !== uid ? ' · theirs' : ''}
+                      </Text>
+                    </View>
+                  )}
                 </TouchableOpacity>
                 <TouchableOpacity
                   onPress={() => handleDelete(todo)}
@@ -1156,6 +1224,10 @@ const styles = StyleSheet.create({
   },
   moveChipText: { ...type.caption, fontWeight: '700', fontSize: 11 },
   moveDeleteBtn: { paddingHorizontal: 6, paddingVertical: 5 },
+  remindRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+  remindHint: { ...type.caption, fontSize: 11, fontStyle: 'italic' },
+  remindBadge: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 2 },
+  remindBadgeText: { ...type.caption, fontSize: 11, fontWeight: '600' },
   todoAddRow: {
     flexDirection: 'row', alignItems: 'center', gap: 10,
     paddingTop: 10, borderTopWidth: StyleSheet.hairlineWidth,

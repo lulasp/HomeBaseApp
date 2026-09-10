@@ -82,6 +82,13 @@ Downside: the day tabs now mix two weeks, the "N/M done" count gets ambiguous,
 and week navigation (feature 1) interacts badly — which pair of weeks are you
 looking at? Rejected unless week navigation is dropped.
 
+### Reminders interact with this
+A carried-forward task keeps its `remindTime` (a wall-clock `'HH:mm'`), so the
+reminder follows it to the new week automatically — but `remindFor` still points
+at whoever set it last week. Decide whether carrying forward re-arms the reminder
+or clears it; silently re-arming a reminder for a task someone ignored all last
+week is the annoying option.
+
 ### Edge case worth deciding
 If someone is away for three weeks, Option A only reaches back one week. Either
 walk back N weeks on mount (N queries) or accept that only the immediately
