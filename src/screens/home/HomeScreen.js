@@ -415,7 +415,10 @@ function WeeklyCalendar({ householdId, weekKey, todayFull, colors }) {
                   isToday && !isSelected && { borderWidth: 1.5, borderColor: colors.accent },
                   isSelected && { backgroundColor: colors.accent },
                 ]}
-                animate={{ scale: isSelected ? 1.08 : 1 }}
+                // A lift, not a scale: these tabs are flex: 1, so scaling grows
+                // them by a share of their own width and overlaps the
+                // neighbours once the row is wide (desktop).
+                animate={{ translateY: isSelected ? -3 : 0 }}
                 transition={{ type: 'spring', damping: 13, stiffness: 260 }}
               >
                 <Text style={[
