@@ -29,6 +29,7 @@ jest.mock('firebase/firestore', () => ({
   setDoc: (...args) => mockSetDoc(...args),
   query: jest.fn(),
   where: jest.fn(),
+  orderBy: jest.fn(),
   onSnapshot: jest.fn(),
   serverTimestamp: () => mockServerTimestamp(),
   deleteField: () => mockDeleteField(),
@@ -67,8 +68,13 @@ import {
   addPriceEntriesBatch,
   applyPantryReceiptOps,
   saveReceiptAliases,
+  subscribeWeeklyTodos,
+  addWeeklyTodo,
+  toggleWeeklyTodo,
+  updateWeeklyTodo,
+  deleteWeeklyTodo,
 } from '../services/firestore';
-import { onSnapshot, where } from 'firebase/firestore';
+import { onSnapshot, where, orderBy } from 'firebase/firestore';
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -787,5 +793,108 @@ describe('transferHouseholdOwnership', () => {
     mockGetDoc.mockResolvedValue({ exists: () => false });
     await expect(transferHouseholdOwnership('hh1', 'u2')).rejects.toThrow('not found');
     expect(mockUpdateDoc).not.toHaveBeenCalled();
+  });
+});
+
+// ── Weekly todos ──────────────────────────────────────────────────────────────
+
+describe('weekly todos', () => {
+  const householdId = 'hh1';
+
+  it('subscribes to a single week and maps the docs', () => {
+    const unsub = jest.fn();
+    const cb = jest.fn();
+    onSnapshot.mockImplementation((q, handler) => {
+      handler({ docs: [{ id: 't1', data: () => ({ text: 'Bins', day: 'Tuesday' }) }] });
+      return unsub;
+    });
+    const result = subscribeWeeklyTodos(householdId, '2026-09-07', cb);
+    expect(where).toHaveBeenCalledWith('weekKey', '==', '2026-09-07');
+    expect(cb).toHaveBeenCalledWith([{ id: 't1', text: 'Bins', day: 'Tuesday' }]);
+    expect(result).toBe(unsub);
+  });
+
+  // A composite index would be needed for where + orderBy; without it the
+  // listener dies silently and the widget shows stale rows that never update.
+  it('uses no orderBy, so the query needs no composite index', () => {
+    onSnapshot.mockImplementation(() => jest.fn());
+    subscribeWeeklyTodos(householdId, '2026-09-07', jest.fn());
+    expect(orderBy).not.toHaveBeenCalled();
+  });
+
+  it('reports listener failures to the caller instead of swallowing them', () => {
+    const onError = jest.fn();
+    const failure = new Error('The query requires an index');
+    onSnapshot.mockImplementation((q, handler, errHandler) => {
+      errHandler(failure);
+      return jest.fn();
+    });
+    subscribeWeeklyTodos(householdId, '2026-09-07', jest.fn(), onError);
+    expect(onError).toHaveBeenCalledWith(failure);
+  });
+
+  it('adds a todo with a server timestamp and done=false', async () => {
+    await addWeeklyTodo(householdId, '2026-09-07', 'Tuesday', 'Take the bins out');
+    expect(mockAddDoc).toHaveBeenCalledWith('households/hh1/weeklyTodos', {
+      weekKey: '2026-09-07',
+      day: 'Tuesday',
+      text: 'Take the bins out',
+      done: false,
+      createdAt: 'SERVER_TIMESTAMP',
+    });
+  });
+
+  it('toggles done without touching other fields', async () => {
+    await toggleWeeklyTodo(householdId, 't1', true);
+    expect(mockUpdateDoc).toHaveBeenCalledWith('households/hh1/weeklyTodos/t1', { done: true });
+  });
+
+  it('updates the text and stamps updatedAt', async () => {
+    await updateWeeklyTodo(householdId, 't1', { text: 'Take the recycling out' });
+    expect(mockUpdateDoc).toHaveBeenCalledWith('households/hh1/weeklyTodos/t1', {
+      text: 'Take the recycling out',
+      updatedAt: 'SERVER_TIMESTAMP',
+    });
+  });
+
+  it('moves a todo to another day', async () => {
+    await updateWeeklyTodo(householdId, 't1', { text: 'Bins', day: 'Thursday' });
+    expect(mockUpdateDoc).toHaveBeenCalledWith('households/hh1/weeklyTodos/t1', {
+      text: 'Bins',
+      day: 'Thursday',
+      updatedAt: 'SERVER_TIMESTAMP',
+    });
+  });
+
+  it('sets a reminder time and its owner', async () => {
+    await updateWeeklyTodo(householdId, 't1', { remindTime: '18:30', remindFor: 'u1' });
+    expect(mockUpdateDoc).toHaveBeenCalledWith('households/hh1/weeklyTodos/t1', {
+      remindTime: '18:30',
+      remindFor: 'u1',
+      updatedAt: 'SERVER_TIMESTAMP',
+    });
+  });
+
+  it('removes the field rather than storing null when a reminder is cleared', async () => {
+    await updateWeeklyTodo(householdId, 't1', { remindTime: null, remindFor: null });
+    expect(mockUpdateDoc).toHaveBeenCalledWith('households/hh1/weeklyTodos/t1', {
+      remindTime: 'DELETE_FIELD',
+      remindFor: 'DELETE_FIELD',
+      updatedAt: 'SERVER_TIMESTAMP',
+    });
+  });
+
+  it('leaves falsy-but-meaningful values alone', async () => {
+    await updateWeeklyTodo(householdId, 't1', { text: '', done: false });
+    expect(mockUpdateDoc).toHaveBeenCalledWith('households/hh1/weeklyTodos/t1', {
+      text: '',
+      done: false,
+      updatedAt: 'SERVER_TIMESTAMP',
+    });
+  });
+
+  it('deletes a todo', async () => {
+    await deleteWeeklyTodo(householdId, 't1');
+    expect(mockDeleteDoc).toHaveBeenCalledWith('households/hh1/weeklyTodos/t1');
   });
 });
