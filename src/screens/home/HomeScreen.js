@@ -15,13 +15,20 @@ import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { useNavScrollProps } from '../../context/NavScrollContext';
 import { useNotification } from '../../context/NotificationContext';
+import { useAlert } from '../../context/AlertContext';
 import {
   getHouseholdWithPrivate, subscribePantryItems, subscribeGroceryItems,
   subscribeBills, subscribeMealPlan, subscribeLightShortcuts,
   subscribeWeeklyTodos, addWeeklyTodo, toggleWeeklyTodo, deleteWeeklyTodo,
+  updateWeeklyTodo,
 } from '../../services/firestore';
 import { getDevices } from '../../services/govee';
 import LightShortcutsRow from '../../components/LightShortcutsRow';
+import TimePickerChip from '../../components/TimePickerChip';
+import {
+  remindersSupported, ensureNotificationPermission, syncTodoReminders,
+} from '../../services/notifications';
+import { formatReminderLabel } from '../../utils/reminders';
 import { spacing, radius, type } from '../../theme/colors';
 import { useIsDesktop, SIDEBAR_WIDTH } from '../../navigation/TabBar';
 import { MEAL_TYPES, FULL_DAYS, DAYS_OF_WEEK } from '../../utils/categories';
@@ -234,21 +241,128 @@ function StatPill({ value, label, icon, color, soft, onPress }) {
 
 function WeeklyCalendar({ householdId, weekKey, todayFull, colors }) {
   const { notify } = useNotification();
+  const { showConfirm } = useAlert();
+  const { user } = useAuth();
+  const uid = user?.uid;
   const [todos, setTodos] = useState([]);
   const [selectedDay, setSelectedDay] = useState(todayFull);
   const [inputText, setInputText] = useState('');
+  const [editingId, setEditingId] = useState(null);
+  const [editText, setEditText] = useState('');
+  const [editDay, setEditDay] = useState(null);
+  const [editRemindTime, setEditRemindTime] = useState(null);
+  const scheduledRef = useRef(new Map());
 
   useEffect(() => {
     if (!householdId) return;
-    return subscribeWeeklyTodos(householdId, weekKey, setTodos);
-  }, [householdId, weekKey]);
+    return subscribeWeeklyTodos(householdId, weekKey, setTodos, (err) => {
+      notify('Tasks are out of sync', err?.message || 'Could not load this week.', { type: 'error' });
+    });
+  }, [householdId, weekKey, notify]);
 
+  // Reminders are local notifications, so each device schedules its own — only
+  // for tasks this user set a reminder on. No-ops on web.
+  useEffect(() => {
+    if (!remindersSupported() || !uid) return;
+    let cancelled = false;
+    syncTodoReminders(todos, uid, scheduledRef.current)
+      .then((next) => { if (!cancelled) scheduledRef.current = next; })
+      .catch((err) => console.error('Could not sync reminders', err));
+    return () => { cancelled = true; };
+  }, [todos, uid]);
+
+  // Pending server timestamps read back as null, so a just-added task would
+  // jump to the top before settling — sort those to the end where they land.
   const dayTodos = useMemo(
-    () => todos.filter((t) => t.day === selectedDay),
+    () => todos
+      .filter((t) => t.day === selectedDay)
+      .sort((a, b) => (a.createdAt?.toMillis?.() ?? Infinity) - (b.createdAt?.toMillis?.() ?? Infinity)),
     [todos, selectedDay],
   );
+  const countsByDay = useMemo(() => {
+    const counts = {};
+    for (const t of todos) {
+      const c = counts[t.day] || (counts[t.day] = { total: 0, pending: 0 });
+      c.total += 1;
+      if (!t.done) c.pending += 1;
+    }
+    return counts;
+  }, [todos]);
   const doneTodos = dayTodos.filter((t) => t.done).length;
   const atCap = dayTodos.length >= MAX_TODOS_PER_DAY;
+
+  const startEdit = useCallback((todo) => {
+    setEditingId(todo.id);
+    setEditText(todo.text);
+    setEditDay(todo.day);
+    setEditRemindTime(todo.remindTime || null);
+  }, []);
+
+  const cancelEdit = useCallback(() => {
+    setEditingId(null);
+    setEditText('');
+    setEditDay(null);
+    setEditRemindTime(null);
+  }, []);
+
+  // Ask for notification permission the first time a reminder is actually set,
+  // rather than prompting on app launch.
+  const pickRemindTime = useCallback(async (next) => {
+    if (next && remindersSupported()) {
+      const granted = await ensureNotificationPermission();
+      if (!granted) {
+        notify(
+          'Notifications are off',
+          'Enable notifications for HomeBase in Settings to get reminders.',
+          { type: 'warning' },
+        );
+      }
+    }
+    setEditRemindTime(next);
+  }, [notify]);
+
+  const saveEdit = useCallback(async (todo) => {
+    const text = editText.trim();
+    if (!text) { cancelEdit(); return; }          // empty text reverts rather than blanking the task
+    const movedTo = editDay !== todo.day ? editDay : null;
+    if (movedTo && (countsByDay[movedTo]?.total || 0) >= MAX_TODOS_PER_DAY) {
+      notify('Day is full', `${movedTo} already has ${MAX_TODOS_PER_DAY} tasks.`, { type: 'warning' });
+      return;
+    }
+    const remindChanged = (editRemindTime || null) !== (todo.remindTime || null);
+    if (text === todo.text && !movedTo && !remindChanged) { cancelEdit(); return; }
+    cancelEdit();
+    try {
+      const patch = { text };
+      if (movedTo) patch.day = movedTo;
+      if (remindChanged) {
+        patch.remindTime = editRemindTime || null;
+        patch.remindFor = editRemindTime ? uid : null;
+      }
+      await updateWeeklyTodo(householdId, todo.id, patch);
+      if (movedTo) notify('Task moved', `Moved to ${movedTo}.`, { type: 'info' });
+    } catch (err) {
+      console.error(err);
+      notify('Could not save task', err?.message || 'Please try again.', { type: 'error' });
+    }
+  }, [editText, editDay, editRemindTime, countsByDay, householdId, uid, notify, cancelEdit]);
+
+  const handleDelete = useCallback(async (todo) => {
+    const confirmed = await showConfirm({
+      title: 'Delete task',
+      message: `Delete "${todo.text}"?`,
+      type: 'danger',
+      confirmLabel: 'Delete',
+    });
+    if (!confirmed) return;
+    if (editingId === todo.id) cancelEdit();
+    try {
+      await deleteWeeklyTodo(householdId, todo.id);
+    } catch (err) {
+      console.error(err);
+      notify('Could not delete task', err?.message || 'Please try again.', { type: 'error' });
+    }
+  }, [householdId, showConfirm, notify, editingId, cancelEdit]);
 
   const handleAdd = useCallback(async () => {
     const text = inputText.trim();
@@ -284,12 +398,12 @@ function WeeklyCalendar({ householdId, weekKey, todayFull, colors }) {
           const full = FULL_DAYS[i];
           const isToday = full === todayFull;
           const isSelected = full === selectedDay;
-          const pending = todos.filter((t) => t.day === full && !t.done).length;
+          const pending = countsByDay[full]?.pending || 0;
           return (
             <Pressable
               key={full}
               style={{ flex: 1 }}
-              onPress={() => setSelectedDay(full)}
+              onPress={() => { cancelEdit(); setSelectedDay(full); }}
               accessibilityRole="button"
               accessibilityLabel={full}
               accessibilityState={{ selected: isSelected }}
@@ -301,7 +415,10 @@ function WeeklyCalendar({ householdId, weekKey, todayFull, colors }) {
                   isToday && !isSelected && { borderWidth: 1.5, borderColor: colors.accent },
                   isSelected && { backgroundColor: colors.accent },
                 ]}
-                animate={{ scale: isSelected ? 1.08 : 1 }}
+                // A lift, not a scale: these tabs are flex: 1, so scaling grows
+                // them by a share of their own width and overlaps the
+                // neighbours once the row is wide (desktop).
+                animate={{ translateY: isSelected ? -3 : 0 }}
                 transition={{ type: 'spring', damping: 13, stiffness: 260 }}
               >
                 <Text style={[
@@ -339,37 +456,144 @@ function WeeklyCalendar({ householdId, weekKey, todayFull, colors }) {
             exit={{ opacity: 0, translateX: 12, scale: 0.95 }}
             transition={{ type: 'timing', duration: 260, easing: Easing.out(Easing.cubic) }}
           >
-            <TouchableOpacity
-              onPress={() => toggleWeeklyTodo(householdId, todo.id, !todo.done).catch(console.error)}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            >
-              <M
-                animate={{ scale: todo.done ? [1, 1.25, 1] : 1 }}
-                transition={{ type: 'timing', duration: 260 }}
-              >
-                <Ionicons
-                  name={todo.done ? 'checkmark-circle' : 'ellipse-outline'}
-                  size={20}
-                  color={todo.done ? colors.sage : colors.textTertiary}
-                />
-              </M>
-            </TouchableOpacity>
-            <Text
-              style={[
-                styles.todoText,
-                { color: todo.done ? colors.textTertiary : colors.textPrimary },
-                todo.done && styles.todoDone,
-              ]}
-              numberOfLines={2}
-            >
-              {todo.text}
-            </Text>
-            <TouchableOpacity
-              onPress={() => deleteWeeklyTodo(householdId, todo.id).catch(console.error)}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            >
-              <Ionicons name="close" size={15} color={colors.textTertiary} />
-            </TouchableOpacity>
+            {editingId === todo.id ? (
+              <View style={styles.todoEditWrap}>
+                <View style={styles.todoEditRow}>
+                  <TextInput
+                    style={[styles.todoEditInput, { color: colors.textPrimary, backgroundColor: colors.muted }]}
+                    value={editText}
+                    onChangeText={setEditText}
+                    onSubmitEditing={() => saveEdit(todo)}
+                    placeholder="Task"
+                    placeholderTextColor={colors.textTertiary}
+                    returnKeyType="done"
+                    autoFocus
+                    accessibilityLabel="Edit task text"
+                  />
+                  <TouchableOpacity
+                    onPress={() => saveEdit(todo)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Save task"
+                  >
+                    <Ionicons name="checkmark-circle" size={22} color={colors.accent} />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={cancelEdit}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Cancel editing"
+                  >
+                    <Ionicons name="close-circle" size={22} color={colors.textTertiary} />
+                  </TouchableOpacity>
+                </View>
+
+                {/* Move to another day */}
+                <View style={styles.moveRow}>
+                  {DAYS_OF_WEEK.map((short, i) => {
+                    const full = FULL_DAYS[i];
+                    const isPicked = full === editDay;
+                    return (
+                      <TouchableOpacity
+                        key={full}
+                        style={[
+                          styles.moveChip,
+                          { backgroundColor: isPicked ? colors.accent : colors.muted },
+                        ]}
+                        onPress={() => setEditDay(full)}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Move to ${full}`}
+                        accessibilityState={{ selected: isPicked }}
+                      >
+                        <Text style={[
+                          styles.moveChipText,
+                          { color: isPicked ? '#fff' : colors.textSecondary },
+                        ]}>
+                          {short}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                  <TouchableOpacity
+                    style={styles.moveDeleteBtn}
+                    onPress={() => handleDelete(todo)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Delete task"
+                  >
+                    <Ionicons name="trash-outline" size={16} color={colors.danger} />
+                  </TouchableOpacity>
+                </View>
+
+                {/* Reminder */}
+                <View style={styles.remindRow}>
+                  <TimePickerChip value={editRemindTime} onChange={pickRemindTime} />
+                  {editRemindTime && !remindersSupported() && (
+                    <Text style={[styles.remindHint, { color: colors.textTertiary }]}>
+                      Fires on your phone
+                    </Text>
+                  )}
+                </View>
+              </View>
+            ) : (
+              <>
+                <TouchableOpacity
+                  onPress={() => toggleWeeklyTodo(householdId, todo.id, !todo.done).catch(console.error)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  accessibilityRole="checkbox"
+                  accessibilityLabel={todo.text}
+                  accessibilityState={{ checked: !!todo.done }}
+                >
+                  <M
+                    animate={{ scale: todo.done ? [1, 1.25, 1] : 1 }}
+                    transition={{ type: 'timing', duration: 260 }}
+                  >
+                    <Ionicons
+                      name={todo.done ? 'checkmark-circle' : 'ellipse-outline'}
+                      size={20}
+                      color={todo.done ? colors.sage : colors.textTertiary}
+                    />
+                  </M>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.todoTextTap}
+                  onPress={() => startEdit(todo)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Edit ${todo.text}`}
+                >
+                  <Text
+                    style={[
+                      styles.todoText,
+                      { color: todo.done ? colors.textTertiary : colors.textPrimary },
+                      todo.done && styles.todoDone,
+                    ]}
+                    numberOfLines={2}
+                  >
+                    {todo.text}
+                  </Text>
+                  {todo.remindTime && (
+                    <View style={styles.remindBadge}>
+                      <Ionicons
+                        name={todo.done ? 'notifications-off-outline' : 'notifications-outline'}
+                        size={11}
+                        color={colors.textTertiary}
+                      />
+                      <Text style={[styles.remindBadgeText, { color: colors.textTertiary }]}>
+                        {formatReminderLabel(todo.remindTime)}
+                        {todo.remindFor && todo.remindFor !== uid ? ' · theirs' : ''}
+                      </Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => handleDelete(todo)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Delete ${todo.text}`}
+                >
+                  <Ionicons name="close" size={15} color={colors.textTertiary} />
+                </TouchableOpacity>
+              </>
+            )}
           </M>
         ))}
       </Presence>
@@ -987,8 +1211,26 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', gap: 10,
     paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  todoText: { ...type.bodyMed, flex: 1, fontSize: 14 },
+  todoTextTap: { flex: 1 },
+  todoText: { ...type.bodyMed, fontSize: 14 },
   todoDone: { textDecorationLine: 'line-through', opacity: 0.5 },
+  todoEditWrap: { flex: 1, gap: 8 },
+  todoEditRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  todoEditInput: {
+    ...type.bodyMed, flex: 1, fontSize: 14,
+    paddingVertical: 6, paddingHorizontal: 10, borderRadius: radius.md,
+  },
+  moveRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  moveChip: {
+    flex: 1, alignItems: 'center', paddingVertical: 5,
+    borderRadius: radius.full,
+  },
+  moveChipText: { ...type.caption, fontWeight: '700', fontSize: 11 },
+  moveDeleteBtn: { paddingHorizontal: 6, paddingVertical: 5 },
+  remindRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+  remindHint: { ...type.caption, fontSize: 11, fontStyle: 'italic' },
+  remindBadge: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 2 },
+  remindBadgeText: { ...type.caption, fontSize: 11, fontWeight: '600' },
   todoAddRow: {
     flexDirection: 'row', alignItems: 'center', gap: 10,
     paddingTop: 10, borderTopWidth: StyleSheet.hairlineWidth,
