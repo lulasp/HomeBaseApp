@@ -54,7 +54,9 @@ function WebDateInput({ value, onChange, hasError, colors }) {
   );
 }
 
-export default function DatePickerInput({ value, onChange, hasError }) {
+export default function DatePickerInput({
+  value, onChange, hasError, placeholder = 'Optional', accessibilityLabel = 'Select expiry date',
+}) {
   const { colors, theme } = useTheme();
   const [showPicker, setShowPicker] = useState(false);
 
@@ -84,11 +86,11 @@ export default function DatePickerInput({ value, onChange, hasError }) {
           onPress={() => setShowPicker(true)}
           activeOpacity={0.7}
           accessibilityRole="button"
-          accessibilityLabel="Select expiry date"
+          accessibilityLabel={accessibilityLabel}
         >
           <Ionicons name="calendar-outline" size={17} color={colors.textTertiary} />
           <Text style={[styles.fieldText, !displayText && styles.placeholder]}>
-            {displayText || 'Optional'}
+            {displayText || placeholder}
           </Text>
           {displayText ? (
             <TouchableOpacity onPress={handleClear} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
@@ -124,11 +126,11 @@ export default function DatePickerInput({ value, onChange, hasError }) {
         onPress={() => setShowPicker((v) => !v)}
         activeOpacity={0.7}
         accessibilityRole="button"
-        accessibilityLabel="Select expiry date"
+        accessibilityLabel={accessibilityLabel}
       >
         <Ionicons name="calendar-outline" size={17} color={colors.textTertiary} />
         <Text style={[styles.fieldText, !displayText && styles.placeholder]}>
-          {displayText || 'Optional'}
+          {displayText || placeholder}
         </Text>
         {displayText ? (
           <TouchableOpacity onPress={handleClear} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
