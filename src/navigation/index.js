@@ -22,6 +22,7 @@ import AddRecipeScreen      from '../screens/recipes/AddRecipeScreen';
 
 import PantryScreen         from '../screens/pantry/PantryScreen';
 import NutritionScreen      from '../screens/nutrition/NutritionScreen';
+import BodyGoalsScreen      from '../screens/nutrition/BodyGoalsScreen';
 import ProfileScreen        from '../screens/settings/ProfileScreen';
 import HouseholdEditScreen  from '../screens/settings/HouseholdEditScreen';
 import HomeLightsScreen         from '../screens/lights/HomeLightsScreen';
@@ -72,6 +73,15 @@ function RecipesStack() {
   );
 }
 
+function NutritionStack() {
+  return (
+    <Stack.Navigator screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="NutritionHome" component={NutritionScreen} />
+      <Stack.Screen name="BodyGoals"     component={BodyGoalsScreen} />
+    </Stack.Navigator>
+  );
+}
+
 function MainTabs() {
   const isDesktop = useIsDesktop();
   return (
@@ -84,7 +94,7 @@ function MainTabs() {
       <Tab.Screen name="Grocery"   component={GroceryStack}      />
       <Tab.Screen name="Recipes"   component={RecipesStack}      />
       <Tab.Screen name="Pantry"    component={PantryScreen}      />
-      <Tab.Screen name="Nutrition"  component={NutritionScreen}   />
+      <Tab.Screen name="Nutrition"  component={NutritionStack}    />
       <Tab.Screen name="AI"                component={AIScreen}                 />
       <Tab.Screen name="HomeLights"        component={HomeLightsScreen}         />
       <Tab.Screen name="Xiaomi"            component={XiaomiScreen}             />

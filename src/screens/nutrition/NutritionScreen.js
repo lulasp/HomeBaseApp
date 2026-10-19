@@ -16,6 +16,7 @@ import { DAYS_OF_WEEK, FULL_DAYS, MEAL_TYPES } from '../../utils/categories';
 import { useIsDesktop, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
 import { Rise, useEntranceReplay } from '../../components/Motion';
 import AddRecipeScreen from '../recipes/AddRecipeScreen';
+import useBodyGoals from '../../hooks/useBodyGoals';
 
 const getWeekKey = (date) => format(startOfWeek(date, { weekStartsOn: 1 }), 'yyyy-MM-dd');
 
@@ -75,6 +76,8 @@ export default function NutritionScreen({ navigation }) {
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const isDesktop = useIsDesktop();
   const contentKey = useEntranceReplay();
+  const body = useBodyGoals(householdId, user?.uid);
+  const calorieTarget = body.calories?.target ?? null;
 
   const [currentWeek, setCurrentWeek]     = useState(new Date());
   const [mealPlan, setMealPlan]           = useState({});
@@ -477,6 +480,12 @@ export default function NutritionScreen({ navigation }) {
   const totalMealsPlanned = FULL_DAYS.reduce((sum, day) => sum + MEAL_TYPES.filter((mt) => getMeal(day, mt)).length, 0);
   const todayDateKey      = format(now, 'yyyy-MM-dd');
   const maxDayCalories    = Math.max(...FULL_DAYS.map(getDayCalories), 1);
+  // Planned vs the signed-in member's target, e.g. "1,850 / 2,100 cal".
+  const isOverTarget = (cal) => calorieTarget != null && cal > calorieTarget;
+  const fmtDayCalories = (cal, compact = false) => {
+    if (calorieTarget == null) return `${cal} cal`;
+    return compact ? `${cal}/${calorieTarget}` : `${cal.toLocaleString()} / ${calorieTarget.toLocaleString()} cal`;
+  };
 
   const getMealTimerStatus = (dayIndex, mealType, meal) => {
     if (!meal) return null;
@@ -577,7 +586,7 @@ export default function NutritionScreen({ navigation }) {
   const header = (
     <>
       <View style={styles.headerSection}>
-        <Text style={styles.screenTitle}>Meal Plan</Text>
+        <Text style={styles.screenTitle}>Nutrition</Text>
         <View style={styles.weekNavigator}>
           {!isCurrentWeek && (
             <TouchableOpacity
@@ -660,6 +669,38 @@ export default function NutritionScreen({ navigation }) {
           <Text style={styles.summaryStatLabel}>Cal / day avg</Text>
         </View>
       </View>
+
+      {!body.loading && !body.error && (
+        <TouchableOpacity
+          style={styles.targetCard}
+          onPress={() => navigation.navigate('BodyGoals')}
+          accessibilityRole="button"
+          accessibilityLabel="Open body and goals"
+        >
+          <View style={styles.targetIcon}>
+            <Ionicons name="body-outline" size={18} color={colors.accent} />
+          </View>
+          {calorieTarget != null ? (
+            <View style={{ flex: 1 }}>
+              <Text style={styles.targetValue}>{calorieTarget.toLocaleString()} kcal / day</Text>
+              <Text style={styles.targetMeta}>
+                Your target · {Math.round(body.currentWeight * 10) / 10} kg
+                {body.profile?.goal && body.profile.goal !== 'maintain'
+                  ? ` · ${body.profile.goal === 'lose' ? 'losing' : 'gaining'} ${body.profile.weeklyRateKg} kg/wk`
+                  : ' · maintaining'}
+              </Text>
+            </View>
+          ) : (
+            <View style={{ flex: 1 }}>
+              <Text style={styles.targetValue}>Body & goals</Text>
+              <Text style={styles.targetMeta}>
+                {body.profile ? 'Log your weight' : 'Add your height, weight and goal'} to get a daily calorie target
+              </Text>
+            </View>
+          )}
+          <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
+        </TouchableOpacity>
+      )}
 
       <TouchableOpacity
         style={styles.generateShopButton}
@@ -758,9 +799,17 @@ export default function NutritionScreen({ navigation }) {
               </View>
             )}
             {dayCalories > 0 && (
-              <View style={[styles.calorieBadge, isToday && styles.calorieBadgeToday]}>
-                <Text style={[styles.calorieBadgeText, isToday && styles.calorieBadgeTextToday]}>
-                  {dayCalories} cal
+              <View style={[
+                styles.calorieBadge,
+                isToday && styles.calorieBadgeToday,
+                isOverTarget(dayCalories) && styles.calorieBadgeOver,
+              ]}>
+                <Text style={[
+                  styles.calorieBadgeText,
+                  isToday && styles.calorieBadgeTextToday,
+                  isOverTarget(dayCalories) && styles.calorieBadgeTextOver,
+                ]}>
+                  {fmtDayCalories(dayCalories)}
                 </Text>
               </View>
             )}
@@ -880,8 +929,12 @@ export default function NutritionScreen({ navigation }) {
                       </View>
                     )}
                     {dayCalories > 0 && (
-                      <Text style={[styles.desktopDayCalories, isToday && styles.desktopDayCaloriesToday]}>
-                        {dayCalories} cal
+                      <Text style={[
+                        styles.desktopDayCalories,
+                        isToday && styles.desktopDayCaloriesToday,
+                        isOverTarget(dayCalories) && styles.calorieBadgeTextOver,
+                      ]}>
+                        {fmtDayCalories(dayCalories, true)}
                       </Text>
                     )}
                   </View>
@@ -1435,6 +1488,19 @@ const makeStyles = (colors) => StyleSheet.create({
     alignItems: 'center', gap: 3, borderWidth: 1, borderColor: colors.border,
   },
   summaryStatValue: { ...type.h3, color: colors.accent },
+
+  targetCard: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.md,
+    marginHorizontal: spacing.xl, marginBottom: spacing.md, padding: spacing.md,
+    backgroundColor: colors.surface, borderRadius: radius.lg,
+    borderWidth: 1, borderColor: colors.border,
+  },
+  targetIcon: {
+    width: 34, height: 34, borderRadius: radius.full,
+    backgroundColor: colors.accentSoft, alignItems: 'center', justifyContent: 'center',
+  },
+  targetValue: { ...type.bodyMed, color: colors.textPrimary },
+  targetMeta:  { ...type.caption, color: colors.textSecondary },
   summaryStatLabel: { ...type.caption, color: colors.textSecondary, textAlign: 'center' },
 
   progressTrack: {
@@ -1530,6 +1596,8 @@ const makeStyles = (colors) => StyleSheet.create({
   calorieBadgeToday:    { backgroundColor: colors.accentSoft },
   calorieBadgeText:     { ...type.caption, color: colors.textSecondary, fontWeight: '600' },
   calorieBadgeTextToday:{ color: colors.accent },
+  calorieBadgeOver:     { backgroundColor: colors.warningSoft },
+  calorieBadgeTextOver: { color: colors.warning },
 
   mealSlotsGrid: { flexDirection: 'row', flexWrap: 'wrap' },
   mealSlot: {

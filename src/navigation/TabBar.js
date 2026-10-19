@@ -19,7 +19,7 @@ const TAB_CONFIG = {
   Grocery:    { icon: 'cart',      iconOff: 'cart-outline',      label: 'Grocery',   section: 'food'    },
   Recipes:    { icon: 'book',      iconOff: 'book-outline',      label: 'Recipes',   section: 'food'    },
   Pantry:     { icon: 'nutrition', iconOff: 'nutrition-outline', label: 'Pantry',    section: 'food'    },
-  Nutrition:  { icon: 'calendar',  iconOff: 'calendar-outline',  label: 'Meal Plan', section: 'food'    },
+  Nutrition:  { icon: 'calendar',  iconOff: 'calendar-outline',  label: 'Nutrition', section: 'food'    },
   AI:                { icon: 'sparkles',     iconOff: 'sparkles-outline',     label: 'AI',         section: 'food'    },
   HomeLights:        { icon: 'bulb',         iconOff: 'bulb-outline',         label: 'Lights',     section: 'home'    },
   Xiaomi:            { icon: 'aperture',     iconOff: 'aperture-outline',     label: 'Xiaomi',     section: 'home'    },

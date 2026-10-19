@@ -73,6 +73,11 @@ import {
   toggleWeeklyTodo,
   updateWeeklyTodo,
   deleteWeeklyTodo,
+  subscribeBodyProfile,
+  saveBodyProfile,
+  subscribeWeightLogs,
+  logWeight,
+  deleteWeightLog,
 } from '../services/firestore';
 import { onSnapshot, where, orderBy } from 'firebase/firestore';
 
@@ -896,5 +901,72 @@ describe('weekly todos', () => {
   it('deletes a todo', async () => {
     await deleteWeeklyTodo(householdId, 't1');
     expect(mockDeleteDoc).toHaveBeenCalledWith('households/hh1/weeklyTodos/t1');
+  });
+});
+
+describe('body & goals', () => {
+  const householdId = 'hh1';
+
+  it('subscribes to one member profile by uid', () => {
+    const unsub = jest.fn();
+    onSnapshot.mockReturnValue(unsub);
+    const cb = jest.fn();
+    expect(subscribeBodyProfile(householdId, 'u1', cb)).toBe(unsub);
+    expect(onSnapshot.mock.calls[0][0]).toBe('households/hh1/bodyProfiles/u1');
+
+    const onNext = onSnapshot.mock.calls[0][1];
+    onNext({ exists: () => true, data: () => ({ heightCm: 180 }) });
+    expect(cb).toHaveBeenLastCalledWith({ heightCm: 180 });
+    onNext({ exists: () => false });
+    expect(cb).toHaveBeenLastCalledWith(null);
+  });
+
+  it('forwards profile listener errors', () => {
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+    const onError = jest.fn();
+    subscribeBodyProfile(householdId, 'u1', jest.fn(), onError);
+    const err = new Error('denied');
+    onSnapshot.mock.calls[0][2](err);
+    expect(onError).toHaveBeenCalledWith(err);
+    console.error.mockRestore();
+  });
+
+  it('merges the profile with an updatedAt timestamp', async () => {
+    await saveBodyProfile(householdId, 'u1', { heightCm: 180, goal: 'lose' });
+    expect(mockSetDoc).toHaveBeenCalledWith(
+      'households/hh1/bodyProfiles/u1',
+      { heightCm: 180, goal: 'lose', updatedAt: 'SERVER_TIMESTAMP' },
+      { merge: true },
+    );
+  });
+
+  it('queries weight logs with a single uid filter (no composite index)', () => {
+    const cb = jest.fn();
+    subscribeWeightLogs(householdId, 'u1', cb);
+    expect(mockCollection).toHaveBeenCalledWith({}, 'households', 'hh1', 'weightLogs');
+    expect(where).toHaveBeenCalledTimes(1);
+    expect(where).toHaveBeenCalledWith('uid', '==', 'u1');
+    expect(orderBy).not.toHaveBeenCalled();
+
+    onSnapshot.mock.calls[0][1]({
+      docs: [{ id: 'u1_2026-10-19', data: () => ({ weightKg: 80 }) }],
+    });
+    expect(cb).toHaveBeenCalledWith([{ id: 'u1_2026-10-19', weightKg: 80 }]);
+  });
+
+  it('logs one weigh-in per user per day under a deterministic id', async () => {
+    await logWeight(householdId, 'u1', '2026-10-19', 80.5);
+    expect(mockSetDoc).toHaveBeenCalledWith('households/hh1/weightLogs/u1_2026-10-19', {
+      uid: 'u1',
+      date: '2026-10-19',
+      weightKg: 80.5,
+      createdAt: 'SERVER_TIMESTAMP',
+      updatedAt: 'SERVER_TIMESTAMP',
+    });
+  });
+
+  it('deletes a weight log', async () => {
+    await deleteWeightLog(householdId, 'u1_2026-10-19');
+    expect(mockDeleteDoc).toHaveBeenCalledWith('households/hh1/weightLogs/u1_2026-10-19');
   });
 });

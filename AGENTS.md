@@ -1,7 +1,7 @@
 # Project overview
 
-Household management app (pantry, grocery, recipes, bills, nutrition,
-smart lights, AI assistant) built with Expo SDK 56 / React Native 0.85 /
+Household management app (pantry, grocery, recipes, bills, nutrition +
+body/weight goals, smart lights, AI assistant) built with Expo SDK 56 / React Native 0.85 /
 React 19, Firebase Auth + Firestore backend, shared per-household.
 
 # Commands
@@ -10,6 +10,8 @@ React 19, Firebase Auth + Firestore backend, shared per-household.
 - `npm test` — Jest (jest-expo); single file: `npm test -- <file>`
 - Architecture: screens in `src/screens/<feature>/`, data via `src/services/`,
   state in `src/context/` — details in the rules below.
+- Feature design docs live in `docs/` (e.g. `docs/weight-tracker.md` for the
+  Nutrition → Body & goals feature); read the relevant one before changing it.
 
 # Expo HAS CHANGED
 
