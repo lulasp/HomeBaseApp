@@ -5,6 +5,7 @@
 - Data is household-scoped: users belong to a `households` document with a `members` array, and feature data hangs off the household. New collections must follow this scoping.
 - When adding or changing a query, keep the backend files in sync **in the same change**:
   - `firestore.rules` — every collection touched in code needs a rule enforcing household membership; undeclared collections are denied by default.
+    A direct subcollection of `households/{id}` (one level deep) is already covered by the members-only `/{subcollection}/{docId}` wildcard — no new rule or deploy needed. Deeper nesting or anything outside `households` needs an explicit rule.
   - `firestore.indexes.json` — composite queries (multiple `where`, or `where` + `orderBy` on different fields) need a declared index.
 - Use `serverTimestamp()` for created/updated fields.
 - Every `onSnapshot` listener must return/store its unsubscribe function and clean up on unmount.

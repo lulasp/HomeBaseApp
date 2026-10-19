@@ -17,6 +17,7 @@ import {
 } from 'firebase/firestore';
 
 import { db } from '../config/firebase';
+import { weightLogId } from '../utils/bodyMetrics';
 
 // ── Households ───────────────────────────────────────────
 const sanitizeProfile = ({ name, email } = {}) => ({
@@ -633,3 +634,40 @@ export const updateWeeklyTodo = (householdId, todoId, data) => {
 
 export const deleteWeeklyTodo = (householdId, todoId) =>
   deleteDoc(doc(db, 'households', householdId, 'weeklyTodos', todoId));
+
+// ── Body & goals ─────────────────────────────────────────
+// Per-member, keyed by uid; readable by the whole household. See docs/weight-tracker.md.
+export const subscribeBodyProfile = (householdId, uid, callback, onError) =>
+  onSnapshot(
+    doc(db, 'households', householdId, 'bodyProfiles', uid),
+    (snap) => callback(snap.exists() ? snap.data() : null),
+    (err) => { console.error('bodyProfile listener failed', err); onError?.(err); },
+  );
+
+export const saveBodyProfile = (householdId, uid, profile) =>
+  setDoc(
+    doc(db, 'households', householdId, 'bodyProfiles', uid),
+    { ...profile, updatedAt: serverTimestamp() },
+    { merge: true },
+  );
+
+// Single equality filter — callers sort by `date` (no composite index).
+export const subscribeWeightLogs = (householdId, uid, callback, onError) =>
+  onSnapshot(
+    query(
+      collection(db, 'households', householdId, 'weightLogs'),
+      where('uid', '==', uid),
+    ),
+    (snap) => callback(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+    (err) => { console.error('weightLogs listener failed', err); onError?.(err); },
+  );
+
+// One entry per user per day: id is `${uid}_${date}`, so re-logging a date overwrites it.
+export const logWeight = (householdId, uid, date, weightKg) =>
+  setDoc(
+    doc(db, 'households', householdId, 'weightLogs', weightLogId(uid, date)),
+    { uid, date, weightKg, createdAt: serverTimestamp(), updatedAt: serverTimestamp() },
+  );
+
+export const deleteWeightLog = (householdId, logId) =>
+  deleteDoc(doc(db, 'households', householdId, 'weightLogs', logId));
