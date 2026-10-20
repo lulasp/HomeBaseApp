@@ -78,6 +78,9 @@ import {
   subscribeWeightLogs,
   logWeight,
   deleteWeightLog,
+  subscribeLightColors,
+  saveLightColorPresets,
+  saveLightRecentColors,
 } from '../services/firestore';
 import { onSnapshot, where, orderBy } from 'firebase/firestore';
 
@@ -968,5 +971,51 @@ describe('body & goals', () => {
   it('deletes a weight log', async () => {
     await deleteWeightLog(householdId, 'u1_2026-10-19');
     expect(mockDeleteDoc).toHaveBeenCalledWith('households/hh1/weightLogs/u1_2026-10-19');
+  });
+});
+
+describe('light colours', () => {
+  const householdId = 'hh1';
+
+  it('splits the lightColors collection into presets and per-device recents', () => {
+    const cb = jest.fn();
+    subscribeLightColors(householdId, cb);
+    expect(mockCollection).toHaveBeenCalledWith({}, 'households', 'hh1', 'lightColors');
+
+    onSnapshot.mock.calls[0][1]({
+      docs: [
+        { id: 'presets', data: () => ({ colors: ['#FF0000'] }) },
+        { id: 'recent_AA:BB', data: () => ({ deviceId: 'AA:BB', colors: ['#00FF00'] }) },
+        { id: 'stray', data: () => ({ colors: ['#0000FF'] }) },
+      ],
+    });
+    expect(cb).toHaveBeenCalledWith({
+      presets: ['#FF0000'],
+      recentsByDevice: { 'AA:BB': ['#00FF00'] },
+    });
+  });
+
+  it('reports null presets when none are saved yet', () => {
+    const cb = jest.fn();
+    subscribeLightColors(householdId, cb);
+    onSnapshot.mock.calls[0][1]({ docs: [] });
+    expect(cb).toHaveBeenCalledWith({ presets: null, recentsByDevice: {} });
+  });
+
+  it('saves presets to a fixed doc', async () => {
+    await saveLightColorPresets(householdId, ['#FFFFFF']);
+    expect(mockSetDoc).toHaveBeenCalledWith('households/hh1/lightColors/presets', {
+      colors: ['#FFFFFF'],
+      updatedAt: 'SERVER_TIMESTAMP',
+    });
+  });
+
+  it('saves recents under a per-device doc id, stripping slashes', async () => {
+    await saveLightRecentColors(householdId, 'a/b', ['#123456']);
+    expect(mockSetDoc).toHaveBeenCalledWith('households/hh1/lightColors/recent_a_b', {
+      deviceId: 'a/b',
+      colors: ['#123456'],
+      updatedAt: 'SERVER_TIMESTAMP',
+    });
   });
 });

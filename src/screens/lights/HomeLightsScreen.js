@@ -18,21 +18,23 @@ import { Rise, useEntranceReplay } from '../../components/Motion';
 import {
   getHouseholdWithPrivate, subscribeLightShortcuts,
   addLightShortcut, updateLightShortcut,
+  subscribeLightColors, saveLightColorPresets, saveLightRecentColors,
 } from '../../services/firestore';
 import {
   getDevices, getDeviceState, stateFromCapabilities,
   hasCap, getCapParam, getScenesFromDevice, getDynamicScenes, getDiyScenes,
-  sceneKey, getSegmentCount,
+  sceneKey, getSegmentCount, getSegmentLimit, splitSegmentGroups,
   setPower, setBrightness, setColor, setColorTemp, applyScene, setMusicMode,
-  setSegmentColor, setSegmentBrightness,
+  setSegmentColor, setSegmentBrightness, applySegmentColorGroups, setToggle,
 } from '../../services/govee';
 import LightShortcutsRow, { SHORTCUT_VISUALS } from '../../components/LightShortcutsRow';
-
-const PRESET_COLORS = [
-  '#FFFFFF', '#FFD700', '#FF8C00', '#FF4500',
-  '#FF1493', '#9400D3', '#0000FF', '#00BFFF',
-  '#00FF7F', '#ADFF2F',
-];
+import ColorPicker from '../../components/ColorPicker';
+import RecentColors from '../../components/RecentColors';
+import GradientStops from '../../components/GradientStops';
+import {
+  DEFAULT_PRESET_COLORS, sanitizePresets, pushRecentColor, removeRecentColor, isLightColor,
+  gradientColors, groupSegmentsByColor,
+} from '../../utils/color';
 
 const MUSIC_MODES = [
   { id: 0, name: 'Energic',  icon: 'musical-notes' },
@@ -72,15 +74,17 @@ const DEFAULT_SHORTCUT_FORM = {
   power: true,           // true | false | null (null = leave unchanged)
   brightnessEnabled: false,
   brightness: 80,
-  colorMode: null,       // null | 'color' | 'colorTem' | 'scene'
+  colorMode: null,       // null | 'color' | 'colorTem' | 'scene' | 'gradient'
   color: '#FFD700',
   colorTem: 4000,
   sceneName: null,
+  gradientStops: ['#FF4500', '#0000FF'],
+  gradientBlend: null,   // true | false | null (null = leave unchanged)
 };
 
 const DEFAULT_STATE = {
   on: false, brightness: 80, color: '#FFFFFF',
-  colorTem: 4000, scene: null, musicMode: null, online: false,
+  colorTem: 4000, scene: null, musicMode: null, gradient: false, online: false,
 };
 
 function hasBluetooth(device) {
@@ -206,14 +210,41 @@ export default function HomeLightsScreen({ route }) {
   const [selectedSegments, setSelectedSegments] = useState([]);
   const [segmentColors, setSegmentColors] = useState({});
   const [segBrightness, setSegBrightness] = useState(100);
+  // Segment colouring: 'solid' applies straight away; 'gradient' edits 2–3
+  // stops locally and sends on "Apply".
+  const [segMode, setSegMode] = useState('solid');
+  const [segPickerOpen, setSegPickerOpen] = useState(false);
+  const [segSolidColor, setSegSolidColor] = useState(null);
+  const [gradStops, setGradStops] = useState(['#FF4500', '#0000FF']);
+  const [gradStop, setGradStop] = useState(0);
+  const [gradProgress, setGradProgress] = useState(null);   // { done, total } while applying
 
   const [shortcuts, setShortcuts] = useState([]);
   const [shortcutModalVisible, setShortcutModalVisible] = useState(false);
   const [editingShortcutId, setEditingShortcutId] = useState(null);
   const [shortcutForm, setShortcutForm] = useState(DEFAULT_SHORTCUT_FORM);
   const [savingShortcut, setSavingShortcut] = useState(false);
+  const [formPickerOpen, setFormPickerOpen] = useState(false);
+  const [formGradStop, setFormGradStop] = useState(0);
+
+  // Presets are household-wide; recents are per light. While editing presets
+  // the grid shows `presetDraft` and the picker edits slot `editSlot`.
+  const [presets, setPresets] = useState(DEFAULT_PRESET_COLORS);
+  const [recentsByDevice, setRecentsByDevice] = useState({});
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [presetDraft, setPresetDraft] = useState(null);
+  const [editSlot, setEditSlot] = useState(0);
+  const [wheelDragging, setWheelDragging] = useState(false);
 
   const debounce = useRef({});
+
+  useEffect(() => {
+    if (!householdId) return undefined;
+    return subscribeLightColors(householdId, ({ presets: stored, recentsByDevice: recents }) => {
+      setPresets(sanitizePresets(stored));
+      setRecentsByDevice(recents);
+    });
+  }, [householdId]);
 
   useEffect(() => {
     if (!householdId) return undefined;
@@ -307,6 +338,7 @@ export default function HomeLightsScreen({ route }) {
       case 'color':      return hasCap(selectedDevice, 'devices.capabilities.color_setting', 'colorRgb');
       case 'colorTem':   return hasCap(selectedDevice, 'devices.capabilities.color_setting', 'colorTemperatureK');
       case 'musicMode':  return hasCap(selectedDevice, 'devices.capabilities.music_setting', 'musicMode');
+      case 'gradient':   return hasCap(selectedDevice, 'devices.capabilities.toggle', 'gradientToggle');
       default:           return false;
     }
   }, [selectedDevice]);
@@ -322,6 +354,7 @@ export default function HomeLightsScreen({ route }) {
     colorTemK <= 6000 ? 'Cool' : 'Daylight';
 
   const segmentCount = getSegmentCount(selectedDevice);
+  const segmentLimit = getSegmentLimit(selectedDevice);
 
   // ── Scenes ────────────────────────────────────────────────────────────────
   // The device list only carries a handful of scenes; the full built-in
@@ -428,6 +461,69 @@ export default function HomeLightsScreen({ route }) {
     setColor(goveeApiKey, selectedDevice.sku, selectedDevice.device, hex).catch(console.error);
   }, [canControl, selectedDevice, updateSelected, goveeApiKey]);
 
+  const selectedRecents = recentsByDevice[selectedId] ?? [];
+
+  const rememberRecent = useCallback((hex) => {
+    if (!householdId || !selectedId) return;
+    const prev = recentsByDevice[selectedId] ?? [];
+    const next = pushRecentColor(prev, hex);
+    if (next.join() === prev.join()) return;
+    setRecentsByDevice((r) => ({ ...r, [selectedId]: next }));
+    saveLightRecentColors(householdId, selectedId, next).catch(console.error);
+  }, [householdId, selectedId, recentsByDevice]);
+
+  const removeRecent = useCallback((hex) => {
+    if (!householdId || !selectedId) return;
+    const next = removeRecentColor(recentsByDevice[selectedId], hex);
+    setRecentsByDevice((r) => ({ ...r, [selectedId]: next }));
+    saveLightRecentColors(householdId, selectedId, next).catch(console.error);
+  }, [householdId, selectedId, recentsByDevice]);
+
+  // Wheel drag: preview locally, send at most every 250ms of stillness
+  const handleWheelDrag = useCallback((hex) => {
+    if (!canControl) return;
+    updateSelected({ color: hex, scene: null, on: true });
+    clearTimeout(debounce.current.color);
+    debounce.current.color = setTimeout(() => {
+      setColor(goveeApiKey, selectedDevice.sku, selectedDevice.device, hex).catch(console.error);
+    }, 250);
+  }, [canControl, selectedDevice, updateSelected, goveeApiKey]);
+
+  // Wheel release / hex submit / recent tap: send now and record as recent
+  const handleCustomColor = useCallback((hex) => {
+    if (!canControl) return;
+    clearTimeout(debounce.current.color);
+    handleColorChange(hex);
+    rememberRecent(hex);
+  }, [canControl, handleColorChange, rememberRecent]);
+
+  // ── Preset editing ────────────────────────────────────────────────────────
+  const editingPresets = presetDraft !== null;
+  const editColor = editingPresets ? presetDraft[editSlot] : null;
+
+  const startEditPresets = useCallback(() => {
+    setPresetDraft([...presets]);
+    setEditSlot(0);
+    setPickerOpen(true);
+  }, [presets]);
+
+  const setDraftSlot = useCallback((hex) => {
+    setPresetDraft((d) => d && d.map((c, i) => (i === editSlot ? hex : c)));
+  }, [editSlot]);
+
+  const cancelEditPresets = useCallback(() => setPresetDraft(null), []);
+
+  const saveEditPresets = useCallback(() => {
+    const next = sanitizePresets(presetDraft);
+    setPresetDraft(null);
+    if (next.join() === presets.join() || !householdId) return;
+    setPresets(next);
+    saveLightColorPresets(householdId, next).catch((e) => {
+      console.error(e);
+      showAlert({ title: 'Couldn’t save presets', message: e.message, type: 'danger' });
+    });
+  }, [presetDraft, presets, householdId, showAlert]);
+
   const handleColorTempChange = useCallback((v) => {
     if (!canControl) return;
     const value = Math.round(v);
@@ -455,19 +551,73 @@ export default function HomeLightsScreen({ route }) {
       prev.includes(seg) ? prev.filter((s) => s !== seg) : [...prev, seg].sort((a, b) => a - b));
   }, []);
 
-  const handleSegmentColor = useCallback((hex) => {
-    if (!canControl || selectedSegments.length === 0) return;
+  const setSegmentsLocal = useCallback((deviceId, segs, hex) => {
     setSegmentColors((prev) => ({
       ...prev,
-      [selectedId]: {
-        ...(prev[selectedId] ?? {}),
-        ...Object.fromEntries(selectedSegments.map((s) => [s, hex])),
-      },
+      [deviceId]: { ...(prev[deviceId] ?? {}), ...Object.fromEntries(segs.map((s) => [s, hex])) },
     }));
+  }, []);
+
+  const handleSegmentColor = useCallback((hex) => {
+    if (!canControl || selectedSegments.length === 0) return;
+    clearTimeout(debounce.current.segColor);
+    setSegSolidColor(hex);
+    setSegmentsLocal(selectedId, selectedSegments, hex);
     updateSelected({ on: true });
-    setSegmentColor(goveeApiKey, selectedDevice.sku, selectedDevice.device, selectedSegments, hex)
+    setSegmentColor(goveeApiKey, selectedDevice.sku, selectedDevice.device, selectedSegments, hex, segmentLimit)
       .catch(console.error);
-  }, [canControl, selectedSegments, selectedId, selectedDevice, updateSelected, goveeApiKey]);
+  }, [canControl, selectedSegments, selectedId, selectedDevice, updateSelected, goveeApiKey, setSegmentsLocal, segmentLimit]);
+
+  const handleSegmentWheelDrag = useCallback((hex) => {
+    setSegSolidColor(hex);
+    if (!canControl || selectedSegments.length === 0) return;
+    const segs = selectedSegments;
+    setSegmentsLocal(selectedId, segs, hex);
+    updateSelected({ on: true });
+    clearTimeout(debounce.current.segColor);
+    debounce.current.segColor = setTimeout(() => {
+      setSegmentColor(goveeApiKey, selectedDevice.sku, selectedDevice.device, segs, hex, segmentLimit)
+        .catch(console.error);
+    }, 250);
+  }, [canControl, selectedSegments, selectedId, selectedDevice, updateSelected, goveeApiKey, setSegmentsLocal, segmentLimit]);
+
+  const handleSegmentCustom = useCallback((hex) => {
+    setSegSolidColor(hex);
+    if (!canControl || selectedSegments.length === 0) return;
+    handleSegmentColor(hex);
+    rememberRecent(hex);
+  }, [canControl, selectedSegments, handleSegmentColor, rememberRecent]);
+
+  // ── Segment gradient ──────────────────────────────────────────────────────
+  const gradPreview = useMemo(
+    () => gradientColors(gradStops, selectedSegments.length),
+    [gradStops, selectedSegments],
+  );
+
+  const setGradStopColor = useCallback((hex) => {
+    setGradStops((stops) => stops.map((c, i) => (i === gradStop ? hex : c)));
+  }, [gradStop]);
+
+  const applyGradient = useCallback(async () => {
+    if (!canControl || selectedSegments.length < 2 || gradProgress) return;
+    const dev = selectedDevice;
+    const groups = splitSegmentGroups(groupSegmentsByColor(selectedSegments, gradPreview), segmentLimit);
+    setGradProgress({ done: 0, total: groups.length });
+    updateSelected({ on: true });
+    try {
+      await applySegmentColorGroups(goveeApiKey, dev.sku, dev.device, groups, (done, total) => {
+        const g = groups[done - 1];
+        setSegmentsLocal(dev.device, g.segments, g.hex);
+        setGradProgress({ done, total });
+      });
+    } catch (e) {
+      console.error(e);
+      showAlert({ title: 'Gradient not fully applied', message: e.message, type: 'danger' });
+    } finally {
+      setGradProgress(null);
+    }
+  }, [canControl, selectedSegments, gradProgress, selectedDevice, gradPreview, updateSelected,
+    goveeApiKey, setSegmentsLocal, showAlert, segmentLimit]);
 
   const handleSegmentBrightness = useCallback((v) => {
     const value = Math.round(v);
@@ -476,10 +626,26 @@ export default function HomeLightsScreen({ route }) {
     updateSelected({ on: true });
     clearTimeout(debounce.current.segment);
     debounce.current.segment = setTimeout(() => {
-      setSegmentBrightness(goveeApiKey, selectedDevice.sku, selectedDevice.device, selectedSegments, value)
+      setSegmentBrightness(goveeApiKey, selectedDevice.sku, selectedDevice.device, selectedSegments, value, segmentLimit)
         .catch(console.error);
     }, 300);
-  }, [canControl, selectedSegments, selectedDevice, updateSelected, goveeApiKey]);
+  }, [canControl, selectedSegments, selectedDevice, updateSelected, goveeApiKey, segmentLimit]);
+
+  // Blends colours between segments. Rolled back on failure like power, since
+  // the switch would otherwise misreport the light.
+  const handleGradientToggle = useCallback((next) => {
+    if (!canControl) return;
+    const dev = selectedDevice;
+    const patch = (gradient) => setDeviceStates((prev) => ({
+      ...prev,
+      [dev.device]: { ...(prev[dev.device] ?? DEFAULT_STATE), gradient },
+    }));
+    patch(next);
+    setToggle(goveeApiKey, dev.sku, dev.device, 'gradientToggle', next).catch((e) => {
+      console.error(e);
+      patch(!next);
+    });
+  }, [canControl, selectedDevice, goveeApiKey]);
 
   const handleMusicModeToggle = useCallback((v) => {
     if (!canControl) return;
@@ -502,6 +668,8 @@ export default function HomeLightsScreen({ route }) {
   const openNewShortcut = useCallback(() => {
     setEditingShortcutId(null);
     setShortcutForm(DEFAULT_SHORTCUT_FORM);
+    setFormPickerOpen(false);
+    setFormGradStop(0);
     setShortcutModalVisible(true);
   }, []);
 
@@ -519,9 +687,14 @@ export default function HomeLightsScreen({ route }) {
       color: a.color ?? '#FFD700',
       colorTem: a.colorTem ?? 4000,
       sceneName: a.sceneName ?? null,
+      gradientStops: a.gradientStops?.length >= 2 ? a.gradientStops : DEFAULT_SHORTCUT_FORM.gradientStops,
+      gradientBlend: a.gradientBlend ?? null,
     });
+    // Open the wheel straight away when the saved colour isn't a preset
+    setFormPickerOpen(a.colorMode === 'color' && a.color != null && !presets.includes(a.color));
+    setFormGradStop(0);
     setShortcutModalVisible(true);
-  }, []);
+  }, [presets]);
 
   const handleSaveShortcut = useCallback(async () => {
     const name = shortcutForm.name.trim();
@@ -544,6 +717,8 @@ export default function HomeLightsScreen({ route }) {
         color: shortcutForm.color,
         colorTem: shortcutForm.colorTem,
         sceneName: shortcutForm.sceneName,
+        gradientStops: shortcutForm.gradientStops,
+        gradientBlend: shortcutForm.gradientBlend,
       },
     };
     setSavingShortcut(true);
@@ -566,6 +741,22 @@ export default function HomeLightsScreen({ route }) {
         : [...f.deviceIds, id],
     }));
   }, []);
+
+  // Gradient is offered once any light in the shortcut has segments; lights
+  // without them fall back to the start colour when the shortcut runs.
+  const formDevices = useMemo(
+    () => shortcutForm.deviceIds.map((id) => devices.find((d) => d.device === id)).filter(Boolean),
+    [shortcutForm.deviceIds, devices],
+  );
+  const formSegmentCount = Math.max(0, ...formDevices.map(getSegmentCount));
+  const formHasBlend = formDevices.some((d) => hasCap(d, 'devices.capabilities.toggle', 'gradientToggle'));
+
+  // Colour from presets / wheel goes to the colour, or the active gradient stop
+  const setFormColor = useCallback((hex) => {
+    setShortcutForm((f) => (f.colorMode === 'gradient'
+      ? { ...f, gradientStops: f.gradientStops.map((c, i) => (i === formGradStop ? hex : c)) }
+      : { ...f, color: hex }));
+  }, [formGradStop]);
 
   // Scene names available across the lights picked in the form (union — each
   // device resolves the name to its own scene value when the shortcut runs)
@@ -632,6 +823,30 @@ export default function HomeLightsScreen({ route }) {
     );
   }
 
+  // Lives in Segment control when the light has segments, else in Controls
+  const gradientToggleRow = supports('gradient') && (
+    <View style={styles.controlRow}>
+      <View style={styles.controlRowLeft}>
+        <View style={[styles.controlIcon, selected.gradient && styles.controlIconActive]}>
+          <Ionicons name="color-filter-outline" size={18} color={selected.gradient ? colors.accent : colors.textTertiary} />
+        </View>
+        <View>
+          <Text style={styles.controlLabel}>Smooth blending</Text>
+          <Text style={styles.controlValue}>Blend colours between subsections</Text>
+        </View>
+      </View>
+      <Switch
+        value={Boolean(selected.gradient)}
+        onValueChange={handleGradientToggle}
+        disabled={!canControl}
+        trackColor={{ false: colors.muted, true: colors.accent }}
+        thumbColor="#fff"
+        ios_backgroundColor={colors.muted}
+        accessibilityLabel="Smooth blending"
+      />
+    </View>
+  );
+
   // ── Main UI ───────────────────────────────────────────────────────────────
   return (
     <SafeAreaView style={[styles.root, Platform.OS === 'android' && { paddingTop: 24 }]}>
@@ -640,6 +855,7 @@ export default function HomeLightsScreen({ route }) {
         style={{ flex: 1 }}
         contentContainerStyle={[styles.container, innerStyle]}
         {...navScrollProps}
+        scrollEnabled={!wheelDragging}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={refreshStates} tintColor={colors.accent} />
@@ -759,6 +975,13 @@ export default function HomeLightsScreen({ route }) {
             )}
           </View>
 
+          {segmentCount === 0 && gradientToggleRow && (
+            <>
+              <View style={styles.divider} />
+              {gradientToggleRow}
+            </>
+          )}
+
           {supports('brightness') && (
             <>
               <View style={styles.divider} />
@@ -793,28 +1016,95 @@ export default function HomeLightsScreen({ route }) {
         {/* Color */}
         {supports('color') && (
           <>
-            <Text style={styles.sectionLabel}>COLOR</Text>
-            <View style={[styles.card, !selectedOnline && styles.offline]}>
-              <View style={[styles.colorPreview, { backgroundColor: selected.color }]}>
-                <Text style={[styles.colorHex, { color: selected.color === '#FFFFFF' ? '#333' : '#fff' }]}>
-                  {selected.color}
-                </Text>
-              </View>
+            <View style={styles.sectionLabelRow}>
+              <Text style={[styles.sectionLabel, styles.sectionLabelFlat]}>COLOR</Text>
+              <View style={styles.flexSpacer} />
+              {editingPresets ? (
+                <>
+                  <TouchableOpacity onPress={() => setPresetDraft([...DEFAULT_PRESET_COLORS])} accessibilityRole="button">
+                    <Text style={styles.linkMuted}>Reset</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={cancelEditPresets} accessibilityRole="button">
+                    <Text style={styles.linkMuted}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={saveEditPresets} accessibilityRole="button">
+                    <Text style={styles.link}>Done</Text>
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <TouchableOpacity onPress={startEditPresets} accessibilityRole="button" accessibilityLabel="Edit colour presets">
+                  <Text style={styles.link}>Edit presets</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            {/* Presets are household-wide, so editing them works even when this light is offline */}
+            <View style={[styles.card, !selectedOnline && !editingPresets && styles.offline]}>
+              {(() => {
+                const shown = editingPresets ? editColor : selected.color;
+                return (
+                  <View style={[styles.colorPreview, { backgroundColor: shown }]}>
+                    <Text style={[styles.colorHex, { color: isLightColor(shown) ? '#333' : '#fff' }]}>
+                      {editingPresets ? `Preset ${editSlot + 1} · ${shown}` : shown}
+                    </Text>
+                  </View>
+                );
+              })()}
+
+              {editingPresets && (
+                <Text style={styles.colorHint}>Tap a preset, then pick its new colour.</Text>
+              )}
               <View style={styles.colorGrid}>
-                {PRESET_COLORS.map((c) => (
-                  <TouchableOpacity
-                    key={c}
-                    style={[
-                      styles.colorSwatch,
-                      { backgroundColor: c },
-                      selected.color === c && styles.colorSwatchSelected,
-                    ]}
-                    onPress={() => handleColorChange(c)}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Select color ${c}`}
-                  />
-                ))}
+                {(editingPresets ? presetDraft : presets).map((c, i) => {
+                  const active = editingPresets ? i === editSlot : selected.color === c;
+                  return (
+                    <TouchableOpacity
+                      key={i}
+                      style={[
+                        styles.colorSwatch,
+                        { backgroundColor: c },
+                        active && styles.colorSwatchSelected,
+                      ]}
+                      onPress={() => (editingPresets ? setEditSlot(i) : handleColorChange(c))}
+                      accessibilityRole="button"
+                      accessibilityLabel={editingPresets ? `Edit preset ${i + 1}` : `Select color ${c}`}
+                    />
+                  );
+                })}
               </View>
+
+              <RecentColors
+                colors={selectedRecents}
+                selected={editingPresets ? editColor : selected.color}
+                onSelect={editingPresets ? setDraftSlot : handleCustomColor}
+                onRemove={removeRecent}
+              />
+
+              <View style={styles.divider} />
+
+              {!editingPresets && (
+                <TouchableOpacity
+                  style={styles.customToggle}
+                  onPress={() => setPickerOpen((v) => !v)}
+                  accessibilityRole="button"
+                  accessibilityState={{ expanded: pickerOpen }}
+                >
+                  <Ionicons name="color-palette-outline" size={18} color={colors.accent} />
+                  <Text style={styles.customToggleLabel}>Custom colour</Text>
+                  <Ionicons name={pickerOpen ? 'chevron-up' : 'chevron-down'} size={16} color={colors.textTertiary} />
+                </TouchableOpacity>
+              )}
+
+              {(pickerOpen || editingPresets) && (
+                <View style={styles.pickerWrap}>
+                  <ColorPicker
+                    color={editingPresets ? editColor : selected.color}
+                    onChange={editingPresets ? setDraftSlot : handleWheelDrag}
+                    onChangeComplete={editingPresets ? setDraftSlot : handleCustomColor}
+                    onDragActive={setWheelDragging}
+                    disabled={!editingPresets && !canControl}
+                  />
+                </View>
+              )}
             </View>
           </>
         )}
@@ -1001,6 +1291,12 @@ export default function HomeLightsScreen({ route }) {
           <>
             <Text style={styles.sectionLabel}>SEGMENT CONTROL</Text>
             <View style={[styles.card, !selectedOnline && styles.offline]}>
+              {gradientToggleRow && (
+                <>
+                  {gradientToggleRow}
+                  <View style={styles.divider} />
+                </>
+              )}
               <View style={styles.segmentHeader}>
                 <Text style={styles.controlLabel}>
                   {selectedSegments.length > 0
@@ -1048,19 +1344,110 @@ export default function HomeLightsScreen({ route }) {
 
               <View style={styles.divider} />
 
-              <Text style={styles.controlLabel}>Colour</Text>
-              <View style={styles.colorGrid}>
-                {PRESET_COLORS.map((hex) => (
-                  <TouchableOpacity
-                    key={hex}
-                    style={[styles.colorSwatch, { backgroundColor: hex }]}
-                    onPress={() => handleSegmentColor(hex)}
-                    disabled={selectedSegments.length === 0}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Set selected segments to ${hex}`}
-                  />
-                ))}
+              <View style={[styles.segmentedRow, styles.segModeRow]}>
+                {[{ id: 'solid', label: 'Solid' }, { id: 'gradient', label: 'Gradient' }].map((m) => {
+                  const active = segMode === m.id;
+                  return (
+                    <TouchableOpacity
+                      key={m.id}
+                      style={[styles.segmentedBtn, active && styles.segmentedBtnActive]}
+                      onPress={() => setSegMode(m.id)}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: active }}
+                    >
+                      <Text style={[styles.segmentedLabel, active && { color: colors.accent }]}>{m.label}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
               </View>
+
+              {segMode === 'gradient' && (
+                <GradientStops
+                  stops={gradStops}
+                  active={gradStop}
+                  onSelect={setGradStop}
+                  onStopsChange={setGradStops}
+                  previewCount={selectedSegments.length}
+                  previewHint="Select 2 or more segments to spread the gradient across."
+                />
+              )}
+
+              <View style={styles.colorGrid}>
+                {presets.map((hex, i) => {
+                  const gradient = segMode === 'gradient';
+                  const active = gradient ? gradStops[gradStop] === hex : segSolidColor === hex;
+                  return (
+                    <TouchableOpacity
+                      key={i}
+                      style={[styles.colorSwatch, { backgroundColor: hex }, active && styles.colorSwatchSelected]}
+                      onPress={() => (gradient ? setGradStopColor(hex) : handleSegmentColor(hex))}
+                      disabled={!gradient && selectedSegments.length === 0}
+                      accessibilityRole="button"
+                      accessibilityLabel={gradient ? `Set gradient stop to ${hex}` : `Set selected segments to ${hex}`}
+                    />
+                  );
+                })}
+              </View>
+
+              <RecentColors
+                colors={selectedRecents}
+                selected={segMode === 'gradient' ? gradStops[gradStop] : segSolidColor}
+                onSelect={segMode === 'gradient' ? setGradStopColor : handleSegmentCustom}
+                onRemove={removeRecent}
+              />
+
+              <TouchableOpacity
+                style={[styles.customToggle, styles.customToggleSpaced]}
+                onPress={() => setSegPickerOpen((v) => !v)}
+                accessibilityRole="button"
+                accessibilityState={{ expanded: segPickerOpen }}
+              >
+                <Ionicons name="color-palette-outline" size={18} color={colors.accent} />
+                <Text style={styles.customToggleLabel}>Custom colour</Text>
+                <Ionicons name={segPickerOpen ? 'chevron-up' : 'chevron-down'} size={16} color={colors.textTertiary} />
+              </TouchableOpacity>
+
+              {segPickerOpen && (
+                <View style={styles.pickerWrap}>
+                  {segMode === 'gradient' ? (
+                    <ColorPicker
+                      color={gradStops[gradStop]}
+                      onChange={setGradStopColor}
+                      onChangeComplete={(hex) => { setGradStopColor(hex); rememberRecent(hex); }}
+                      onDragActive={setWheelDragging}
+                    />
+                  ) : (
+                    <ColorPicker
+                      color={segSolidColor ?? segmentColors[selectedId]?.[selectedSegments[0]] ?? '#FFFFFF'}
+                      onChange={handleSegmentWheelDrag}
+                      onChangeComplete={handleSegmentCustom}
+                      onDragActive={setWheelDragging}
+                      disabled={!canControl || selectedSegments.length === 0}
+                    />
+                  )}
+                </View>
+              )}
+
+              {segMode === 'gradient' && (
+                <TouchableOpacity
+                  style={[
+                    styles.applyBtn,
+                    (!canControl || selectedSegments.length < 2 || gradProgress) && styles.applyBtnDisabled,
+                  ]}
+                  onPress={applyGradient}
+                  disabled={!canControl || selectedSegments.length < 2 || Boolean(gradProgress)}
+                  accessibilityRole="button"
+                >
+                  {gradProgress && <ActivityIndicator size="small" color={colors.accentForeground} />}
+                  <Text style={styles.applyBtnLabel}>
+                    {gradProgress
+                      ? `Applying ${gradProgress.done}/${gradProgress.total}…`
+                      : selectedSegments.length >= 2
+                        ? `Apply gradient to ${selectedSegments.length} segments`
+                        : 'Apply gradient'}
+                  </Text>
+                </TouchableOpacity>
+              )}
 
               <View style={styles.divider} />
 
@@ -1173,6 +1560,7 @@ export default function HomeLightsScreen({ route }) {
               contentContainerStyle={styles.sheetBody}
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
+              scrollEnabled={!wheelDragging}
             >
               <Text style={styles.fieldLabel}>Name *</Text>
               <TextInput
@@ -1288,6 +1676,8 @@ export default function HomeLightsScreen({ route }) {
                       { label: 'Color', value: 'color' },
                       { label: 'White', value: 'colorTem' },
                       { label: 'Scene', value: 'scene' },
+                      ...(formSegmentCount > 0 || shortcutForm.colorMode === 'gradient'
+                        ? [{ label: 'Gradient', value: 'gradient' }] : []),
                     ].map((opt) => {
                       const active = shortcutForm.colorMode === opt.value;
                       return (
@@ -1306,23 +1696,92 @@ export default function HomeLightsScreen({ route }) {
                     })}
                   </View>
 
-                  {shortcutForm.colorMode === 'color' && (
-                    <View style={styles.colorGrid}>
-                      {PRESET_COLORS.map((c) => (
+                  {(shortcutForm.colorMode === 'color' || shortcutForm.colorMode === 'gradient') && (() => {
+                    const gradient = shortcutForm.colorMode === 'gradient';
+                    const current = gradient ? shortcutForm.gradientStops[formGradStop] : shortcutForm.color;
+                    return (
+                      <View style={styles.formColorBlock}>
+                        {gradient && (
+                          <>
+                            <GradientStops
+                              stops={shortcutForm.gradientStops}
+                              active={formGradStop}
+                              onSelect={setFormGradStop}
+                              onStopsChange={(stops) => setShortcutForm((f) => ({ ...f, gradientStops: stops }))}
+                              previewCount={formSegmentCount || 7}
+                            />
+                            {formDevices.some((d) => getSegmentCount(d) === 0) && (
+                              <Text style={styles.colorHint}>Lights without segments get the start colour.</Text>
+                            )}
+                          </>
+                        )}
+
+                        <View style={styles.colorGrid}>
+                          {presets.map((c, i) => (
+                            <TouchableOpacity
+                              key={i}
+                              style={[styles.colorSwatch, { backgroundColor: c }, current === c && styles.colorSwatchSelected]}
+                              onPress={() => setFormColor(c)}
+                              accessibilityRole="button"
+                              accessibilityLabel={gradient ? `Set gradient stop to ${c}` : `Select color ${c}`}
+                            />
+                          ))}
+                        </View>
+
                         <TouchableOpacity
-                          key={c}
-                          style={[
-                            styles.colorSwatch,
-                            { backgroundColor: c },
-                            shortcutForm.color === c && styles.colorSwatchSelected,
-                          ]}
-                          onPress={() => setShortcutForm((f) => ({ ...f, color: c }))}
+                          style={[styles.customToggle, styles.customToggleSpaced]}
+                          onPress={() => setFormPickerOpen((v) => !v)}
                           accessibilityRole="button"
-                          accessibilityLabel={`Select color ${c}`}
-                        />
-                      ))}
-                    </View>
-                  )}
+                          accessibilityState={{ expanded: formPickerOpen }}
+                        >
+                          <Ionicons name="color-palette-outline" size={18} color={colors.accent} />
+                          <Text style={styles.customToggleLabel}>Custom colour</Text>
+                          {!formPickerOpen && !presets.includes(current) && (
+                            <View style={[styles.customDot, { backgroundColor: current }]} />
+                          )}
+                          <Ionicons name={formPickerOpen ? 'chevron-up' : 'chevron-down'} size={16} color={colors.textTertiary} />
+                        </TouchableOpacity>
+                        {formPickerOpen && (
+                          <View style={styles.pickerWrap}>
+                            <ColorPicker
+                              color={current}
+                              onChange={setFormColor}
+                              onChangeComplete={setFormColor}
+                              onDragActive={setWheelDragging}
+                            />
+                          </View>
+                        )}
+
+                        {gradient && formHasBlend && (
+                          <>
+                            <Text style={[styles.fieldLabel, styles.formSubLabel]}>Smooth blending</Text>
+                            <View style={styles.segmentedRow}>
+                              {[
+                                { label: 'No change', value: null },
+                                { label: 'On', value: true },
+                                { label: 'Off', value: false },
+                              ].map((opt) => {
+                                const active = shortcutForm.gradientBlend === opt.value;
+                                return (
+                                  <TouchableOpacity
+                                    key={opt.label}
+                                    style={[styles.segmentedBtn, active && styles.segmentedBtnActive]}
+                                    onPress={() => setShortcutForm((f) => ({ ...f, gradientBlend: opt.value }))}
+                                    accessibilityRole="button"
+                                    accessibilityState={{ selected: active }}
+                                  >
+                                    <Text style={[styles.segmentedLabel, active && { color: colors.accent }]}>
+                                      {opt.label}
+                                    </Text>
+                                  </TouchableOpacity>
+                                );
+                              })}
+                            </View>
+                          </>
+                        )}
+                      </View>
+                    );
+                  })()}
 
                   {shortcutForm.colorMode === 'colorTem' && (
                     <View>
@@ -1513,6 +1972,27 @@ const makeStyles = (colors) => StyleSheet.create({
     borderWidth: 2, borderColor: 'transparent',
   },
   colorSwatchSelected: { borderColor: colors.accent },
+  colorHint: { ...type.caption, color: colors.textSecondary, marginBottom: spacing.sm },
+  customToggle: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 4 },
+  customToggleLabel: { ...type.bodyMed, color: colors.textPrimary, flex: 1 },
+  pickerWrap: { marginTop: spacing.md, alignItems: 'center' },
+  customToggleSpaced: { marginTop: spacing.md },
+  customDot: { width: 16, height: 16, borderRadius: radius.full, borderWidth: 1, borderColor: colors.border },
+  formColorBlock: { marginTop: spacing.md },
+  formSubLabel: { marginTop: spacing.md },
+  segModeRow: { marginBottom: spacing.md },
+  applyBtn: {
+    flexDirection: 'row', gap: 8,
+    height: 44, borderRadius: radius.md,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: colors.accent,
+    marginTop: spacing.md,
+  },
+  applyBtnDisabled: { opacity: 0.5 },
+  applyBtnLabel: { ...type.bodyMed, color: colors.accentForeground, fontWeight: '700' },
+  flexSpacer: { flex: 1 },
+  link: { ...type.caption, color: colors.accent, fontWeight: '700' },
+  linkMuted: { ...type.caption, color: colors.textSecondary, fontWeight: '700' },
 
   colorTemRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 },
   colorTemHint: { ...type.caption, color: colors.textTertiary },

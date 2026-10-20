@@ -7,9 +7,14 @@ import {
   getDynamicScenes,
   getDiyScenes,
   getSegmentCount,
+  getSegmentLimit,
+  chunkSegments,
+  splitSegmentGroups,
   sceneKey,
   setSegmentColor,
   setSegmentBrightness,
+  setToggle,
+  applySegmentColorGroups,
   applyScene,
   resolveSceneByName,
   stateFromCapabilities,
@@ -177,6 +182,37 @@ describe('getSegmentCount', () => {
 
   it('returns 0 for a null device', () => expect(getSegmentCount(null)).toBe(0));
 
+  // H6076 floor lamp shape: index range + per-request size cap instead of options
+  const withRange = (field) => makeDevice([
+    {
+      type: 'devices.capabilities.segment_color_setting',
+      instance: 'segmentedColorRgb',
+      parameters: { fields: [{ fieldName: 'segment', dataType: 'Array', ...field }] },
+    },
+  ]);
+
+  it('counts an elementRange', () =>
+    expect(getSegmentCount(withRange({ size: { min: 1, max: 7 }, elementRange: { min: 0, max: 14 } }))).toBe(15));
+
+  it('uses the per-model override for the H6076 (7 physical subsections)', () => {
+    const device = { sku: 'H6076', ...withRange({ size: { min: 1, max: 7 }, elementRange: { min: 0, max: 14 } }) };
+    expect(getSegmentCount(device)).toBe(7);
+  });
+
+  it('ignores the override when the device has no segment capability', () =>
+    expect(getSegmentCount({ sku: 'H6076', capabilities: [] })).toBe(0));
+
+  it('returns 0 for a malformed elementRange', () => {
+    expect(getSegmentCount(withRange({ elementRange: { min: 5, max: 2 } }))).toBe(0);
+    expect(getSegmentCount(withRange({ elementRange: { min: 0 } }))).toBe(0);
+  });
+
+  it('reads the per-request limit from size.max', () => {
+    expect(getSegmentLimit(withRange({ size: { min: 1, max: 7 }, elementRange: { min: 0, max: 14 } }))).toBe(7);
+    expect(getSegmentLimit(withSegments(15))).toBe(Infinity);
+    expect(getSegmentLimit(null)).toBe(Infinity);
+  });
+
   it('returns 0 when the segment field has no options', () => {
     const device = makeDevice([
       {
@@ -268,6 +304,105 @@ describe('segment commands', () => {
       instance: 'segmentedBrightness',
       value: { segment: [1], brightness: 60 },
     });
+  });
+});
+
+describe('chunkSegments / splitSegmentGroups', () => {
+  it('leaves selections within the limit alone', () => {
+    expect(chunkSegments([0, 1, 2], 7)).toEqual([[0, 1, 2]]);
+    expect(chunkSegments([0, 1, 2])).toEqual([[0, 1, 2]]);
+  });
+
+  it('splits larger selections', () => {
+    expect(chunkSegments([0, 1, 2, 3, 4], 2)).toEqual([[0, 1], [2, 3], [4]]);
+  });
+
+  it('returns no chunks for an empty selection', () => expect(chunkSegments([], 7)).toEqual([]));
+
+  it('splits groups and keeps their colour', () => {
+    expect(splitSegmentGroups([
+      { hex: '#FF0000', segments: [0, 1, 2] },
+      { hex: '#0000FF', segments: [3] },
+    ], 2)).toEqual([
+      { hex: '#FF0000', segments: [0, 1] },
+      { hex: '#FF0000', segments: [2] },
+      { hex: '#0000FF', segments: [3] },
+    ]);
+  });
+});
+
+describe('segment commands over the per-request limit', () => {
+  const sentSegments = () => global.fetch.mock.calls.map((c) => JSON.parse(c[1].body).payload.capability.value.segment);
+
+  beforeEach(() => { jest.useFakeTimers(); mockFetchJson(); });
+  afterEach(() => { jest.useRealTimers(); delete global.fetch; });
+
+  it('sends colour in chunks', async () => {
+    const p = setSegmentColor('key', 'H6076', 'AA:BB', [0, 1, 2, 3, 4, 5, 6, 7, 8], '#FF0000', 7);
+    await jest.runAllTimersAsync();
+    await p;
+    expect(sentSegments()).toEqual([[0, 1, 2, 3, 4, 5, 6], [7, 8]]);
+  });
+
+  it('sends brightness in chunks', async () => {
+    const p = setSegmentBrightness('key', 'H6076', 'AA:BB', [0, 1, 2], 50, 2);
+    await jest.runAllTimersAsync();
+    await p;
+    expect(sentSegments()).toEqual([[0, 1], [2]]);
+  });
+});
+
+describe('applySegmentColorGroups', () => {
+  const sentCaps = () => global.fetch.mock.calls.map((c) => JSON.parse(c[1].body).payload.capability.value);
+  afterEach(() => { delete global.fetch; });
+
+  it('sends one request per group, in order, reporting progress', async () => {
+    mockFetchJson();
+    const onProgress = jest.fn();
+    await applySegmentColorGroups('key', 'H6159', 'AA:BB', [
+      { hex: '#FF0000', segments: [0, 1] },
+      { hex: '#0000FF', segments: [2] },
+    ], onProgress, 0);
+    expect(sentCaps()).toEqual([
+      { segment: [0, 1], rgb: 0xff0000 },
+      { segment: [2], rgb: 0x0000ff },
+    ]);
+    expect(onProgress.mock.calls).toEqual([[1, 2], [2, 2]]);
+  });
+
+  it('stops at the first failing group', async () => {
+    global.fetch = jest.fn()
+      .mockResolvedValueOnce({ status: 200, text: () => Promise.resolve(JSON.stringify({ code: 200 })) })
+      .mockResolvedValueOnce({ status: 429, text: () => Promise.resolve(JSON.stringify({ code: 429, msg: 'Too many requests' })) });
+    const onProgress = jest.fn();
+    await expect(applySegmentColorGroups('key', 'H6159', 'AA:BB', [
+      { hex: '#FF0000', segments: [0] },
+      { hex: '#00FF00', segments: [1] },
+      { hex: '#0000FF', segments: [2] },
+    ], onProgress, 0)).rejects.toThrow('Too many requests');
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+    expect(onProgress).toHaveBeenCalledTimes(1);
+  });
+
+  it('does nothing for an empty list', async () => {
+    mockFetchJson();
+    await applySegmentColorGroups('key', 'H6159', 'AA:BB', [], undefined, 0);
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('setToggle', () => {
+  beforeEach(() => mockFetchJson());
+  afterEach(() => { delete global.fetch; });
+
+  it('sends a toggle capability as 1/0', async () => {
+    await setToggle('key', 'H6076', 'AA:BB', 'gradientToggle', true);
+    await setToggle('key', 'H6076', 'AA:BB', 'gradientToggle', false);
+    const caps = global.fetch.mock.calls.map((c) => JSON.parse(c[1].body).payload.capability);
+    expect(caps).toEqual([
+      { type: 'devices.capabilities.toggle', instance: 'gradientToggle', value: 1 },
+      { type: 'devices.capabilities.toggle', instance: 'gradientToggle', value: 0 },
+    ]);
   });
 });
 
@@ -385,8 +520,15 @@ describe('stateFromCapabilities', () => {
       colorTem: 4000,
       scene: null,
       musicMode: null,
+      gradient: false,
       online: true,
     });
+  });
+
+  it('parses the gradient toggle', () => {
+    const cap = (value) => [{ type: 'devices.capabilities.toggle', instance: 'gradientToggle', state: { value } }];
+    expect(stateFromCapabilities(cap(1)).gradient).toBe(true);
+    expect(stateFromCapabilities(cap(0)).gradient).toBe(false);
   });
 
   it('parses the online capability as offline', () => {
@@ -508,6 +650,72 @@ describe('applyActionsToDevice', () => {
 
   afterEach(() => {
     delete global.fetch;
+  });
+
+  describe('gradient mode', () => {
+    // H6076-shaped floor lamp: 7 subsections, max 7 per request, blending toggle
+    const lamp = {
+      sku: 'H6076',
+      device: 'CC:DD',
+      capabilities: [
+        { type: 'devices.capabilities.on_off', instance: 'powerSwitch' },
+        { type: 'devices.capabilities.color_setting', instance: 'colorRgb' },
+        { type: 'devices.capabilities.toggle', instance: 'gradientToggle' },
+        {
+          type: 'devices.capabilities.segment_color_setting',
+          instance: 'segmentedColorRgb',
+          parameters: {
+            fields: [{ fieldName: 'segment', size: { min: 1, max: 7 }, elementRange: { min: 0, max: 14 } }],
+          },
+        },
+      ],
+    };
+
+    beforeEach(() => jest.useFakeTimers());
+    afterEach(() => jest.useRealTimers());
+
+    const run = async (dev, actions) => {
+      const p = applyActionsToDevice('key', dev, actions);
+      await jest.runAllTimersAsync();
+      return p;
+    };
+
+    it('spreads the gradient over every segment and sets blending', async () => {
+      const patch = await run(lamp, {
+        colorMode: 'gradient', gradientStops: ['#FF0000', '#0000FF'], gradientBlend: true,
+      });
+      const caps = sentCapabilities();
+      expect(caps[0]).toEqual({ type: 'devices.capabilities.toggle', instance: 'gradientToggle', value: 1 });
+      const segCalls = caps.slice(1);
+      expect(segCalls.every((c) => c.instance === 'segmentedColorRgb')).toBe(true);
+      expect(segCalls.flatMap((c) => c.value.segment).sort((a, b) => a - b)).toEqual([0, 1, 2, 3, 4, 5, 6]);
+      expect(segCalls[0].value).toEqual({ segment: [0], rgb: 0xff0000 });
+      expect(segCalls[segCalls.length - 1].value).toEqual({ segment: [6], rgb: 0x0000ff });
+      expect(patch).toEqual({ gradient: true, scene: null, on: true });
+    });
+
+    it('leaves blending alone when gradientBlend is null', async () => {
+      await run(lamp, { colorMode: 'gradient', gradientStops: ['#FF0000', '#FF0000'], gradientBlend: null });
+      expect(sentCapabilities()).toEqual([
+        expect.objectContaining({ instance: 'segmentedColorRgb', value: { segment: [0, 1, 2, 3, 4, 5, 6], rgb: 0xff0000 } }),
+      ]);
+    });
+
+    it('falls back to the start colour on lights without segments', async () => {
+      const patch = await run(device, {
+        colorMode: 'gradient', gradientStops: ['#00FF00', '#0000FF'], gradientBlend: true,
+      });
+      expect(sentCapabilities()).toEqual([
+        expect.objectContaining({ instance: 'colorRgb', value: 0x00ff00 }),
+      ]);
+      expect(patch).toEqual({ color: '#00FF00', scene: null, on: true });
+    });
+
+    it('does nothing without stops', async () => {
+      const patch = await run(lamp, { colorMode: 'gradient', gradientStops: [] });
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(patch).toEqual({});
+    });
   });
 
   it('applies power, brightness and color, returning the patch', async () => {

@@ -379,6 +379,40 @@ export const updateLightShortcut = (householdId, shortcutId, data) =>
 export const deleteLightShortcut = (householdId, shortcutId) =>
   deleteDoc(doc(db, 'households', householdId, 'lightShortcuts', shortcutId));
 
+// ── Light Colours ────────────────────────────────────────
+// `lightColors/presets` holds the household's editable swatches;
+// `lightColors/recent_<deviceId>` holds each light's recent custom colours.
+const RECENT_PREFIX = 'recent_';
+const recentColorsDocId = (deviceId) => `${RECENT_PREFIX}${String(deviceId).replace(/\//g, '_')}`;
+
+export const subscribeLightColors = (householdId, callback) =>
+  onSnapshot(
+    collection(db, 'households', householdId, 'lightColors'),
+    (snap) => {
+      let presets = null;
+      const recentsByDevice = {};
+      snap.docs.forEach((d) => {
+        const data = d.data();
+        if (d.id === 'presets') presets = data.colors ?? null;
+        else if (d.id.startsWith(RECENT_PREFIX)) recentsByDevice[data.deviceId] = data.colors ?? [];
+      });
+      callback({ presets, recentsByDevice });
+    },
+  );
+
+export const saveLightColorPresets = (householdId, colors) =>
+  setDoc(doc(db, 'households', householdId, 'lightColors', 'presets'), {
+    colors,
+    updatedAt: serverTimestamp(),
+  });
+
+export const saveLightRecentColors = (householdId, deviceId, colors) =>
+  setDoc(doc(db, 'households', householdId, 'lightColors', recentColorsDocId(deviceId)), {
+    deviceId,
+    colors,
+    updatedAt: serverTimestamp(),
+  });
+
 export const leaveHousehold = async (householdId, uid) => {
   const ref = doc(db, 'households', householdId);
   const snap = await getDoc(ref);
