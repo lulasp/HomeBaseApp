@@ -30,6 +30,10 @@ yarn-error.*
 .DS_Store
 *.pem
 
+# editor swap files
+*.swp
+*.swo
+
 # local env files
 .env
 .env*.local
