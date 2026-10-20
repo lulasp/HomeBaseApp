@@ -1,6 +1,25 @@
 # Weekly todos — week navigation, carry-over, recurring tasks
 
-**Status:** proposal, not started · **Written:** 2026-09-10
+**Status:** built 2026-10-20 (branch `weeklyTodosNext`) · **Written:** 2026-09-10
+
+## As built — decisions taken
+
+- **Week nav:** ±8 weeks, "This week" chip to jump back. The current week stays
+  subscribed while browsing (reminders, recurring and carry-over use it) —
+  `syncTodoReminders` cancels anything missing from its list, so it must only
+  ever see the current week.
+- **Carry-over (Option A):** one week back; lands on the same weekday; reminders
+  are **cleared**; Dismiss is **household-wide** (`carryOverDismissedWeek` on
+  `private/data`). Instances of an *active* rule don't carry (this week has its
+  own); a paused/deleted rule's leftovers do. Full days are skipped with a toast.
+- **Recurring:** long-press a task (or the repeat icon in its edit row) → pick
+  days. Rules carry `startsOn` so creating/resuming/changing days never
+  back-fills days already past this week. Managed in Household settings →
+  Repeating tasks (pause / delete). Materialization is debounced 800ms so the
+  rule and its linked source task settle before planning.
+- Helpers: `src/utils/weeklyTodos.js`; service: `getWeeklyTodos`,
+  `carryOverWeeklyTodos`, `dismissTodoCarryOver`, `*TodoRecurrence*` in
+  `src/services/firestore.js`.
 
 Design for the two larger todo-list features that were scoped but not built.
 The edit / reorder / move / safe-delete work is already shipped in
