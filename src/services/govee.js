@@ -1,3 +1,5 @@
+import { gradientColors, groupSegmentsByColor } from '../utils/color';
+
 const BASE = 'https://openapi.api.govee.com/router/api/v1';
 
 function headers(apiKey) {
@@ -107,18 +109,52 @@ export const applyScene = (apiKey, sku, device, scene) =>
     value: scene.value,
   });
 
-export const setSegmentColor = (apiKey, sku, device, segments, hex) =>
-  controlDevice(apiKey, sku, device, {
+const SEGMENT_GAP_MS = 500;
+
+// Some devices cap how many segments one request may carry (see
+// getSegmentLimit); larger selections are sent as sequential chunks.
+async function sendSegmentChunks(segments, maxPerRequest, send) {
+  const chunks = chunkSegments(segments, maxPerRequest);
+  let last;
+  for (let i = 0; i < chunks.length; i++) {
+    if (i > 0) await new Promise((r) => setTimeout(r, SEGMENT_GAP_MS));
+    last = await send(chunks[i]);
+  }
+  return last;
+}
+
+export const setSegmentColor = (apiKey, sku, device, segments, hex, maxPerRequest = Infinity) =>
+  sendSegmentChunks(segments, maxPerRequest, (segment) => controlDevice(apiKey, sku, device, {
     type: 'devices.capabilities.segment_color_setting',
     instance: 'segmentedColorRgb',
-    value: { segment: segments, rgb: hexToRgbInt(hex) },
-  });
+    value: { segment, rgb: hexToRgbInt(hex) },
+  }));
 
-export const setSegmentBrightness = (apiKey, sku, device, segments, brightness) =>
-  controlDevice(apiKey, sku, device, {
+// Applies [{ hex, segments }] groups one request at a time (Govee allows ~2
+// sustained requests/sec per device). Stops at the first failure.
+// onProgress(done, total) fires after each successful group.
+// Pass groups through splitSegmentGroups first when the device has a limit.
+export async function applySegmentColorGroups(apiKey, sku, device, groups, onProgress, gapMs = SEGMENT_GAP_MS) {
+  for (let i = 0; i < groups.length; i++) {
+    if (i > 0 && gapMs > 0) await new Promise((r) => setTimeout(r, gapMs));
+    await setSegmentColor(apiKey, sku, device, groups[i].segments, groups[i].hex);
+    onProgress?.(i + 1, groups.length);
+  }
+}
+
+export const setSegmentBrightness = (apiKey, sku, device, segments, brightness, maxPerRequest = Infinity) =>
+  sendSegmentChunks(segments, maxPerRequest, (segment) => controlDevice(apiKey, sku, device, {
     type: 'devices.capabilities.segment_color_setting',
     instance: 'segmentedBrightness',
-    value: { segment: segments, brightness },
+    value: { segment, brightness },
+  }));
+
+// On/off toggles, e.g. gradientToggle (blend colours between segments)
+export const setToggle = (apiKey, sku, device, instance, on) =>
+  controlDevice(apiKey, sku, device, {
+    type: 'devices.capabilities.toggle',
+    instance,
+    value: on ? 1 : 0,
   });
 
 export const setMusicMode = (apiKey, sku, device, mode) =>
@@ -159,6 +195,29 @@ export async function applyActionsToDevice(apiKey, device, actions) {
     patch.colorTem = actions.colorTem;
     patch.scene = null;
     lit = true;
+  } else if (actions.colorMode === 'gradient' && actions.gradientStops?.length) {
+    // Segment lights get the gradient across every segment; the rest fall
+    // back to the start colour so every light in the shortcut changes.
+    if (actions.gradientBlend != null && hasCap(device, 'devices.capabilities.toggle', 'gradientToggle')) {
+      await setToggle(apiKey, sku, id, 'gradientToggle', actions.gradientBlend);
+      patch.gradient = actions.gradientBlend;
+    }
+    const count = getSegmentCount(device);
+    if (count > 0 && hasCap(device, 'devices.capabilities.segment_color_setting', 'segmentedColorRgb')) {
+      const segments = Array.from({ length: count }, (_, i) => i);
+      const groups = splitSegmentGroups(
+        groupSegmentsByColor(segments, gradientColors(actions.gradientStops, count)),
+        getSegmentLimit(device),
+      );
+      await applySegmentColorGroups(apiKey, sku, id, groups);
+      patch.scene = null;
+      lit = true;
+    } else if (hasCap(device, 'devices.capabilities.color_setting', 'colorRgb')) {
+      await setColor(apiKey, sku, id, actions.gradientStops[0]);
+      patch.color = actions.gradientStops[0];
+      patch.scene = null;
+      lit = true;
+    }
   } else if (actions.colorMode === 'scene') {
     const scene = await resolveSceneByName(apiKey, device, actions.sceneName);
     if (scene) {
@@ -260,12 +319,47 @@ export function getScenesFromDevice(device) {
   return normalizeSceneOptions(cap.parameters?.options ?? [], cap.type, cap.instance, 'static');
 }
 
-// Number of addressable segments, read from the `segment` field's option list.
-export function getSegmentCount(device) {
+function segmentField(device) {
   const params = getCapParam(device, 'devices.capabilities.segment_color_setting', 'segmentedColorRgb')
     ?? getCapParam(device, 'devices.capabilities.segment_color_setting', 'segmentedBrightness');
-  const field = (params?.fields ?? []).find((f) => f.fieldName === 'segment');
-  return field?.options?.length ?? 0;
+  return (params?.fields ?? []).find((f) => f.fieldName === 'segment') ?? null;
+}
+
+// Number of addressable segments. Devices describe the `segment` field either
+// as an option list (H6159: options [{value:0}…]) or as an index range
+// (H6076: elementRange {min:0,max:14}).
+// Models whose API index range is wider than their physical segments
+// (H6076 reports 0–14 but has 7 subsections in the Govee app).
+const SEGMENT_COUNT_BY_SKU = { H6076: 7 };
+
+export function getSegmentCount(device) {
+  const field = segmentField(device);
+  if (!field) return 0;
+  if (SEGMENT_COUNT_BY_SKU[device.sku]) return SEGMENT_COUNT_BY_SKU[device.sku];
+  if (field?.options?.length) return field.options.length;
+  const range = field?.elementRange;
+  if (Number.isInteger(range?.min) && Number.isInteger(range?.max) && range.max >= range.min) {
+    return range.max - range.min + 1;
+  }
+  return 0;
+}
+
+// Max segments per request (`size.max`, e.g. 7 on the H6076); Infinity when unspecified.
+export function getSegmentLimit(device) {
+  const max = segmentField(device)?.size?.max;
+  return Number.isInteger(max) && max > 0 ? max : Infinity;
+}
+
+export function chunkSegments(segments, maxPerRequest = Infinity) {
+  if (!(maxPerRequest > 0) || segments.length <= maxPerRequest) return segments.length ? [segments] : [];
+  const out = [];
+  for (let i = 0; i < segments.length; i += maxPerRequest) out.push(segments.slice(i, i + maxPerRequest));
+  return out;
+}
+
+// Splits [{ hex, segments }] groups so none exceeds the per-request limit.
+export function splitSegmentGroups(groups, maxPerRequest = Infinity) {
+  return groups.flatMap((g) => chunkSegments(g.segments, maxPerRequest).map((segments) => ({ hex: g.hex, segments })));
 }
 
 export function stateFromCapabilities(caps) {
@@ -276,6 +370,7 @@ export function stateFromCapabilities(caps) {
     colorTem: 4000,
     scene: null,
     musicMode: null,
+    gradient: false,
     // Not every device reports the online capability — assume reachable unless
     // the API explicitly says otherwise.
     online: true,
@@ -294,6 +389,8 @@ export function stateFromCapabilities(caps) {
       if (val != null) state.colorTem = val;
     } else if (cap.type === 'devices.capabilities.dynamic_scene' && cap.instance === 'lightScene') {
       state.scene = val ?? null;
+    } else if (cap.type === 'devices.capabilities.toggle' && cap.instance === 'gradientToggle') {
+      state.gradient = val === 1;
     } else if (cap.type === 'devices.capabilities.music_setting' && cap.instance === 'musicMode') {
       state.musicMode = val?.musicMode ?? null;
     }
