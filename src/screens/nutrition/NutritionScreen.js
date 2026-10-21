@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useMemo, useRef, memo } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, StyleSheet,
-  Modal, TextInput, FlatList, SafeAreaView, ActivityIndicator,
+  Modal, TextInput, FlatList, SafeAreaView, ActivityIndicator, Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { format, startOfWeek, addDays, addWeeks, subWeeks } from 'date-fns';
@@ -17,6 +17,7 @@ import { useIsDesktop, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
 import { Rise, useEntranceReplay } from '../../components/Motion';
 import AddRecipeScreen from '../recipes/AddRecipeScreen';
 import useBodyGoals from '../../hooks/useBodyGoals';
+import useVisualViewportHeight from '../../hooks/useVisualViewportHeight';
 
 const getWeekKey = (date) => format(startOfWeek(date, { weekStartsOn: 1 }), 'yyyy-MM-dd');
 
@@ -76,6 +77,7 @@ export default function NutritionScreen({ navigation }) {
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const isDesktop = useIsDesktop();
   const contentKey = useEntranceReplay();
+  const windowHeight = useVisualViewportHeight();
   const body = useBodyGoals(householdId, user?.uid);
   const calorieTarget = body.calories?.target ?? null;
 
@@ -878,7 +880,7 @@ export default function NutritionScreen({ navigation }) {
   });
 
   return (
-    <SafeAreaView style={styles.screenRoot}>
+    <SafeAreaView style={[styles.screenRoot, Platform.OS === 'web' && { height: windowHeight }]}>
       {isDesktop ? (
         <View key={contentKey} style={desktopContentWrapper}>
           <Rise index={0}>{header}</Rise>
@@ -998,7 +1000,7 @@ export default function NutritionScreen({ navigation }) {
           </Rise>
         </View>
       ) : (
-        <ScrollView key={contentKey} style={{ flex: 1 }} contentContainerStyle={styles.mobileContent} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" {...navScrollProps}>
+        <ScrollView key={contentKey} style={Platform.OS === 'web' ? { height: windowHeight } : { flex: 1 }} contentContainerStyle={styles.mobileContent} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" {...navScrollProps}>
           <Rise index={0}>{header}</Rise>
           <View style={styles.dayGrid}>
             {mobileDayCards}
@@ -1434,7 +1436,7 @@ export default function NutritionScreen({ navigation }) {
 }
 
 const makeStyles = (colors) => StyleSheet.create({
-  screenRoot: { flex: 1, backgroundColor: colors.background },
+  screenRoot: { flex: 1, minHeight: 0, backgroundColor: colors.background },
 
   popupOverlay: {
     flex: 1,
