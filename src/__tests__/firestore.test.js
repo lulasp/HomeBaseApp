@@ -81,6 +81,14 @@ import {
   subscribeLightColors,
   saveLightColorPresets,
   saveLightRecentColors,
+  getWeeklyTodos,
+  carryOverWeeklyTodos,
+  dismissTodoCarryOver,
+  subscribeTodoRecurrences,
+  createTodoRecurrence,
+  updateTodoRecurrence,
+  deleteTodoRecurrence,
+  materializeTodoRecurrences,
 } from '../services/firestore';
 import { onSnapshot, where, orderBy } from 'firebase/firestore';
 
@@ -1017,5 +1025,103 @@ describe('light colours', () => {
       colors: ['#123456'],
       updatedAt: 'SERVER_TIMESTAMP',
     });
+  });
+});
+
+describe('weekly todo carry-over', () => {
+  const householdId = 'hh1';
+
+  it('reads one week with a single filter', async () => {
+    mockGetDocs.mockResolvedValueOnce({ docs: [{ id: 't1', data: () => ({ day: 'Monday', done: false }) }] });
+    const todos = await getWeeklyTodos(householdId, '2026-10-12');
+    expect(where).toHaveBeenCalledTimes(1);
+    expect(where).toHaveBeenCalledWith('weekKey', '==', '2026-10-12');
+    expect(orderBy).not.toHaveBeenCalled();
+    expect(todos).toEqual([{ id: 't1', day: 'Monday', done: false }]);
+  });
+
+  it('moves tasks to the new week, tags them and clears reminders in one batch', async () => {
+    await carryOverWeeklyTodos(householdId, [{ id: 'a' }, { id: 'b' }], '2026-10-12', '2026-10-19');
+    expect(mockBatchUpdate).toHaveBeenCalledTimes(2);
+    expect(mockBatchUpdate).toHaveBeenCalledWith('households/hh1/weeklyTodos/a', {
+      weekKey: '2026-10-19',
+      carriedFrom: '2026-10-12',
+      remindTime: 'DELETE_FIELD',
+      remindFor: 'DELETE_FIELD',
+      updatedAt: 'SERVER_TIMESTAMP',
+    });
+    expect(mockBatchCommit).toHaveBeenCalledTimes(1);
+  });
+
+  it('records the dismissal on the private household doc', async () => {
+    await dismissTodoCarryOver(householdId, '2026-10-19');
+    expect(mockSetDoc).toHaveBeenCalledWith(
+      'households/hh1/private/data',
+      { carryOverDismissedWeek: '2026-10-19' },
+      { merge: true },
+    );
+  });
+});
+
+describe('recurring todos', () => {
+  const householdId = 'hh1';
+
+  it('subscribes to all rules without filters', () => {
+    const cb = jest.fn();
+    subscribeTodoRecurrences(householdId, cb);
+    expect(mockCollection).toHaveBeenCalledWith({}, 'households', 'hh1', 'todoRecurrences');
+    expect(where).not.toHaveBeenCalled();
+    onSnapshot.mock.calls[0][1]({ docs: [{ id: 'r1', data: () => ({ text: 'Bins' }) }] });
+    expect(cb).toHaveBeenCalledWith([{ id: 'r1', text: 'Bins' }]);
+  });
+
+  it('creates a rule and links the source task in one batch', async () => {
+    // doc(collectionRef) → auto-id ref
+    mockDoc.mockImplementationOnce(() => ({ id: 'rule1' }));
+    const id = await createTodoRecurrence(householdId, { id: 't1', text: 'Bins' }, ['Tuesday'], '2026-10-20');
+    expect(id).toBe('rule1');
+    expect(mockBatchSet).toHaveBeenCalledWith({ id: 'rule1' }, {
+      text: 'Bins',
+      days: ['Tuesday'],
+      active: true,
+      startsOn: '2026-10-20',
+      lastMaterializedWeek: null,
+      createdAt: 'SERVER_TIMESTAMP',
+      updatedAt: 'SERVER_TIMESTAMP',
+    });
+    expect(mockBatchUpdate).toHaveBeenCalledWith('households/hh1/weeklyTodos/t1', {
+      recurrenceId: 'rule1',
+      updatedAt: 'SERVER_TIMESTAMP',
+    });
+    expect(mockBatchCommit).toHaveBeenCalledTimes(1);
+  });
+
+  it('updates and deletes rules', async () => {
+    await updateTodoRecurrence(householdId, 'r1', { active: false });
+    expect(mockUpdateDoc).toHaveBeenCalledWith('households/hh1/todoRecurrences/r1', {
+      active: false, updatedAt: 'SERVER_TIMESTAMP',
+    });
+    await deleteTodoRecurrence(householdId, 'r1');
+    expect(mockDeleteDoc).toHaveBeenCalledWith('households/hh1/todoRecurrences/r1');
+  });
+
+  it('materializes instances and marks rules in one batch', async () => {
+    let n = 0;
+    mockDoc.mockImplementation((db, ...segments) => (segments.length ? segments.join('/') : `new${++n}`));
+    await materializeTodoRecurrences(householdId, '2026-10-19', [
+      { rule: { id: 'r1', text: 'Bins' }, day: 'Tuesday' },
+      { rule: { id: 'r1', text: 'Bins' }, day: 'Friday' },
+    ], ['r1']);
+    mockDoc.mockImplementation((db, ...segments) => segments.join('/'));
+
+    expect(mockBatchSet).toHaveBeenCalledTimes(2);
+    expect(mockBatchSet).toHaveBeenCalledWith('new1', {
+      weekKey: '2026-10-19', day: 'Tuesday', text: 'Bins', done: false,
+      recurrenceId: 'r1', createdAt: 'SERVER_TIMESTAMP',
+    });
+    expect(mockBatchUpdate).toHaveBeenCalledWith('households/hh1/todoRecurrences/r1', {
+      lastMaterializedWeek: '2026-10-19',
+    });
+    expect(mockBatchCommit).toHaveBeenCalledTimes(1);
   });
 });

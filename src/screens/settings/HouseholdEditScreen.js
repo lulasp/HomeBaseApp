@@ -26,6 +26,7 @@ import { PANTRY_CATEGORIES, NON_FOOD_CATEGORIES, UNITS } from '../../utils/categ
 import { AI_MODELS, DEFAULT_AI_MODEL } from '../../utils/aiModels';
 import DraggableCategoryList from '../../components/DraggableCategoryList';
 import IconPicker from '../../components/IconPicker';
+import RepeatingTasksList from '../../components/RepeatingTasksList';
 import { spacing, radius, type } from '../../theme/colors';
 import { useIsDesktop, SIDEBAR_WIDTH, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
 import useVisualViewportHeight from '../../hooks/useVisualViewportHeight';
@@ -885,6 +886,10 @@ export default function HouseholdEditScreen({ route, navigation }) {
               />
             </View>
           </View>
+
+          {/* ── Repeating Tasks ── */}
+          <Text style={styles.sectionLabel}>Repeating Tasks</Text>
+          <RepeatingTasksList householdId={hhId} />
 
           </CollapsibleGroup>
           </Rise>
