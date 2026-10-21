@@ -10,7 +10,7 @@ import { M, Presence } from '../../components/Motion';
 import { useFocusEffect } from '@react-navigation/native';
 import { useHousehold } from '../../context/HouseholdContext';
 import { Ionicons } from '@expo/vector-icons';
-import { format, startOfWeek } from 'date-fns';
+import { format } from 'date-fns';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { useNavScrollProps } from '../../context/NavScrollContext';
@@ -20,7 +20,9 @@ import {
   getHouseholdWithPrivate, subscribePantryItems, subscribeGroceryItems,
   subscribeBills, subscribeMealPlan, subscribeLightShortcuts,
   subscribeWeeklyTodos, addWeeklyTodo, toggleWeeklyTodo, deleteWeeklyTodo,
-  updateWeeklyTodo,
+  updateWeeklyTodo, getWeeklyTodos, carryOverWeeklyTodos, dismissTodoCarryOver,
+  subscribeTodoRecurrences, createTodoRecurrence, updateTodoRecurrence,
+  deleteTodoRecurrence, materializeTodoRecurrences,
 } from '../../services/firestore';
 import { getDevices } from '../../services/govee';
 import LightShortcutsRow from '../../components/LightShortcutsRow';
@@ -32,14 +34,12 @@ import { formatReminderLabel } from '../../utils/reminders';
 import { spacing, radius, type } from '../../theme/colors';
 import { useIsDesktop, SIDEBAR_WIDTH } from '../../navigation/TabBar';
 import { MEAL_TYPES, FULL_DAYS, DAYS_OF_WEEK } from '../../utils/categories';
-
-const MAX_TODOS_PER_DAY = 15;
+import {
+  MAX_TODOS_PER_DAY, WEEK_NAV_RANGE, weekKeyFor, shiftWeekKey, weekRangeLabel,
+  carryOverCandidates, planCarryOver, planMaterialization, formatRecurrenceDays,
+} from '../../utils/weeklyTodos';
 const DAYS_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-
-function getWeekKey(date) {
-  return format(startOfWeek(date, { weekStartsOn: 1 }), 'yyyy-MM-dd');
-}
 
 function greeting() {
   const h = new Date().getHours();
@@ -239,37 +239,125 @@ function StatPill({ value, label, icon, color, soft, onPress }) {
 
 // ── Weekly Calendar ───────────────────────────────────────────────────────────
 
-function WeeklyCalendar({ householdId, weekKey, todayFull, colors }) {
+// `currentWeekKey` is the real current week; the arrows browse ±WEEK_NAV_RANGE
+// weeks around it. See docs/weekly-todos-next.md.
+function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, todayDate, colors }) {
   const { notify } = useNotification();
   const { showConfirm } = useAlert();
+  const { privateData } = useHousehold();
   const { user } = useAuth();
   const uid = user?.uid;
-  const [todos, setTodos] = useState([]);
+  const [weekOffset, setWeekOffset] = useState(0);
+  const [currentTodos, setCurrentTodos] = useState([]);
+  const [currentLoaded, setCurrentLoaded] = useState(false);
+  const [otherTodos, setOtherTodos] = useState([]);
+  const [rules, setRules] = useState([]);
+  const [prevWeekTodos, setPrevWeekTodos] = useState([]);
+  const [carrying, setCarrying] = useState(false);
   const [selectedDay, setSelectedDay] = useState(todayFull);
   const [inputText, setInputText] = useState('');
   const [editingId, setEditingId] = useState(null);
   const [editText, setEditText] = useState('');
   const [editDay, setEditDay] = useState(null);
   const [editRemindTime, setEditRemindTime] = useState(null);
+  const [repeatId, setRepeatId] = useState(null);
+  const [repeatDays, setRepeatDays] = useState([]);
   const scheduledRef = useRef(new Map());
+  const materializingRef = useRef(false);
+  const materializeFailedRef = useRef(null);
+
+  const isCurrentWeek = weekOffset === 0;
+  const viewWeekKey = useMemo(() => shiftWeekKey(currentWeekKey, weekOffset), [currentWeekKey, weekOffset]);
+  const prevWeekKey = useMemo(() => shiftWeekKey(currentWeekKey, -1), [currentWeekKey]);
+  const todos = isCurrentWeek ? currentTodos : otherTodos;
+
+  const onListenError = useCallback((err) => {
+    notify('Tasks are out of sync', err?.message || 'Could not load this week.', { type: 'error' });
+  }, [notify]);
+
+  // The current week stays subscribed even while browsing others — reminders,
+  // recurring tasks and carry-over all work off it.
+  useEffect(() => {
+    if (!householdId) return undefined;
+    setCurrentLoaded(false);
+    return subscribeWeeklyTodos(householdId, currentWeekKey, (docs) => {
+      setCurrentTodos(docs);
+      setCurrentLoaded(true);
+    }, onListenError);
+  }, [householdId, currentWeekKey, onListenError]);
 
   useEffect(() => {
-    if (!householdId) return;
-    return subscribeWeeklyTodos(householdId, weekKey, setTodos, (err) => {
-      notify('Tasks are out of sync', err?.message || 'Could not load this week.', { type: 'error' });
-    });
-  }, [householdId, weekKey, notify]);
+    if (!householdId || isCurrentWeek) return undefined;
+    setOtherTodos([]);
+    return subscribeWeeklyTodos(householdId, viewWeekKey, setOtherTodos, onListenError);
+  }, [householdId, viewWeekKey, isCurrentWeek, onListenError]);
+
+  useEffect(() => {
+    if (!householdId) return undefined;
+    return subscribeTodoRecurrences(householdId, setRules);
+  }, [householdId]);
 
   // Reminders are local notifications, so each device schedules its own — only
-  // for tasks this user set a reminder on. No-ops on web.
+  // for tasks this user set a reminder on. No-ops on web. Fed the current week
+  // only: sync cancels anything missing from the list it's given.
   useEffect(() => {
     if (!remindersSupported() || !uid) return;
     let cancelled = false;
-    syncTodoReminders(todos, uid, scheduledRef.current)
+    syncTodoReminders(currentTodos, uid, scheduledRef.current)
       .then((next) => { if (!cancelled) scheduledRef.current = next; })
       .catch((err) => console.error('Could not sync reminders', err));
     return () => { cancelled = true; };
-  }, [todos, uid]);
+  }, [currentTodos, uid]);
+
+  // ── Recurring tasks ────────────────────────────────────────────────────────
+  const rulesById = useMemo(() => new Map(rules.map((r) => [r.id, r])), [rules]);
+  const activeRuleIds = useMemo(() => new Set(rules.filter((r) => r.active).map((r) => r.id)), [rules]);
+
+  // Fill the current week from active rules once its tasks have loaded.
+  // lastMaterializedWeek + the existing-instance check keep this idempotent.
+  // Debounced: creating a rule also links its source task, and the rules and
+  // todos listeners can fire in separate renders — acting on the first alone
+  // would duplicate the source task's day.
+  useEffect(() => {
+    if (!householdId || !currentLoaded || materializingRef.current) return undefined;
+    if (materializeFailedRef.current === currentWeekKey) return undefined;   // don't retry-loop a failing write
+    const { creates, markRuleIds, skipped } = planMaterialization(rules, currentWeekKey, currentTodos);
+    if (markRuleIds.length === 0) return undefined;
+    const timer = setTimeout(() => {
+      materializingRef.current = true;
+      materializeTodoRecurrences(householdId, currentWeekKey, creates, markRuleIds)
+        .then(() => {
+          if (skipped.length) {
+            const days = [...new Set(skipped.map((x) => x.day))].join(', ');
+            notify('Some repeating tasks were skipped', `${days} already has ${MAX_TODOS_PER_DAY} tasks.`, { type: 'warning' });
+          }
+        })
+        .catch((err) => {
+          console.error('Could not add repeating tasks', err);
+          materializeFailedRef.current = currentWeekKey;
+        })
+        .finally(() => { materializingRef.current = false; });
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [householdId, currentLoaded, rules, currentTodos, currentWeekKey, notify]);
+
+  // ── Carry-over ─────────────────────────────────────────────────────────────
+  // Last week is read once per open (not live); "Bring forward" re-reads it.
+  useEffect(() => {
+    if (!householdId) return undefined;
+    let cancelled = false;
+    getWeeklyTodos(householdId, prevWeekKey)
+      .then((t) => { if (!cancelled) setPrevWeekTodos(t); })
+      .catch((err) => console.error('Could not read last week', err));
+    return () => { cancelled = true; };
+  }, [householdId, prevWeekKey]);
+
+  const carryCandidates = useMemo(
+    () => carryOverCandidates(prevWeekTodos, activeRuleIds),
+    [prevWeekTodos, activeRuleIds],
+  );
+  const showCarryOver = isCurrentWeek && carryCandidates.length > 0
+    && privateData?.carryOverDismissedWeek !== currentWeekKey;
 
   // Pending server timestamps read back as null, so a just-added task would
   // jump to the top before settling — sort those to the end where they land.
@@ -292,6 +380,7 @@ function WeeklyCalendar({ householdId, weekKey, todayFull, colors }) {
   const atCap = dayTodos.length >= MAX_TODOS_PER_DAY;
 
   const startEdit = useCallback((todo) => {
+    setRepeatId(null);
     setEditingId(todo.id);
     setEditText(todo.text);
     setEditDay(todo.day);
@@ -373,18 +462,156 @@ function WeeklyCalendar({ householdId, weekKey, todayFull, colors }) {
     }
     setInputText('');
     try {
-      await addWeeklyTodo(householdId, weekKey, selectedDay, text);
+      await addWeeklyTodo(householdId, viewWeekKey, selectedDay, text);
     } catch (err) {
       console.error(err);
       setInputText(text);        // keep the text so it isn't lost
       notify('Could not save task', err?.message || 'Please try again.', { type: 'error' });
     }
-  }, [inputText, dayTodos.length, householdId, weekKey, selectedDay, notify]);
+  }, [inputText, dayTodos.length, householdId, viewWeekKey, selectedDay, notify]);
+
+  // ── Week navigation ────────────────────────────────────────────────────────
+  const goToWeek = useCallback((offset) => {
+    const next = Math.max(-WEEK_NAV_RANGE, Math.min(WEEK_NAV_RANGE, offset));
+    cancelEdit();
+    setRepeatId(null);
+    setWeekOffset(next);
+    setSelectedDay(next === 0 ? todayFull : FULL_DAYS[0]);
+  }, [cancelEdit, todayFull]);
+
+  // ── Carry-over actions ─────────────────────────────────────────────────────
+  const handleBringForward = useCallback(async () => {
+    if (carrying) return;
+    setCarrying(true);
+    try {
+      // Re-read: someone else may have moved or finished these meanwhile
+      const fresh = await getWeeklyTodos(householdId, prevWeekKey);
+      const { move, skipped } = planCarryOver(carryOverCandidates(fresh, activeRuleIds), currentTodos);
+      if (move.length) await carryOverWeeklyTodos(householdId, move, prevWeekKey, currentWeekKey);
+      setPrevWeekTodos(fresh.filter((t) => !move.some((m) => m.id === t.id)));
+      if (skipped.length) {
+        notify(
+          `${skipped.length} task${skipped.length === 1 ? '' : 's'} didn't fit`,
+          `Those days already have ${MAX_TODOS_PER_DAY} tasks.`,
+          { type: 'warning' },
+        );
+      } else if (move.length) {
+        notify('Brought forward', `${move.length} task${move.length === 1 ? '' : 's'} moved to this week.`, { type: 'info' });
+      }
+    } catch (err) {
+      console.error(err);
+      notify('Could not bring tasks forward', err?.message || 'Please try again.', { type: 'error' });
+    } finally {
+      setCarrying(false);
+    }
+  }, [carrying, householdId, prevWeekKey, activeRuleIds, currentTodos, currentWeekKey, notify]);
+
+  const handleDismissCarryOver = useCallback(() => {
+    dismissTodoCarryOver(householdId, currentWeekKey).catch((err) => {
+      console.error(err);
+      notify('Could not dismiss', err?.message || 'Please try again.', { type: 'error' });
+    });
+  }, [householdId, currentWeekKey, notify]);
+
+  // ── Repeat weekly (long-press a task) ──────────────────────────────────────
+  const openRepeat = useCallback((todo) => {
+    cancelEdit();
+    const rule = todo.recurrenceId ? rulesById.get(todo.recurrenceId) : null;
+    setRepeatDays(rule?.days ?? [todo.day]);
+    setRepeatId(todo.id);
+  }, [cancelEdit, rulesById]);
+
+  const toggleRepeatDay = useCallback((day) => {
+    setRepeatDays((prev) => (prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day]));
+  }, []);
+
+  const saveRepeat = useCallback(async (todo) => {
+    const days = FULL_DAYS.filter((d) => repeatDays.includes(d));
+    if (days.length === 0) return;
+    const rule = todo.recurrenceId ? rulesById.get(todo.recurrenceId) : null;
+    setRepeatId(null);
+    try {
+      // startsOn = today so a change never back-fills days already gone this
+      // week; clearing lastMaterializedWeek lets this week pick up added days.
+      if (rule) {
+        await updateTodoRecurrence(householdId, rule.id, {
+          days, active: true, startsOn: todayDate, lastMaterializedWeek: null,
+        });
+      } else {
+        await createTodoRecurrence(householdId, todo, days, todayDate);
+      }
+      notify('Repeating', `${todo.text} · ${formatRecurrenceDays(days)}`, { type: 'info' });
+    } catch (err) {
+      console.error(err);
+      notify('Could not save', err?.message || 'Please try again.', { type: 'error' });
+    }
+  }, [repeatDays, rulesById, householdId, todayDate, notify]);
+
+  const stopRepeat = useCallback(async (todo) => {
+    const rule = rulesById.get(todo.recurrenceId);
+    if (!rule) return;
+    const confirmed = await showConfirm({
+      title: 'Stop repeating',
+      message: `"${rule.text}" won't be added to future weeks. Tasks already created stay.`,
+      type: 'danger',
+      confirmLabel: 'Stop',
+    });
+    if (!confirmed) return;
+    setRepeatId(null);
+    try {
+      await deleteTodoRecurrence(householdId, rule.id);
+    } catch (err) {
+      console.error(err);
+      notify('Could not stop repeating', err?.message || 'Please try again.', { type: 'error' });
+    }
+  }, [rulesById, showConfirm, householdId, notify]);
 
   return (
     <WidgetCard style={[styles.fullCard, { borderColor: colors.border, backgroundColor: colors.surface }]}>
       <View style={styles.widgetHeaderRow}>
-        <WidgetLabel icon="calendar-outline" label="THIS WEEK" color={colors.textTertiary} />
+        <View style={styles.weekNav}>
+          <TouchableOpacity
+            onPress={() => goToWeek(weekOffset - 1)}
+            disabled={weekOffset <= -WEEK_NAV_RANGE}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 4 }}
+            accessibilityRole="button"
+            accessibilityLabel="Previous week"
+          >
+            <Ionicons
+              name="chevron-back"
+              size={14}
+              color={weekOffset <= -WEEK_NAV_RANGE ? colors.border : colors.textTertiary}
+            />
+          </TouchableOpacity>
+          <WidgetLabel
+            icon="calendar-outline"
+            label={isCurrentWeek ? 'THIS WEEK' : weekRangeLabel(viewWeekKey).toUpperCase()}
+            color={isCurrentWeek ? colors.textTertiary : colors.accent}
+          />
+          <TouchableOpacity
+            onPress={() => goToWeek(weekOffset + 1)}
+            disabled={weekOffset >= WEEK_NAV_RANGE}
+            hitSlop={{ top: 8, bottom: 8, left: 4, right: 8 }}
+            accessibilityRole="button"
+            accessibilityLabel="Next week"
+          >
+            <Ionicons
+              name="chevron-forward"
+              size={14}
+              color={weekOffset >= WEEK_NAV_RANGE ? colors.border : colors.textTertiary}
+            />
+          </TouchableOpacity>
+          {!isCurrentWeek && (
+            <TouchableOpacity
+              onPress={() => goToWeek(0)}
+              style={[styles.thisWeekChip, { backgroundColor: colors.accentSoft }]}
+              accessibilityRole="button"
+              accessibilityLabel="Back to this week"
+            >
+              <Text style={[styles.thisWeekChipText, { color: colors.accent }]}>This week</Text>
+            </TouchableOpacity>
+          )}
+        </View>
         {dayTodos.length > 0 && (
           <Text style={[styles.calendarCount, { color: colors.textTertiary }]}>
             {doneTodos}/{dayTodos.length} done
@@ -392,11 +619,47 @@ function WeeklyCalendar({ householdId, weekKey, todayFull, colors }) {
         )}
       </View>
 
+      {/* Last week's unfinished tasks */}
+      {showCarryOver && (
+        <View style={[styles.carryStrip, { backgroundColor: colors.accentSoft }]}>
+          <Ionicons name="return-down-forward-outline" size={16} color={colors.accent} />
+          <TouchableOpacity
+            style={styles.carryTextWrap}
+            onPress={() => goToWeek(-1)}
+            accessibilityRole="button"
+            accessibilityLabel="View last week"
+          >
+            <Text style={[styles.carryText, { color: colors.textPrimary }]}>
+              {carryCandidates.length} unfinished from last week
+            </Text>
+            <Text style={[styles.carryLink, { color: colors.textSecondary }]}>View</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={handleDismissCarryOver}
+            hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+            accessibilityRole="button"
+          >
+            <Text style={[styles.carryAction, { color: colors.textSecondary }]}>Dismiss</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.carryPrimary, { backgroundColor: colors.accent }]}
+            onPress={handleBringForward}
+            disabled={carrying}
+            accessibilityRole="button"
+          >
+            {carrying
+              ? <ActivityIndicator size="small" color={colors.accentForeground} />
+              : <Text style={[styles.carryPrimaryText, { color: colors.accentForeground }]}>Bring forward</Text>}
+          </TouchableOpacity>
+        </View>
+      )}
+
       {/* Day selector */}
       <View style={styles.dayTabsRow}>
         {DAYS_OF_WEEK.map((short, i) => {
           const full = FULL_DAYS[i];
-          const isToday = full === todayFull;
+          // Only the real current week has a "today"
+          const isToday = isCurrentWeek && full === todayFull;
           const isSelected = full === selectedDay;
           const pending = countsByDay[full]?.pending || 0;
           return (
@@ -443,7 +706,7 @@ function WeeklyCalendar({ householdId, weekKey, todayFull, colors }) {
       {/* Todo list */}
       {dayTodos.length === 0 && (
         <Text style={[styles.calendarEmpty, { color: colors.textTertiary }]}>
-          No tasks for {selectedDay}
+          No tasks for {selectedDay}{isCurrentWeek ? '' : ` · ${weekRangeLabel(viewWeekKey)}`}
         </Text>
       )}
       <Presence>
@@ -516,6 +779,14 @@ function WeeklyCalendar({ householdId, weekKey, todayFull, colors }) {
                   })}
                   <TouchableOpacity
                     style={styles.moveDeleteBtn}
+                    onPress={() => openRepeat(todo)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Repeat weekly"
+                  >
+                    <Ionicons name="repeat-outline" size={16} color={colors.accent} />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.moveDeleteBtn}
                     onPress={() => handleDelete(todo)}
                     accessibilityRole="button"
                     accessibilityLabel="Delete task"
@@ -533,6 +804,65 @@ function WeeklyCalendar({ householdId, weekKey, todayFull, colors }) {
                     </Text>
                   )}
                 </View>
+              </View>
+            ) : repeatId === todo.id ? (
+              <View style={styles.todoEditWrap}>
+                <View style={styles.todoEditRow}>
+                  <Ionicons name="repeat-outline" size={18} color={colors.accent} />
+                  <Text style={[styles.repeatTitle, { color: colors.textPrimary }]} numberOfLines={1}>
+                    Repeat “{todo.text}” every
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() => saveRepeat(todo)}
+                    disabled={repeatDays.length === 0}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Save repeat"
+                  >
+                    <Ionicons
+                      name="checkmark-circle"
+                      size={22}
+                      color={repeatDays.length === 0 ? colors.border : colors.accent}
+                    />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => setRepeatId(null)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Cancel repeat"
+                  >
+                    <Ionicons name="close-circle" size={22} color={colors.textTertiary} />
+                  </TouchableOpacity>
+                </View>
+                <View style={styles.moveRow}>
+                  {DAYS_OF_WEEK.map((short, i) => {
+                    const full = FULL_DAYS[i];
+                    const isPicked = repeatDays.includes(full);
+                    return (
+                      <TouchableOpacity
+                        key={full}
+                        style={[styles.moveChip, { backgroundColor: isPicked ? colors.accent : colors.muted }]}
+                        onPress={() => toggleRepeatDay(full)}
+                        accessibilityRole="checkbox"
+                        accessibilityLabel={full}
+                        accessibilityState={{ checked: isPicked }}
+                      >
+                        <Text style={[styles.moveChipText, { color: isPicked ? '#fff' : colors.textSecondary }]}>
+                          {short}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+                {todo.recurrenceId && rulesById.has(todo.recurrenceId) && (
+                  <TouchableOpacity
+                    onPress={() => stopRepeat(todo)}
+                    style={styles.stopRepeatBtn}
+                    accessibilityRole="button"
+                  >
+                    <Text style={[styles.stopRepeatText, { color: colors.danger }]}>Stop repeating</Text>
+                  </TouchableOpacity>
+                )}
               </View>
             ) : (
               <>
@@ -557,8 +887,10 @@ function WeeklyCalendar({ householdId, weekKey, todayFull, colors }) {
                 <TouchableOpacity
                   style={styles.todoTextTap}
                   onPress={() => startEdit(todo)}
+                  onLongPress={() => openRepeat(todo)}
                   accessibilityRole="button"
                   accessibilityLabel={`Edit ${todo.text}`}
+                  accessibilityHint="Long-press to repeat weekly"
                 >
                   <Text
                     style={[
@@ -570,17 +902,36 @@ function WeeklyCalendar({ householdId, weekKey, todayFull, colors }) {
                   >
                     {todo.text}
                   </Text>
-                  {todo.remindTime && (
-                    <View style={styles.remindBadge}>
-                      <Ionicons
-                        name={todo.done ? 'notifications-off-outline' : 'notifications-outline'}
-                        size={11}
-                        color={colors.textTertiary}
-                      />
-                      <Text style={[styles.remindBadgeText, { color: colors.textTertiary }]}>
-                        {formatReminderLabel(todo.remindTime)}
-                        {todo.remindFor && todo.remindFor !== uid ? ' · theirs' : ''}
-                      </Text>
+                  {(todo.remindTime || todo.carriedFrom || rulesById.has(todo.recurrenceId)) && (
+                    <View style={styles.todoMetaRow}>
+                      {rulesById.has(todo.recurrenceId) && (
+                        <View style={styles.remindBadge}>
+                          <Ionicons name="repeat-outline" size={11} color={colors.textTertiary} />
+                          <Text style={[styles.remindBadgeText, { color: colors.textTertiary }]}>
+                            {formatRecurrenceDays(rulesById.get(todo.recurrenceId).days)}
+                            {rulesById.get(todo.recurrenceId).active ? '' : ' · paused'}
+                          </Text>
+                        </View>
+                      )}
+                      {todo.carriedFrom && (
+                        <View style={styles.remindBadge}>
+                          <Ionicons name="return-down-forward-outline" size={11} color={colors.textTertiary} />
+                          <Text style={[styles.remindBadgeText, { color: colors.textTertiary }]}>carried</Text>
+                        </View>
+                      )}
+                      {todo.remindTime && (
+                        <View style={styles.remindBadge}>
+                          <Ionicons
+                            name={todo.done ? 'notifications-off-outline' : 'notifications-outline'}
+                            size={11}
+                            color={colors.textTertiary}
+                          />
+                          <Text style={[styles.remindBadgeText, { color: colors.textTertiary }]}>
+                            {formatReminderLabel(todo.remindTime)}
+                            {todo.remindFor && todo.remindFor !== uid ? ' · theirs' : ''}
+                          </Text>
+                        </View>
+                      )}
                     </View>
                   )}
                 </TouchableOpacity>
@@ -644,7 +995,7 @@ export default function HomeScreen({ navigation }) {
 
   const today       = new Date();
   const todayFull   = FULL_DAYS[today.getDay() === 0 ? 6 : today.getDay() - 1]; // Mon=0 offset
-  const weekKey     = getWeekKey(today);
+  const weekKey     = weekKeyFor(today);
   const dateLabel   = `${DAYS_SHORT[today.getDay()]}, ${MONTH_NAMES[today.getMonth()]} ${today.getDate()}`;
   const initials    = (displayName || user?.email || 'Y').split(' ').map((w) => w[0]).join('').toUpperCase().slice(0, 2);
 
@@ -836,6 +1187,7 @@ export default function HomeScreen({ navigation }) {
             householdId={householdId}
             weekKey={weekKey}
             todayFull={todayFull}
+            todayDate={format(today, 'yyyy-MM-dd')}
             colors={colors}
           />
         </AnimatedCard>
@@ -1230,6 +1582,24 @@ const styles = StyleSheet.create({
   remindRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   remindHint: { ...type.caption, fontSize: 11, fontStyle: 'italic' },
   remindBadge: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 2 },
+  todoMetaRow: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 10 },
+  weekNav: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  thisWeekChip: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: radius.full, marginLeft: 2 },
+  thisWeekChipText: { ...type.caption, fontSize: 11, fontWeight: '700' },
+  carryStrip: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingHorizontal: 10, paddingVertical: 8,
+    borderRadius: radius.md, marginBottom: 12,
+  },
+  carryTextWrap: { flex: 1, flexDirection: 'row', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' },
+  carryText: { ...type.bodySm, fontWeight: '600' },
+  carryLink: { ...type.caption, textDecorationLine: 'underline' },
+  carryAction: { ...type.caption, fontWeight: '700' },
+  carryPrimary: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: radius.full, minWidth: 96, alignItems: 'center' },
+  carryPrimaryText: { ...type.caption, fontWeight: '700' },
+  repeatTitle: { ...type.bodySm, fontWeight: '600', flex: 1 },
+  stopRepeatBtn: { alignSelf: 'flex-start', paddingVertical: 2 },
+  stopRepeatText: { ...type.caption, fontWeight: '700' },
   remindBadgeText: { ...type.caption, fontSize: 11, fontWeight: '600' },
   todoAddRow: {
     flexDirection: 'row', alignItems: 'center', gap: 10,

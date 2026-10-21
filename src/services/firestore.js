@@ -669,6 +669,93 @@ export const updateWeeklyTodo = (householdId, todoId, data) => {
 export const deleteWeeklyTodo = (householdId, todoId) =>
   deleteDoc(doc(db, 'households', householdId, 'weeklyTodos', todoId));
 
+// One-off read of a week (carry-over looks at last week once per open).
+export const getWeeklyTodos = async (householdId, weekKey) => {
+  const snap = await getDocs(query(
+    collection(db, 'households', householdId, 'weeklyTodos'),
+    where('weekKey', '==', weekKey),
+  ));
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+};
+
+// Moves tasks into `toWeekKey` (same weekday) rather than copying, so a task
+// can't be completed twice. Reminders are cleared — re-arming one for a task
+// ignored all last week would just nag.
+export const carryOverWeeklyTodos = (householdId, todos, fromWeekKey, toWeekKey) => {
+  const batch = writeBatch(db);
+  for (const t of todos) {
+    batch.update(doc(db, 'households', householdId, 'weeklyTodos', t.id), {
+      weekKey: toWeekKey,
+      carriedFrom: fromWeekKey,
+      remindTime: deleteField(),
+      remindFor: deleteField(),
+      updatedAt: serverTimestamp(),
+    });
+  }
+  return batch.commit();
+};
+
+// Household-wide: once anyone dismisses, the strip is hidden for everyone this week.
+export const dismissTodoCarryOver = (householdId, weekKey) =>
+  setDoc(privateRef(householdId), { carryOverDismissedWeek: weekKey }, { merge: true });
+
+// ── Recurring todos ──────────────────────────────────────
+// Rules live in their own collection; instances are ordinary weeklyTodos docs
+// carrying `recurrenceId`, created lazily for the current week.
+// Unfiltered (a household has a handful of rules) — callers filter `active`.
+export const subscribeTodoRecurrences = (householdId, callback, onError) =>
+  onSnapshot(
+    collection(db, 'households', householdId, 'todoRecurrences'),
+    (snap) => callback(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+    (err) => { console.error('todoRecurrences listener failed', err); onError?.(err); },
+  );
+
+// Creates a rule from an existing task and links that task as its instance.
+export const createTodoRecurrence = (householdId, todo, days, startsOn) => {
+  const batch = writeBatch(db);
+  const ruleRef = doc(collection(db, 'households', householdId, 'todoRecurrences'));
+  batch.set(ruleRef, {
+    text: todo.text,
+    days,
+    active: true,
+    startsOn,
+    lastMaterializedWeek: null,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+  batch.update(doc(db, 'households', householdId, 'weeklyTodos', todo.id), {
+    recurrenceId: ruleRef.id,
+    updatedAt: serverTimestamp(),
+  });
+  return batch.commit().then(() => ruleRef.id);
+};
+
+export const updateTodoRecurrence = (householdId, ruleId, data) =>
+  updateDoc(doc(db, 'households', householdId, 'todoRecurrences', ruleId), {
+    ...data,
+    updatedAt: serverTimestamp(),
+  });
+
+// Existing instances stay; only future weeks stop getting new ones.
+export const deleteTodoRecurrence = (householdId, ruleId) =>
+  deleteDoc(doc(db, 'households', householdId, 'todoRecurrences', ruleId));
+
+// Writes planned instances and marks rules done for the week in one batch, so
+// a failure can't half-fill the week. `creates` is [{ rule, day }].
+export const materializeTodoRecurrences = (householdId, weekKey, creates, markRuleIds) => {
+  const batch = writeBatch(db);
+  const todosCol = collection(db, 'households', householdId, 'weeklyTodos');
+  for (const { rule, day } of creates) {
+    batch.set(doc(todosCol), {
+      weekKey, day, text: rule.text, done: false, recurrenceId: rule.id, createdAt: serverTimestamp(),
+    });
+  }
+  for (const id of markRuleIds) {
+    batch.update(doc(db, 'households', householdId, 'todoRecurrences', id), { lastMaterializedWeek: weekKey });
+  }
+  return batch.commit();
+};
+
 // ── Body & goals ─────────────────────────────────────────
 // Per-member, keyed by uid; readable by the whole household. See docs/weight-tracker.md.
 export const subscribeBodyProfile = (householdId, uid, callback, onError) =>
