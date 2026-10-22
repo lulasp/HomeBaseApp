@@ -1,14 +1,14 @@
 import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet,
-  ActivityIndicator, Platform, Modal, KeyboardAvoidingView, AccessibilityInfo, Switch,
+  ActivityIndicator, Platform, Modal, KeyboardAvoidingView, AccessibilityInfo, Switch, Animated,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
-import { useNavScrollProps } from '../../context/NavScrollContext';
+import { useNavScroll, useNavScrollProps } from '../../context/NavScrollContext';
 import { useAlert } from '../../context/AlertContext';
 import { useNotification } from '../../context/NotificationContext';
 import {
@@ -21,14 +21,14 @@ import {
   subscribeEmergencyContacts, addEmergencyContact, updateEmergencyContact, deleteEmergencyContact,
 } from '../../services/firestore';
 import { saveCredentials as saveXiaomiCredentials } from '../../services/xiaomi';
-import { Rise } from '../../components/Motion';
+import { Rise, useAnimationsEnabled } from '../../components/Motion';
 import { PANTRY_CATEGORIES, NON_FOOD_CATEGORIES, UNITS } from '../../utils/categories';
 import { AI_MODELS, DEFAULT_AI_MODEL } from '../../utils/aiModels';
 import DraggableCategoryList from '../../components/DraggableCategoryList';
 import IconPicker from '../../components/IconPicker';
 import RepeatingTasksList from '../../components/RepeatingTasksList';
 import { spacing, radius, type } from '../../theme/colors';
-import { useIsDesktop, SIDEBAR_WIDTH, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
+import { useIsDesktop, useMobileNavClearance, MOBILE_NAV_COMPACT_SHIFT, SIDEBAR_WIDTH, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
 import useVisualViewportHeight from '../../hooks/useVisualViewportHeight';
 
 const CONTACT_ICONS  = ['🚑','🏥','👨‍⚕️','🚒','🚓','👮','💊','🧑‍🚒','👨‍👩‍👧','👴','🏠','🔑','🌐','📞','⚡','🐾'];
@@ -36,7 +36,9 @@ const RELATIONSHIPS  = ['Doctor','Hospital','Police','Fire Dept','Family','Neigh
 const CATEGORY_ICONS = ['📦','🥩','🥦','🥕','🍎','🥚','🧈','🍞','🥐','🫙','🧃','🍫','🌽','🥥','🫒','🍄','🧁','🧂','🫚','🌶️','🧄','🧅','🍋','🫐','🍓','🥑','🌮','🍜','🫕','🥘','🧆','🛒','🏪'];
 const FINANCE_ICONS  = ['💡','🔥','💧','📡','📱','🚗','🐕','🐈','🏥','🎓','🛒','🔧','🧹','🛋️','📺','🧺','🍽️','🎭','🎾','⛽','💳','📄','💊','🧾','🎸','🎮','🎬','✈️','🌿','🎁','🏋️','🎨','🧴','🪴','🏡'];
 
-const BLANK_CONTACT = { icon: '📞', name: '', phone: '', relationship: '', notes: '' };
+const SAVE_FAB_SIZE = 52;
+
+const BLANK_CONTACT ={ icon: '📞', name: '', phone: '', relationship: '', notes: '' };
 const BLANK_CAT = { label: '', icon: '📦' };
 
 const XIAOMI_REGIONS = [
@@ -91,7 +93,7 @@ function CollapsibleGroup({ title, icon, open, onToggle, action, styles, colors,
 export default function HouseholdEditScreen({ route, navigation }) {
   const { householdId: hhId } = route.params;
   const { user, removeHousehold } = useAuth();
-  const { colors } = useTheme();
+  const { colors, shadow } = useTheme();
   const { showAlert, showConfirm, showOptions } = useAlert();
   const { notify } = useNotification();
 
@@ -100,6 +102,14 @@ export default function HouseholdEditScreen({ route, navigation }) {
   const insets    = useSafeAreaInsets();
   const windowHeight = useVisualViewportHeight();
   const navScrollProps = useNavScrollProps();
+  const navClearance = useMobileNavClearance();
+  const { compactAnim } = useNavScroll();
+  // Save bar follows the floating mobile nav down when it compacts
+  const saveBarShift = compactAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, isDesktop ? 0 : MOBILE_NAV_COMPACT_SHIFT],
+    extrapolate: 'clamp',
+  });
 
   const [household, setHousehold]           = useState(null);
   const [loading, setLoading]               = useState(true);
@@ -389,6 +399,20 @@ export default function HouseholdEditScreen({ route, navigation }) {
 
   const isDirty = baselineRef.current !== null && JSON.stringify(snapshot) !== baselineRef.current;
   isDirtyRef.current = isDirty;
+
+  // Mobile save button: a round ✓ when clean, springs out to full width when dirty
+  const saveExpanded = isDirty || saving;
+  const animationsEnabled = useAnimationsEnabled();
+  const [saveBarW, setSaveBarW] = useState(0);
+  const saveExpand = useRef(new Animated.Value(saveExpanded ? 1 : 0)).current;
+  useEffect(() => {
+    const to = saveExpanded ? 1 : 0;
+    if (animationsEnabled) {
+      Animated.spring(saveExpand, { toValue: to, useNativeDriver: false, friction: 9, tension: 80 }).start();
+    } else {
+      saveExpand.setValue(to);
+    }
+  }, [saveExpanded, animationsEnabled, saveExpand]);
 
   const reorderFoodCategories = useCallback((from, to) => {
     const labels = orderedFoodCats.map((c) => c.label);
@@ -736,10 +760,13 @@ export default function HouseholdEditScreen({ route, navigation }) {
           ref={scrollRef}
           // Web: the ancestor flex chain doesn't reliably bound a flex:1 ScrollView,
           // so pin it to the viewport minus the fixed nav bar and sticky save bar (web-scroll rule).
-          style={Platform.OS === 'web' ? { height: Math.max(windowHeight - navBarH - footerH, 0) } : { flex: 1 }}
+          // Mobile: the save bar floats over the content, so it's not subtracted.
+          style={Platform.OS === 'web' ? { height: Math.max(windowHeight - navBarH - (isDesktop ? footerH : 0), 0) } : { flex: 1 }}
           contentContainerStyle={[
             styles.scrollContent,
             isDesktop && { maxWidth: DESKTOP_MAX_CONTENT, alignSelf: 'center', width: '100%' },
+            // The end is only reached scrolled down (nav compact) — pad for that position
+            !isDesktop && { paddingBottom: footerH + navClearance - MOBILE_NAV_COMPACT_SHIFT + spacing.md },
           ]}
           showsVerticalScrollIndicator={false}
           {...navScrollProps}
@@ -1484,22 +1511,61 @@ export default function HouseholdEditScreen({ route, navigation }) {
 
       {/* ── Sticky save bar (disabled until there are unsaved changes) ── */}
       {!loading && !loadError && (
-        <View
-          style={[styles.saveBar, { paddingBottom: insets.bottom + spacing.md }]}
+        <Animated.View
+          style={[
+            styles.saveBar,
+            isDesktop
+              ? { paddingBottom: insets.bottom + spacing.md }
+              // Sit above the floating mobile nav (clearance already covers the safe area)
+              // Mobile: just the floating button, no bar background
+              : { position: 'absolute', left: 0, right: 0, bottom: navClearance, paddingBottom: spacing.md, backgroundColor: 'transparent', borderTopWidth: 0, pointerEvents: 'box-none', transform: [{ translateY: saveBarShift }] },
+          ]}
           onLayout={(e) => setFooterH(e.nativeEvent.layout.height)}
         >
-          <View style={isDesktop ? { maxWidth: DESKTOP_MAX_CONTENT, alignSelf: 'center', width: '100%' } : null}>
-            <TouchableOpacity
-              style={[styles.updateButton, { marginTop: 0 }, (!isDirty || saving) && styles.updateButtonDisabled]}
-              onPress={handleSaveAll}
-              disabled={!isDirty || saving}
-              accessibilityRole="button"
-              accessibilityState={{ disabled: !isDirty || saving }}
-            >
-              <Text style={styles.updateButtonLabel}>{saving ? 'Saving…' : isDirty ? 'Save Changes' : 'No Changes'}</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
+          {isDesktop ? (
+            <View style={{ maxWidth: DESKTOP_MAX_CONTENT, alignSelf: 'center', width: '100%' }}>
+              <TouchableOpacity
+                style={[styles.updateButton, { marginTop: 0 }, (!isDirty || saving) && styles.updateButtonDisabled]}
+                onPress={handleSaveAll}
+                disabled={!isDirty || saving}
+                accessibilityRole="button"
+                accessibilityState={{ disabled: !isDirty || saving }}
+              >
+                <Text style={styles.updateButtonLabel}>{saving ? 'Saving…' : isDirty ? 'Save Changes' : 'No Changes'}</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View style={{ pointerEvents: 'box-none' }} onLayout={(e) => setSaveBarW(e.nativeEvent.layout.width)}>
+              <Animated.View
+                style={[
+                  styles.saveFab,
+                  shadow.md,
+                  {
+                    width: saveExpand.interpolate({ inputRange: [0, 1], outputRange: [SAVE_FAB_SIZE, Math.max(saveBarW, SAVE_FAB_SIZE)] }),
+                    borderRadius: saveExpand.interpolate({ inputRange: [0, 1], outputRange: [SAVE_FAB_SIZE / 2, radius.md] }),
+                    backgroundColor: saveExpanded ? colors.accent : colors.muted,
+                  },
+                ]}
+              >
+                <TouchableOpacity
+                  style={styles.saveFabTouch}
+                  onPress={handleSaveAll}
+                  disabled={!isDirty || saving}
+                  accessibilityRole="button"
+                  accessibilityLabel={saving ? 'Saving' : isDirty ? 'Save changes' : 'No changes to save'}
+                  accessibilityState={{ disabled: !isDirty || saving }}
+                >
+                  <Animated.View style={[styles.saveFabLayer, { opacity: saveExpand.interpolate({ inputRange: [0, 0.4], outputRange: [1, 0], extrapolate: 'clamp' }) }]}>
+                    <Ionicons name="checkmark" size={24} color={colors.textSecondary} />
+                  </Animated.View>
+                  <Animated.View style={[styles.saveFabLayer, { opacity: saveExpand.interpolate({ inputRange: [0.6, 1], outputRange: [0, 1], extrapolate: 'clamp' }) }]}>
+                    <Text style={styles.updateButtonLabel} numberOfLines={1}>{saving ? 'Saving…' : 'Save Changes'}</Text>
+                  </Animated.View>
+                </TouchableOpacity>
+              </Animated.View>
+            </View>
+          )}
+        </Animated.View>
       )}
 
       {/* ── Finance Category Modal ── */}
@@ -1768,6 +1834,9 @@ const makeStyles = (colors) => StyleSheet.create({
     alignItems: 'center', justifyContent: 'center', marginTop: spacing.sm,
   },
   updateButtonLabel: { ...type.bodyMed, color: '#fff', fontWeight: '700' },
+  saveFab: { height: SAVE_FAB_SIZE, alignSelf: 'flex-end', overflow: 'hidden' },
+  saveFabTouch: { flex: 1 },
+  saveFabLayer: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
 
   integrationToggleRow:   { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   integrationToggleTitle: { ...type.body, color: colors.textPrimary, fontWeight: '600' },
