@@ -315,6 +315,49 @@ export const updateHouseholdFinanceCategories = (householdId, billCustomCats, ex
     expenseCustomCategories:  expenseCustomCats,
   });
 
+// Edits to built-in categories (see withOverrides / withCustomCats). Pass only the
+// maps that changed: pantry, nonFood, bill, expense.
+const OVERRIDE_FIELDS = {
+  pantry:  'pantryCategoryOverrides',
+  nonFood: 'nonFoodCategoryOverrides',
+  bill:    'billCategoryOverrides',
+  expense: 'expenseCategoryOverrides',
+};
+export const updateHouseholdCategoryOverrides = (householdId, overrides) => {
+  const fields = {};
+  Object.entries(overrides).forEach(([kind, map]) => {
+    if (OVERRIDE_FIELDS[kind]) fields[OVERRIDE_FIELDS[kind]] = map ?? {};
+  });
+  if (!Object.keys(fields).length) return Promise.resolve();
+  return updateDoc(doc(db, 'households', householdId), fields);
+};
+
+// Collections whose docs store a pantry/grocery category by label.
+export const CATEGORY_LABEL_COLLECTIONS = ['pantryItems', 'groceryItems', 'priceEntries', 'receiptAliases'];
+const BATCH_LIMIT = 450; // Firestore caps a batch at 500 writes
+
+// Rename a pantry/grocery category on every doc that carries it. All reads run
+// before any write, so swaps (A→B, B→A) don't cascade. Returns docs updated.
+export const renameItemCategories = async (householdId, renames) => {
+  const pending = (renames ?? []).filter((r) => r.from && r.to && r.from !== r.to);
+  if (!pending.length) return 0;
+
+  const updates = [];
+  await Promise.all(CATEGORY_LABEL_COLLECTIONS.flatMap((name) => pending.map(async ({ from, to }) => {
+    const snap = await getDocs(query(
+      collection(db, 'households', householdId, name), where('category', '==', from),
+    ));
+    snap.docs.forEach((d) => updates.push({ ref: d.ref, to }));
+  })));
+
+  for (let i = 0; i < updates.length; i += BATCH_LIMIT) {
+    const batch = writeBatch(db);
+    updates.slice(i, i + BATCH_LIMIT).forEach(({ ref, to }) => batch.update(ref, { category: to }));
+    await batch.commit();
+  }
+  return updates.length;
+};
+
 export const updateHouseholdGoveeApiKey = (householdId, apiKey) =>
   setDoc(privateRef(householdId),
     { goveeApiKey: apiKey ? apiKey.trim() : deleteField() }, { merge: true });

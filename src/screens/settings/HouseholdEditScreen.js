@@ -17,12 +17,16 @@ import {
   updateHouseholdNonFoodCategories, updateHouseholdFinanceCategories, updateHouseholdGoveeApiKey,
   updateHouseholdOpenRouterApiKey, updateHouseholdAiModel,
   updateHouseholdUnits, upsertMemberProfile, updateHouseholdXiaomiCreds, updateHouseholdIntegrationFlags,
-  updateHouseholdReduceMotion,
+  updateHouseholdReduceMotion, updateHouseholdCategoryOverrides, renameItemCategories,
   subscribeEmergencyContacts, addEmergencyContact, updateEmergencyContact, deleteEmergencyContact,
 } from '../../services/firestore';
 import { saveCredentials as saveXiaomiCredentials } from '../../services/xiaomi';
 import { Rise, useAnimationsEnabled } from '../../components/Motion';
-import { PANTRY_CATEGORIES, NON_FOOD_CATEGORIES, UNITS } from '../../utils/categories';
+import {
+  PANTRY_CATEGORIES, NON_FOOD_CATEGORIES, UNITS, LOCKED_CATEGORY_LABELS,
+  withOverrides, overrideFor, addRename, renameInList,
+} from '../../utils/categories';
+import { BILL_CATS, EXPENSE_CATS, withCustomCats } from '../../utils/financeCategories';
 import { AI_MODELS, DEFAULT_AI_MODEL } from '../../utils/aiModels';
 import DraggableCategoryList from '../../components/DraggableCategoryList';
 import IconPicker from '../../components/IconPicker';
@@ -38,7 +42,7 @@ const FINANCE_ICONS  = ['💡','🔥','💧','📡','📱','🚗','🐕','🐈',
 
 const SAVE_FAB_SIZE = 52;
 
-const BLANK_CONTACT ={ icon: '📞', name: '', phone: '', relationship: '', notes: '' };
+const BLANK_CONTACT = { icon: '📞', name: '', phone: '', relationship: '', notes: '' };
 const BLANK_CAT = { label: '', icon: '📦' };
 
 const XIAOMI_REGIONS = [
@@ -139,9 +143,18 @@ export default function HouseholdEditScreen({ route, navigation }) {
   const [catModalType, setCatModalType]                             = useState('food');
   const [catForm, setCatForm]                                       = useState(BLANK_CAT);
   const [catError, setCatError]                                     = useState(null);
+  const [catEditing, setCatEditing]                                 = useState(null); // null = adding | { label, baseLabel? }
+  // Edits to built-ins, keyed by original label (pantry) or key (finance)
+  const [foodOverrides, setFoodOverrides]                           = useState({});
+  const [nonFoodOverrides, setNonFoodOverrides]                     = useState({});
+  const [billOverrides, setBillOverrides]                           = useState({});
+  const [expenseOverrides, setExpenseOverrides]                     = useState({});
+  // Pantry/grocery renames to apply to items on save: [{ from, to }]
+  const [categoryRenames, setCategoryRenames]                       = useState([]);
   const [customBillCats, setCustomBillCats]       = useState([]);
   const [customExpenseCats, setCustomExpenseCats] = useState([]);
   const [financeCatType, setFinanceCatType]       = useState(null); // 'bill' | 'expense' | null
+  const [financeCatEditing, setFinanceCatEditing] = useState(null); // null = adding | { key, builtIn }
   const [financeCatForm, setFinanceCatForm]       = useState({ label: '', icon: '💡' });
   const [financeCatError, setFinanceCatError]     = useState(null);
   const [contacts, setContacts]                   = useState([]);
@@ -234,6 +247,10 @@ export default function HouseholdEditScreen({ route, navigation }) {
         setNonFoodCategoryOrder(hh?.nonFoodCategoryOrder ?? []);
         setCustomBillCats(hh?.billCustomCategories ?? []);
         setCustomExpenseCats(hh?.expenseCustomCategories ?? []);
+        setFoodOverrides(hh?.pantryCategoryOverrides ?? {});
+        setNonFoodOverrides(hh?.nonFoodCategoryOverrides ?? {});
+        setBillOverrides(hh?.billCategoryOverrides ?? {});
+        setExpenseOverrides(hh?.expenseCategoryOverrides ?? {});
         setGoveeApiKey(hh?.goveeApiKey ?? '');
         setOpenRouterApiKey(hh?.openRouterApiKey ?? '');
         const xc = hh?.xiaomiCreds ?? {};
@@ -312,53 +329,104 @@ export default function HouseholdEditScreen({ route, navigation }) {
 
   const openAddCategory = (type = 'food') => {
     setCatModalType(type);
+    setCatEditing(null);
     setCatForm(BLANK_CAT);
     setCatError(null);
     setCatModal(true);
   };
 
-  const handleAddCategory = () => {
-    const label = catForm.label.trim();
+  const openEditCategory = (type, cat) => {
+    setCatModalType(type);
+    setCatEditing({ label: cat.label, baseLabel: cat.baseLabel });
+    setCatForm({ label: cat.label, icon: cat.icon });
+    setCatError(null);
+    setCatModal(true);
+  };
+
+  const orderedFoodCats = useMemo(
+    () => applyOrder([...withOverrides(PANTRY_CATEGORIES, foodOverrides), ...customCategories], foodCategoryOrder),
+    [foodOverrides, customCategories, foodCategoryOrder],
+  );
+
+  const orderedNonFoodCats = useMemo(
+    () => applyOrder([...withOverrides(NON_FOOD_CATEGORIES, nonFoodOverrides), ...customNonFoodCategories], nonFoodCategoryOrder),
+    [nonFoodOverrides, customNonFoodCategories, nonFoodCategoryOrder],
+  );
+
+  const catLocked = !!catEditing && LOCKED_CATEGORY_LABELS.includes(catEditing.baseLabel);
+
+  // Add a custom category, or edit any category (built-in → override, custom → in place).
+  const handleSaveCategory = () => {
+    const label = catLocked ? catEditing.label : catForm.label.trim();
     if (!label) { setCatError('Name is required'); return; }
     const isFood = catModalType === 'food';
-    const builtIn = isFood ? PANTRY_CATEGORIES : NON_FOOD_CATEGORIES;
-    const custom  = isFood ? customCategories : customNonFoodCategories;
-    const allLabels = [...builtIn.map((c) => c.label), ...custom.map((c) => c.label)];
-    if (allLabels.some((l) => l.toLowerCase() === label.toLowerCase())) {
+    // Unique across food and non-food: both store items in the same collections.
+    const taken = [...orderedFoodCats, ...orderedNonFoodCats]
+      .map((c) => c.label)
+      .filter((l) => l !== catEditing?.label);
+    if (taken.some((l) => l.toLowerCase() === label.toLowerCase())) {
       setCatError('A category with this name already exists');
       return;
     }
-    const newCat = { label, icon: catForm.icon };
-    if (isFood) {
-      setCustomCategories((prev) => [...prev, newCat]);
-      setEnabledCategories((prev) => [...prev, label]);
+
+    if (!catEditing) {
+      const newCat = { label, icon: catForm.icon };
+      if (isFood) {
+        setCustomCategories((prev) => [...prev, newCat]);
+        setEnabledCategories((prev) => [...prev, label]);
+      } else {
+        setCustomNonFoodCategories((prev) => [...prev, newCat]);
+        setEnabledNonFoodCategories((prev) => [...prev, label]);
+      }
+      setCatModal(false);
+      return;
+    }
+
+    const from = catEditing.label;
+    if (catEditing.baseLabel) {
+      const builtIn = (isFood ? PANTRY_CATEGORIES : NON_FOOD_CATEGORIES).find((c) => c.label === catEditing.baseLabel);
+      const o = overrideFor(builtIn, { label, icon: catForm.icon });
+      (isFood ? setFoodOverrides : setNonFoodOverrides)((prev) => {
+        const next = { ...prev };
+        if (o) next[builtIn.label] = o; else delete next[builtIn.label];
+        return next;
+      });
     } else {
-      setCustomNonFoodCategories((prev) => [...prev, newCat]);
-      setEnabledNonFoodCategories((prev) => [...prev, label]);
+      (isFood ? setCustomCategories : setCustomNonFoodCategories)((prev) =>
+        prev.map((c) => (c.label === from ? { ...c, label, icon: catForm.icon } : c)));
+    }
+    if (label !== from) {
+      (isFood ? setEnabledCategories : setEnabledNonFoodCategories)((prev) => renameInList(prev, from, label));
+      (isFood ? setFoodCategoryOrder : setNonFoodCategoryOrder)((prev) => renameInList(prev, from, label));
+      setCategoryRenames((prev) => addRename(prev, from, label));
     }
     setCatModal(false);
   };
+
+  // A deleted category's items keep their stored label, so drop any pending rename onto it.
+  const dropRenameTo = (label) => setCategoryRenames((prev) => prev.filter((r) => r.to !== label));
 
   const handleDeleteCustomCategory = (label) => {
     setCustomCategories((prev) => prev.filter((c) => c.label !== label));
     setEnabledCategories((prev) => prev.filter((l) => l !== label));
     setFoodCategoryOrder((prev) => prev.filter((l) => l !== label));
+    dropRenameTo(label);
   };
 
   const handleDeleteCustomNonFoodCategory = (label) => {
     setCustomNonFoodCategories((prev) => prev.filter((c) => c.label !== label));
     setEnabledNonFoodCategories((prev) => prev.filter((l) => l !== label));
     setNonFoodCategoryOrder((prev) => prev.filter((l) => l !== label));
+    dropRenameTo(label);
   };
 
-  const orderedFoodCats = useMemo(
-    () => applyOrder([...PANTRY_CATEGORIES, ...customCategories], foodCategoryOrder),
-    [customCategories, foodCategoryOrder],
+  const allBillCats = useMemo(
+    () => withCustomCats(BILL_CATS, customBillCats, billOverrides),
+    [customBillCats, billOverrides],
   );
-
-  const orderedNonFoodCats = useMemo(
-    () => applyOrder([...NON_FOOD_CATEGORIES, ...customNonFoodCategories], nonFoodCategoryOrder),
-    [customNonFoodCategories, nonFoodCategoryOrder],
+  const allExpenseCats = useMemo(
+    () => withCustomCats(EXPENSE_CATS, customExpenseCats, expenseOverrides),
+    [customExpenseCats, expenseOverrides],
   );
 
   // Snapshot of every batch-saved (staged) field. Emergency contacts are excluded —
@@ -373,6 +441,10 @@ export default function HouseholdEditScreen({ route, navigation }) {
     nonFoodCategoryOrder: orderedNonFoodCats.map((c) => c.label),
     customBillCats,
     customExpenseCats,
+    foodOverrides,
+    nonFoodOverrides,
+    billOverrides,
+    expenseOverrides,
     goveeApiKey,
     openRouterApiKey,
     aiModel,
@@ -385,8 +457,8 @@ export default function HouseholdEditScreen({ route, navigation }) {
   }), [
     nameInput, enabledCategories, customCategories, orderedFoodCats,
     enabledNonFoodCategories, customNonFoodCategories, orderedNonFoodCats,
-    customBillCats, customExpenseCats, goveeApiKey, openRouterApiKey,
-    aiModel, enabledUnits, customUnits, xiaomiCreds, goveeEnabled, xiaomiEnabled,
+    customBillCats, customExpenseCats, foodOverrides, nonFoodOverrides, billOverrides, expenseOverrides,
+    goveeApiKey, openRouterApiKey, aiModel, enabledUnits, customUnits, xiaomiCreds, goveeEnabled, xiaomiEnabled,
     reduceMotionPref,
   ]);
 
@@ -432,7 +504,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
   // filtered list (a search term is active, where reordering is disabled).
   const renderFoodCatRow = (cat) => {
     const isOn = enabledCategories?.includes(cat.label);
-    const isCustom = !PANTRY_CATEGORIES.some((c) => c.label === cat.label);
+    const isCustom = !cat.baseLabel;
     return (
       <>
         <TouchableOpacity
@@ -449,6 +521,15 @@ export default function HouseholdEditScreen({ route, navigation }) {
             size={21}
             color={isOn ? colors.accent : colors.textTertiary}
           />
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => openEditCategory('food', cat)}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityRole="button"
+          accessibilityLabel={`Edit ${cat.label}`}
+          style={styles.categoryDeleteBtn}
+        >
+          <Ionicons name="create-outline" size={16} color={colors.textSecondary} />
         </TouchableOpacity>
         {isCustom && (
           <TouchableOpacity
@@ -467,7 +548,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
 
   const renderNonFoodCatRow = (cat) => {
     const isOn = enabledNonFoodCategories?.includes(cat.label);
-    const isCustom = !NON_FOOD_CATEGORIES.some((c) => c.label === cat.label);
+    const isCustom = !cat.baseLabel;
     return (
       <>
         <TouchableOpacity
@@ -484,6 +565,15 @@ export default function HouseholdEditScreen({ route, navigation }) {
             size={21}
             color={isOn ? colors.accent : colors.textTertiary}
           />
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => openEditCategory('non-food', cat)}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityRole="button"
+          accessibilityLabel={`Edit ${cat.label}`}
+          style={styles.categoryDeleteBtn}
+        >
+          <Ionicons name="create-outline" size={16} color={colors.textSecondary} />
         </TouchableOpacity>
         {isCustom && (
           <TouchableOpacity
@@ -504,23 +594,73 @@ export default function HouseholdEditScreen({ route, navigation }) {
 
   const openAddFinanceCat = (type) => {
     setFinanceCatType(type);
+    setFinanceCatEditing(null);
     setFinanceCatForm({ label: '', icon: '💡' });
     setFinanceCatError(null);
   };
 
-  const handleAddFinanceCat = () => {
+  const openEditFinanceCat = (type, cat) => {
+    setFinanceCatType(type);
+    setFinanceCatEditing({ key: cat.key, builtIn: !cat.isCustom });
+    setFinanceCatForm({ label: cat.label, icon: cat.icon });
+    setFinanceCatError(null);
+  };
+
+  // Finance items store the category key, so a rename here never touches bills/expenses.
+  const handleSaveFinanceCat = () => {
     const label = financeCatForm.label.trim();
     if (!label) { setFinanceCatError('Name is required'); return; }
-    const existing = financeCatType === 'bill' ? customBillCats : customExpenseCats;
-    if (existing.some((c) => c.label.toLowerCase() === label.toLowerCase())) {
+    const isBill = financeCatType === 'bill';
+    const all = isBill ? allBillCats : allExpenseCats;
+    if (all.some((c) => c.key !== financeCatEditing?.key && c.label.toLowerCase() === label.toLowerCase())) {
       setFinanceCatError('A category with this name already exists');
       return;
     }
-    const newCat = { key: `custom_${Date.now()}`, label, icon: financeCatForm.icon };
-    if (financeCatType === 'bill')    setCustomBillCats((prev) => [...prev, newCat]);
-    else                              setCustomExpenseCats((prev) => [...prev, newCat]);
+    if (!financeCatEditing) {
+      const newCat = { key: `custom_${Date.now()}`, label, icon: financeCatForm.icon };
+      (isBill ? setCustomBillCats : setCustomExpenseCats)((prev) => [...prev, newCat]);
+    } else if (financeCatEditing.builtIn) {
+      const builtIn = (isBill ? BILL_CATS : EXPENSE_CATS).find((c) => c.key === financeCatEditing.key);
+      const o = overrideFor(builtIn, { label, icon: financeCatForm.icon });
+      (isBill ? setBillOverrides : setExpenseOverrides)((prev) => {
+        const next = { ...prev };
+        if (o) next[builtIn.key] = o; else delete next[builtIn.key];
+        return next;
+      });
+    } else {
+      (isBill ? setCustomBillCats : setCustomExpenseCats)((prev) =>
+        prev.map((c) => (c.key === financeCatEditing.key ? { ...c, label, icon: financeCatForm.icon } : c)));
+    }
     setFinanceCatType(null);
   };
+
+  const renderFinanceCatRow = (type, cat, i) => (
+    <View key={cat.key} style={[styles.categoryRow, i > 0 && styles.categoryRowBorder]}>
+      <TouchableOpacity
+        style={styles.categoryRowToggle}
+        onPress={() => openEditFinanceCat(type, cat)}
+        accessibilityRole="button"
+        accessibilityLabel={`Edit ${cat.label}`}
+      >
+        {cat.emoji
+          ? <Text style={styles.categoryRowIcon}>{cat.icon}</Text>
+          : <Ionicons name={cat.icon} size={18} color={colors[cat.colorKey] ?? colors.textSecondary} style={styles.categoryRowIcon} />}
+        <Text style={styles.categoryRowLabel}>{cat.label}</Text>
+        <Ionicons name="create-outline" size={16} color={colors.textSecondary} />
+      </TouchableOpacity>
+      {cat.isCustom && (
+        <TouchableOpacity
+          onPress={() => handleDeleteFinanceCat(type, cat.key)}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          style={styles.categoryDeleteBtn}
+          accessibilityRole="button"
+          accessibilityLabel={`Delete ${cat.label}`}
+        >
+          <Ionicons name="trash-outline" size={16} color={colors.danger} />
+        </TouchableOpacity>
+      )}
+    </View>
+  );
 
   const handleDeleteFinanceCat = (type, key) => {
     if (type === 'bill')    setCustomBillCats((prev) => prev.filter((c) => c.key !== key));
@@ -572,6 +712,17 @@ export default function HouseholdEditScreen({ route, navigation }) {
     if (changed(snap.customBillCats, base.customBillCats) || changed(snap.customExpenseCats, base.customExpenseCats)) {
       writes.push(updateHouseholdFinanceCategories(hhId, snap.customBillCats, snap.customExpenseCats));
     }
+    const overrideChanges = {};
+    if (changed(snap.foodOverrides, base.foodOverrides))       overrideChanges.pantry  = snap.foodOverrides;
+    if (changed(snap.nonFoodOverrides, base.nonFoodOverrides)) overrideChanges.nonFood = snap.nonFoodOverrides;
+    if (changed(snap.billOverrides, base.billOverrides))       overrideChanges.bill    = snap.billOverrides;
+    if (changed(snap.expenseOverrides, base.expenseOverrides)) overrideChanges.expense = snap.expenseOverrides;
+    if (Object.keys(overrideChanges).length) {
+      writes.push(updateHouseholdCategoryOverrides(hhId, overrideChanges));
+    }
+    if (categoryRenames.length) {
+      writes.push(renameItemCategories(hhId, categoryRenames));
+    }
     if (changed(snap.goveeApiKey, base.goveeApiKey)) {
       writes.push(updateHouseholdGoveeApiKey(hhId, snap.goveeApiKey));
     }
@@ -604,6 +755,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
       await Promise.all(writes);
       baselineRef.current = JSON.stringify(snap);
       isDirtyRef.current = false;
+      setCategoryRenames([]);
       setHousehold((h) => ({ ...h, name: snap.name }));
       notify('Saved', 'Household updated.', { type: 'success' });
       return true;
@@ -1131,27 +1283,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
             </TouchableOpacity>
           </View>
           <View style={[styles.card, { padding: 0 }]}>
-            {customBillCats.length === 0 ? (
-              <Text style={[styles.inviteHint, { padding: spacing.lg, textAlign: 'center' }]}>
-                No custom bill categories yet.
-              </Text>
-            ) : customBillCats.map((cat, i) => (
-              <View key={cat.key} style={[styles.categoryRow, i > 0 && styles.categoryRowBorder]}>
-                <View style={styles.categoryRowToggle}>
-                  <Text style={styles.categoryRowIcon}>{cat.icon}</Text>
-                  <Text style={styles.categoryRowLabel}>{cat.label}</Text>
-                </View>
-                <TouchableOpacity
-                  onPress={() => handleDeleteFinanceCat('bill', cat.key)}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  style={styles.categoryDeleteBtn}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Delete ${cat.label}`}
-                >
-                  <Ionicons name="trash-outline" size={16} color={colors.danger} />
-                </TouchableOpacity>
-              </View>
-            ))}
+            {allBillCats.map((cat, i) => renderFinanceCatRow('bill', cat, i))}
           </View>
 
           {/* ── Expense Categories ── */}
@@ -1168,27 +1300,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
             </TouchableOpacity>
           </View>
           <View style={[styles.card, { padding: 0 }]}>
-            {customExpenseCats.length === 0 ? (
-              <Text style={[styles.inviteHint, { padding: spacing.lg, textAlign: 'center' }]}>
-                No custom expense categories yet.
-              </Text>
-            ) : customExpenseCats.map((cat, i) => (
-              <View key={cat.key} style={[styles.categoryRow, i > 0 && styles.categoryRowBorder]}>
-                <View style={styles.categoryRowToggle}>
-                  <Text style={styles.categoryRowIcon}>{cat.icon}</Text>
-                  <Text style={styles.categoryRowLabel}>{cat.label}</Text>
-                </View>
-                <TouchableOpacity
-                  onPress={() => handleDeleteFinanceCat('expense', cat.key)}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  style={styles.categoryDeleteBtn}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Delete ${cat.label}`}
-                >
-                  <Ionicons name="trash-outline" size={16} color={colors.danger} />
-                </TouchableOpacity>
-              </View>
-            ))}
+            {allExpenseCats.map((cat, i) => renderFinanceCatRow('expense', cat, i))}
           </View>
 
           </CollapsibleGroup>
@@ -1579,7 +1691,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
           <View style={styles.modalSheet}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>
-                {financeCatType === 'bill' ? 'Add Bill Category' : 'Add Expense Category'}
+                {`${financeCatEditing ? 'Edit' : 'Add'} ${financeCatType === 'bill' ? 'Bill' : 'Expense'} Category`}
               </Text>
               <TouchableOpacity onPress={() => setFinanceCatType(null)} accessibilityRole="button" accessibilityLabel="Close">
                 <Ionicons name="close" size={22} color={colors.textPrimary} />
@@ -1600,7 +1712,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
               placeholder="e.g. Pet care, Garden"
               placeholderTextColor={colors.textTertiary}
               returnKeyType="done"
-              onSubmitEditing={handleAddFinanceCat}
+              onSubmitEditing={handleSaveFinanceCat}
               autoFocus
               accessibilityLabel="Category name"
             />
@@ -1608,11 +1720,11 @@ export default function HouseholdEditScreen({ route, navigation }) {
 
             <TouchableOpacity
               style={[styles.updateButton, !financeCatForm.label.trim() && { opacity: 0.4 }]}
-              onPress={handleAddFinanceCat}
+              onPress={handleSaveFinanceCat}
               disabled={!financeCatForm.label.trim()}
               accessibilityRole="button"
             >
-              <Text style={styles.updateButtonLabel}>Add Category</Text>
+              <Text style={styles.updateButtonLabel}>{financeCatEditing ? 'Save' : 'Add Category'}</Text>
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
@@ -1628,7 +1740,9 @@ export default function HouseholdEditScreen({ route, navigation }) {
         <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={styles.modalSheet}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>{catModalType === 'non-food' ? 'Add Non-Food Category' : 'Add Food Category'}</Text>
+              <Text style={styles.modalTitle}>
+                {`${catEditing ? 'Edit' : 'Add'} ${catModalType === 'non-food' ? 'Non-Food' : 'Food'} Category`}
+              </Text>
               <TouchableOpacity onPress={() => setCatModal(false)} accessibilityRole="button" accessibilityLabel="Close">
                 <Ionicons name="close" size={22} color={colors.textPrimary} />
               </TouchableOpacity>
@@ -1642,25 +1756,27 @@ export default function HouseholdEditScreen({ route, navigation }) {
 
             <Text style={styles.modalLabel}>Category Name *</Text>
             <TextInput
-              style={[styles.modalInput, !!catError && styles.inputError]}
+              style={[styles.modalInput, !!catError && styles.inputError, catLocked && { opacity: 0.5 }]}
               value={catForm.label}
               onChangeText={(t) => { setCatForm((f) => ({ ...f, label: t })); if (catError) setCatError(null); }}
               placeholder="e.g. Dairy, Fresh Produce"
               placeholderTextColor={colors.textTertiary}
               returnKeyType="done"
-              onSubmitEditing={handleAddCategory}
-              autoFocus
+              onSubmitEditing={handleSaveCategory}
+              autoFocus={!catLocked}
+              editable={!catLocked}
               accessibilityLabel="Category name"
             />
+            {catLocked && <Text style={styles.inviteHint}>This is the fallback category, so only its icon can change.</Text>}
             {!!catError && <Text style={styles.errorText}>{catError}</Text>}
 
             <TouchableOpacity
               style={[styles.updateButton, !catForm.label.trim() && { opacity: 0.4 }]}
-              onPress={handleAddCategory}
+              onPress={handleSaveCategory}
               disabled={!catForm.label.trim()}
               accessibilityRole="button"
             >
-              <Text style={styles.updateButtonLabel}>Add Category</Text>
+              <Text style={styles.updateButtonLabel}>{catEditing ? 'Save' : 'Add Category'}</Text>
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
