@@ -20,7 +20,7 @@ import {
   getHousehold, subscribePriceEntries, addPriceEntry,
 } from '../../services/firestore';
 import { spacing, radius, type } from '../../theme/colors';
-import { PANTRY_CATEGORIES, NON_FOOD_CATEGORIES, UNITS } from '../../utils/categories';
+import { PANTRY_CATEGORIES, NON_FOOD_CATEGORIES, UNITS, withOverrides } from '../../utils/categories';
 import {
   buildPriceEntry, lastEntryFor, recentStores, computeTrend, sortEntries,
   itemKeyOf, formatPrice, trendPresentation, formatPercent, summarizeBasket,
@@ -127,6 +127,8 @@ export default function GroceryListScreen() {
   const [enabledNonFoodLabels, setEnabledNonFoodLabels]             = useState(null);
   const [customNonFoodCategoryDefs, setCustomNonFoodCategoryDefs]   = useState([]);
   const [nonFoodCategoryOrder, setNonFoodCategoryOrder]             = useState([]);
+  const [foodOverrides, setFoodOverrides]                           = useState(null);
+  const [nonFoodOverrides, setNonFoodOverrides]                     = useState(null);
   const [enabledUnits, setEnabledUnits]                             = useState(UNITS);
   const [customUnits, setCustomUnits]                               = useState([]);
   const [modalVisible, setModalVisible] = useState(false);
@@ -165,6 +167,8 @@ export default function GroceryListScreen() {
         setEnabledNonFoodLabels(hh?.nonFoodCategories ?? null);
         setCustomNonFoodCategoryDefs(hh?.nonFoodCustomCategories ?? []);
         setNonFoodCategoryOrder(hh?.nonFoodCategoryOrder ?? []);
+        setFoodOverrides(hh?.pantryCategoryOverrides ?? null);
+        setNonFoodOverrides(hh?.nonFoodCategoryOverrides ?? null);
         setEnabledUnits(hh?.enabledUnits ?? UNITS);
         setCustomUnits(hh?.customUnits ?? []);
       });
@@ -172,16 +176,16 @@ export default function GroceryListScreen() {
   );
 
   const visibleFoodCategories = useMemo(() => {
-    const all = [...PANTRY_CATEGORIES, ...customCategoryDefs];
+    const all = [...withOverrides(PANTRY_CATEGORIES, foodOverrides), ...customCategoryDefs];
     const enabled = enabledCategoryLabels ? all.filter((c) => enabledCategoryLabels.includes(c.label)) : all;
     return applyOrder(enabled, foodCategoryOrder);
-  }, [enabledCategoryLabels, customCategoryDefs, foodCategoryOrder]);
+  }, [enabledCategoryLabels, customCategoryDefs, foodCategoryOrder, foodOverrides]);
 
   const visibleNonFoodCategories = useMemo(() => {
-    const all = [...NON_FOOD_CATEGORIES, ...customNonFoodCategoryDefs];
+    const all = [...withOverrides(NON_FOOD_CATEGORIES, nonFoodOverrides), ...customNonFoodCategoryDefs];
     const enabled = enabledNonFoodLabels ? all.filter((c) => enabledNonFoodLabels.includes(c.label)) : all;
     return applyOrder(enabled, nonFoodCategoryOrder);
-  }, [enabledNonFoodLabels, customNonFoodCategoryDefs, nonFoodCategoryOrder]);
+  }, [enabledNonFoodLabels, customNonFoodCategoryDefs, nonFoodCategoryOrder, nonFoodOverrides]);
 
   const visibleCategories = useMemo(
     () => [...visibleFoodCategories, ...visibleNonFoodCategories],

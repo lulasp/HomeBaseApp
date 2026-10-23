@@ -21,7 +21,7 @@ import {
   buildPriceHistory, recentStores, buildPriceEntry, itemKeyOf, buildStoreComparison,
   formatPrice, formatUnitPrice, formatPercent, trendPresentation,
 } from '../../utils/pricing';
-import { PANTRY_CATEGORIES, NON_FOOD_CATEGORIES, UNITS } from '../../utils/categories';
+import { PANTRY_CATEGORIES, NON_FOOD_CATEGORIES, UNITS, withOverrides } from '../../utils/categories';
 import { spacing, radius, type } from '../../theme/colors';
 import { useIsDesktop, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
 
@@ -120,8 +120,8 @@ export default function PriceHistoryScreen() {
       if (!active) return;
       setUnits([...(hh?.enabledUnits ?? UNITS), ...(hh?.customUnits ?? [])]);
       setCategoryDefs([
-        ...PANTRY_CATEGORIES, ...(hh?.pantryCustomCategories ?? []),
-        ...NON_FOOD_CATEGORIES, ...(hh?.nonFoodCustomCategories ?? []),
+        ...withOverrides(PANTRY_CATEGORIES, hh?.pantryCategoryOverrides), ...(hh?.pantryCustomCategories ?? []),
+        ...withOverrides(NON_FOOD_CATEGORIES, hh?.nonFoodCategoryOverrides), ...(hh?.nonFoodCustomCategories ?? []),
       ]);
     }).catch(() => { /* falls back to defaults */ });
     return () => { active = false; };
