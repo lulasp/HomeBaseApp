@@ -26,6 +26,7 @@ import {
   itemKeyOf, formatPrice, trendPresentation, formatPercent, summarizeBasket,
 } from '../../utils/pricing';
 import DatePickerInput from '../../components/DatePickerInput';
+import DragScrollView from '../../components/DragScrollView';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useIsDesktop, useMobileNavClearance, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
 
@@ -727,7 +728,7 @@ export default function GroceryListScreen() {
               </View>
 
               <Text style={styles.inputLabel}>Category</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 4 }}>
+              <DragScrollView style={{ marginBottom: 4 }}>
                 {visibleFoodCategories.map((cat) => (
                   <TouchableOpacity
                     key={cat.label}
@@ -755,7 +756,7 @@ export default function GroceryListScreen() {
                     </Text>
                   </TouchableOpacity>
                 ))}
-              </ScrollView>
+              </DragScrollView>
 
               {!visibleNonFoodCategories.some((c) => c.label === selectedCategory) && (
                 <>

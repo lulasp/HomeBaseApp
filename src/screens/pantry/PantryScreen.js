@@ -17,6 +17,7 @@ import { useAlert } from '../../context/AlertContext';
 import { useNotification } from '../../context/NotificationContext';
 import { subscribePantryItems, addPantryItem, updatePantryItem, deletePantryItem, getHousehold } from '../../services/firestore';
 import DatePickerInput from '../../components/DatePickerInput';
+import DragScrollView from '../../components/DragScrollView';
 import { spacing, radius, type } from '../../theme/colors';
 import { PANTRY_CATEGORIES, NON_FOOD_CATEGORIES, UNITS, withOverrides } from '../../utils/categories';
 
@@ -449,7 +450,7 @@ export default function PantryScreen() {
               </View>
 
               <Text style={styles.inputLabel}>Category</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 4 }}>
+              <DragScrollView style={{ marginBottom: 4 }}>
                 {visibleFoodCategories.map((cat) => (
                   <TouchableOpacity
                     key={cat.label}
@@ -477,7 +478,7 @@ export default function PantryScreen() {
                     </Text>
                   </TouchableOpacity>
                 ))}
-              </ScrollView>
+              </DragScrollView>
 
               {!visibleNonFoodCategories.some((c) => c.label === formCategory) && (
                 <>
