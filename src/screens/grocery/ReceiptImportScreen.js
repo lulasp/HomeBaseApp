@@ -31,7 +31,7 @@ import {
 import {
   buildPriceHistory, recentStores, formatPrice, todayKey, itemKeyOf,
 } from '../../utils/pricing';
-import { PANTRY_CATEGORIES, NON_FOOD_CATEGORIES, UNITS } from '../../utils/categories';
+import { PANTRY_CATEGORIES, NON_FOOD_CATEGORIES, UNITS, withOverrides } from '../../utils/categories';
 import { DEFAULT_AI_MODEL, getAiModel, visionModels } from '../../utils/aiModels';
 import { spacing, radius, type } from '../../theme/colors';
 import { useIsDesktop, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
@@ -341,9 +341,9 @@ export default function ReceiptImportScreen({ navigation }) {
       setAiModel(hh?.aiModel ?? DEFAULT_AI_MODEL);
       // Same unit/category choices the grocery and pantry screens offer.
       setUnits([...(hh?.enabledUnits ?? UNITS), ...(hh?.customUnits ?? [])]);
-      const nonFood = [...NON_FOOD_CATEGORIES, ...(hh?.nonFoodCustomCategories ?? [])];
+      const nonFood = [...withOverrides(NON_FOOD_CATEGORIES, hh?.nonFoodCategoryOverrides), ...(hh?.nonFoodCustomCategories ?? [])];
       setCategoryDefs([
-        ...PANTRY_CATEGORIES, ...(hh?.pantryCustomCategories ?? []), ...nonFood,
+        ...withOverrides(PANTRY_CATEGORIES, hh?.pantryCategoryOverrides), ...(hh?.pantryCustomCategories ?? []), ...nonFood,
       ]);
       setNonFoodLabels(nonFood.map((c) => c.label));
     }).catch(() => { /* surfaced when analyzing; pickers fall back to defaults */ });

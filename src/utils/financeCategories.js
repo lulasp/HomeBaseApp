@@ -24,8 +24,14 @@ export const EXPENSE_CATS = [
   { key: 'other',      label: 'Other',      icon: 'cash',     colorKey: 'textSecondary' },
 ];
 
-// Merge built-in cats with a household's custom cats (which render with an emoji).
-export const withCustomCats = (builtIn, custom = []) => [
-  ...builtIn,
-  ...custom.map((c) => ({ ...c, colorKey: 'textSecondary', isCustom: true })),
+// Merge built-in cats with a household's custom cats, applying any edits to the
+// built-ins (overrides keyed by `key`: { label?, icon? }). `emoji` marks cats whose
+// icon is an emoji rather than an Ionicons name — custom ones, and built-ins
+// whose icon was edited.
+export const withCustomCats = (builtIn, custom = [], overrides) => [
+  ...builtIn.map((c) => {
+    const o = overrides?.[c.key];
+    return o ? { ...c, ...o, emoji: !!o.icon } : c;
+  }),
+  ...custom.map((c) => ({ ...c, colorKey: 'textSecondary', isCustom: true, emoji: true })),
 ];

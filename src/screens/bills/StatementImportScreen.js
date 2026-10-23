@@ -71,7 +71,7 @@ function CatChip({ cat, selected, onPress, colors }) {
       accessibilityRole="radio"
       accessibilityState={{ selected }}
     >
-      {cat.isCustom
+      {cat.emoji
         ? <Text style={{ fontSize: 12, lineHeight: 16 }}>{cat.icon}</Text>
         : <Ionicons name={cat.icon} size={13} color={iconColor} />}
       <Text style={[type.caption, { fontWeight: '600', color: selected ? iconColor : colors.textSecondary }]}>
@@ -199,6 +199,8 @@ export default function StatementImportScreen({ navigation }) {
 
   const [customBillCats, setCustomBillCats] = useState([]);
   const [customExpCats, setCustomExpCats] = useState([]);
+  const [billOverrides, setBillOverrides] = useState(null);
+  const [expOverrides, setExpOverrides] = useState(null);
   const [existingExpenses, setExistingExpenses] = useState([]);
   const [apiKey, setApiKey] = useState('');
   const [aiModel, setAiModel] = useState(DEFAULT_AI_MODEL);
@@ -208,14 +210,16 @@ export default function StatementImportScreen({ navigation }) {
   const [rows, setRows] = useState(null);        // null = not analyzed yet
   const [saving, setSaving] = useState(false);
 
-  const expenseCats = useMemo(() => withCustomCats(EXPENSE_CATS, customExpCats), [customExpCats]);
-  const billCats    = useMemo(() => withCustomCats(BILL_CATS, customBillCats), [customBillCats]);
+  const expenseCats = useMemo(() => withCustomCats(EXPENSE_CATS, customExpCats, expOverrides), [customExpCats, expOverrides]);
+  const billCats    = useMemo(() => withCustomCats(BILL_CATS, customBillCats, billOverrides), [customBillCats, billOverrides]);
 
   useEffect(() => {
     if (!householdId) return;
     getHouseholdWithPrivate(householdId).then((hh) => {
       setCustomBillCats(hh?.billCustomCategories ?? []);
       setCustomExpCats(hh?.expenseCustomCategories ?? []);
+      setBillOverrides(hh?.billCategoryOverrides ?? null);
+      setExpOverrides(hh?.expenseCategoryOverrides ?? null);
       setApiKey(hh?.openRouterApiKey ?? '');
       setAiModel(hh?.aiModel ?? DEFAULT_AI_MODEL);
     });
@@ -280,7 +284,8 @@ export default function StatementImportScreen({ navigation }) {
     setAnalyzing(true);
     try {
       const base64 = await uriToBase64(file.uri);
-      const cats = { expenseCats: EXPENSE_CATS, billCats: BILL_CATS };
+      // Built-ins only (with the household's renames), as before
+      const cats = { expenseCats: withCustomCats(EXPENSE_CATS, [], expOverrides), billCats: withCustomCats(BILL_CATS, [], billOverrides) };
       const { transactions } = isSpreadsheet(file)
         ? await parseStatementText(apiKey, xlsxBase64ToCsv(base64), cats, aiModel)
         : await parseBankStatement(apiKey, base64, cats, aiModel);

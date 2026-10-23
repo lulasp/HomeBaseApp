@@ -89,8 +89,11 @@ import {
   updateTodoRecurrence,
   deleteTodoRecurrence,
   materializeTodoRecurrences,
+  updateHouseholdCategoryOverrides,
+  renameItemCategories,
+  CATEGORY_LABEL_COLLECTIONS,
 } from '../services/firestore';
-import { onSnapshot, where, orderBy } from 'firebase/firestore';
+import { onSnapshot, where, orderBy, query } from 'firebase/firestore';
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -1123,5 +1126,101 @@ describe('recurring todos', () => {
       lastMaterializedWeek: '2026-10-19',
     });
     expect(mockBatchCommit).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── Category overrides & renames ─────────────────────────────────────────────
+
+describe('updateHouseholdCategoryOverrides', () => {
+  it('writes only the override maps passed in', async () => {
+    await updateHouseholdCategoryOverrides('hh1', {
+      pantry: { Baking: { label: 'Bakery' } },
+      bill:   { gas: { icon: '🔥' } },
+    });
+    expect(mockUpdateDoc).toHaveBeenCalledWith('households/hh1', {
+      pantryCategoryOverrides: { Baking: { label: 'Bakery' } },
+      billCategoryOverrides:   { gas: { icon: '🔥' } },
+    });
+  });
+
+  it('maps every kind to its field and writes {} for a cleared map', async () => {
+    await updateHouseholdCategoryOverrides('hh1', { pantry: null, nonFood: {}, bill: {}, expense: {} });
+    expect(mockUpdateDoc).toHaveBeenCalledWith('households/hh1', {
+      pantryCategoryOverrides: {}, nonFoodCategoryOverrides: {},
+      billCategoryOverrides: {}, expenseCategoryOverrides: {},
+    });
+  });
+
+  it('skips the write when there is nothing known to update', async () => {
+    await updateHouseholdCategoryOverrides('hh1', { bogus: {} });
+    await updateHouseholdCategoryOverrides('hh1', {});
+    expect(mockUpdateDoc).not.toHaveBeenCalled();
+  });
+});
+
+describe('renameItemCategories', () => {
+  // docs[collection][label] = ids stored with that category
+  const setup = (docs) => {
+    query.mockImplementation((col, w) => ({ col, value: w.value }));
+    where.mockImplementation((field, op, value) => ({ field, op, value }));
+    mockGetDocs.mockImplementation(async ({ col, value }) => {
+      const name = col.split('/').pop();
+      const ids = docs[name]?.[value] ?? [];
+      return { docs: ids.map((id) => ({ ref: `${col}/${id}` })) };
+    });
+  };
+  afterEach(() => { query.mockReset(); where.mockReset(); mockGetDocs.mockReset(); });
+
+  it('covers pantry, grocery, price and alias docs', () => {
+    expect(CATEGORY_LABEL_COLLECTIONS).toEqual(['pantryItems', 'groceryItems', 'priceEntries', 'receiptAliases']);
+  });
+
+  it('does nothing for an empty or no-op list', async () => {
+    expect(await renameItemCategories('hh1', [])).toBe(0);
+    expect(await renameItemCategories('hh1', undefined)).toBe(0);
+    expect(await renameItemCategories('hh1', [{ from: 'A', to: 'A' }])).toBe(0);
+    expect(mockGetDocs).not.toHaveBeenCalled();
+    expect(mockWriteBatch).not.toHaveBeenCalled();
+  });
+
+  it('queries each collection by the old label and updates matches', async () => {
+    setup({ pantryItems: { Baking: ['p1'] }, groceryItems: { Baking: ['g1', 'g2'] }, priceEntries: {}, receiptAliases: { Baking: ['a1'] } });
+    const n = await renameItemCategories('hh1', [{ from: 'Baking', to: 'Bakery' }]);
+    expect(n).toBe(4);
+    expect(where).toHaveBeenCalledWith('category', '==', 'Baking');
+    expect(mockGetDocs).toHaveBeenCalledTimes(4);
+    expect(mockBatchUpdate).toHaveBeenCalledWith('households/hh1/pantryItems/p1', { category: 'Bakery' });
+    expect(mockBatchUpdate).toHaveBeenCalledWith('households/hh1/groceryItems/g2', { category: 'Bakery' });
+    expect(mockBatchUpdate).toHaveBeenCalledWith('households/hh1/receiptAliases/a1', { category: 'Bakery' });
+    expect(mockBatchCommit).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolves a swap without cascading', async () => {
+    setup({ pantryItems: { A: ['x'], B: ['y'] } });
+    await renameItemCategories('hh1', [{ from: 'A', to: 'B' }, { from: 'B', to: 'A' }]);
+    expect(mockBatchUpdate).toHaveBeenCalledWith('households/hh1/pantryItems/x', { category: 'B' });
+    expect(mockBatchUpdate).toHaveBeenCalledWith('households/hh1/pantryItems/y', { category: 'A' });
+    expect(mockBatchUpdate).toHaveBeenCalledTimes(2);
+  });
+
+  it('commits nothing when no docs match', async () => {
+    setup({});
+    expect(await renameItemCategories('hh1', [{ from: 'A', to: 'B' }])).toBe(0);
+    expect(mockBatchCommit).not.toHaveBeenCalled();
+  });
+
+  it('splits large renames across batches', async () => {
+    const ids = Array.from({ length: 1000 }, (_, i) => `p${i}`);
+    setup({ pantryItems: { A: ids } });
+    expect(await renameItemCategories('hh1', [{ from: 'A', to: 'B' }])).toBe(1000);
+    expect(mockBatchCommit).toHaveBeenCalledTimes(3); // 450 + 450 + 100
+    expect(mockBatchUpdate).toHaveBeenCalledTimes(1000);
+  });
+
+  it('propagates a read failure without writing', async () => {
+    setup({});
+    mockGetDocs.mockRejectedValue(new Error('denied'));
+    await expect(renameItemCategories('hh1', [{ from: 'A', to: 'B' }])).rejects.toThrow('denied');
+    expect(mockBatchCommit).not.toHaveBeenCalled();
   });
 });

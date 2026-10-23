@@ -1,14 +1,14 @@
 import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet,
-  ActivityIndicator, Platform, Modal, KeyboardAvoidingView, AccessibilityInfo, Switch,
+  ActivityIndicator, Platform, Modal, KeyboardAvoidingView, AccessibilityInfo, Switch, Animated,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
-import { useNavScrollProps } from '../../context/NavScrollContext';
+import { useNavScroll, useNavScrollProps } from '../../context/NavScrollContext';
 import { useAlert } from '../../context/AlertContext';
 import { useNotification } from '../../context/NotificationContext';
 import {
@@ -17,24 +17,30 @@ import {
   updateHouseholdNonFoodCategories, updateHouseholdFinanceCategories, updateHouseholdGoveeApiKey,
   updateHouseholdOpenRouterApiKey, updateHouseholdAiModel,
   updateHouseholdUnits, upsertMemberProfile, updateHouseholdXiaomiCreds, updateHouseholdIntegrationFlags,
-  updateHouseholdReduceMotion,
+  updateHouseholdReduceMotion, updateHouseholdCategoryOverrides, renameItemCategories,
   subscribeEmergencyContacts, addEmergencyContact, updateEmergencyContact, deleteEmergencyContact,
 } from '../../services/firestore';
 import { saveCredentials as saveXiaomiCredentials } from '../../services/xiaomi';
-import { Rise } from '../../components/Motion';
-import { PANTRY_CATEGORIES, NON_FOOD_CATEGORIES, UNITS } from '../../utils/categories';
+import { Rise, useAnimationsEnabled } from '../../components/Motion';
+import {
+  PANTRY_CATEGORIES, NON_FOOD_CATEGORIES, UNITS, LOCKED_CATEGORY_LABELS,
+  withOverrides, overrideFor, addRename, renameInList,
+} from '../../utils/categories';
+import { BILL_CATS, EXPENSE_CATS, withCustomCats } from '../../utils/financeCategories';
 import { AI_MODELS, DEFAULT_AI_MODEL } from '../../utils/aiModels';
 import DraggableCategoryList from '../../components/DraggableCategoryList';
 import IconPicker from '../../components/IconPicker';
 import RepeatingTasksList from '../../components/RepeatingTasksList';
 import { spacing, radius, type } from '../../theme/colors';
-import { useIsDesktop, SIDEBAR_WIDTH, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
+import { useIsDesktop, useMobileNavClearance, MOBILE_NAV_COMPACT_SHIFT, SIDEBAR_WIDTH, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
 import useVisualViewportHeight from '../../hooks/useVisualViewportHeight';
 
 const CONTACT_ICONS  = ['🚑','🏥','👨‍⚕️','🚒','🚓','👮','💊','🧑‍🚒','👨‍👩‍👧','👴','🏠','🔑','🌐','📞','⚡','🐾'];
 const RELATIONSHIPS  = ['Doctor','Hospital','Police','Fire Dept','Family','Neighbor','Vet','Electrician','Plumber','Other'];
 const CATEGORY_ICONS = ['📦','🥩','🥦','🥕','🍎','🥚','🧈','🍞','🥐','🫙','🧃','🍫','🌽','🥥','🫒','🍄','🧁','🧂','🫚','🌶️','🧄','🧅','🍋','🫐','🍓','🥑','🌮','🍜','🫕','🥘','🧆','🛒','🏪'];
 const FINANCE_ICONS  = ['💡','🔥','💧','📡','📱','🚗','🐕','🐈','🏥','🎓','🛒','🔧','🧹','🛋️','📺','🧺','🍽️','🎭','🎾','⛽','💳','📄','💊','🧾','🎸','🎮','🎬','✈️','🌿','🎁','🏋️','🎨','🧴','🪴','🏡'];
+
+const SAVE_FAB_SIZE = 52;
 
 const BLANK_CONTACT = { icon: '📞', name: '', phone: '', relationship: '', notes: '' };
 const BLANK_CAT = { label: '', icon: '📦' };
@@ -91,7 +97,7 @@ function CollapsibleGroup({ title, icon, open, onToggle, action, styles, colors,
 export default function HouseholdEditScreen({ route, navigation }) {
   const { householdId: hhId } = route.params;
   const { user, removeHousehold } = useAuth();
-  const { colors } = useTheme();
+  const { colors, shadow } = useTheme();
   const { showAlert, showConfirm, showOptions } = useAlert();
   const { notify } = useNotification();
 
@@ -100,6 +106,14 @@ export default function HouseholdEditScreen({ route, navigation }) {
   const insets    = useSafeAreaInsets();
   const windowHeight = useVisualViewportHeight();
   const navScrollProps = useNavScrollProps();
+  const navClearance = useMobileNavClearance();
+  const { compactAnim } = useNavScroll();
+  // Save bar follows the floating mobile nav down when it compacts
+  const saveBarShift = compactAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, isDesktop ? 0 : MOBILE_NAV_COMPACT_SHIFT],
+    extrapolate: 'clamp',
+  });
 
   const [household, setHousehold]           = useState(null);
   const [loading, setLoading]               = useState(true);
@@ -129,9 +143,18 @@ export default function HouseholdEditScreen({ route, navigation }) {
   const [catModalType, setCatModalType]                             = useState('food');
   const [catForm, setCatForm]                                       = useState(BLANK_CAT);
   const [catError, setCatError]                                     = useState(null);
+  const [catEditing, setCatEditing]                                 = useState(null); // null = adding | { label, baseLabel? }
+  // Edits to built-ins, keyed by original label (pantry) or key (finance)
+  const [foodOverrides, setFoodOverrides]                           = useState({});
+  const [nonFoodOverrides, setNonFoodOverrides]                     = useState({});
+  const [billOverrides, setBillOverrides]                           = useState({});
+  const [expenseOverrides, setExpenseOverrides]                     = useState({});
+  // Pantry/grocery renames to apply to items on save: [{ from, to }]
+  const [categoryRenames, setCategoryRenames]                       = useState([]);
   const [customBillCats, setCustomBillCats]       = useState([]);
   const [customExpenseCats, setCustomExpenseCats] = useState([]);
   const [financeCatType, setFinanceCatType]       = useState(null); // 'bill' | 'expense' | null
+  const [financeCatEditing, setFinanceCatEditing] = useState(null); // null = adding | { key, builtIn }
   const [financeCatForm, setFinanceCatForm]       = useState({ label: '', icon: '💡' });
   const [financeCatError, setFinanceCatError]     = useState(null);
   const [contacts, setContacts]                   = useState([]);
@@ -224,6 +247,10 @@ export default function HouseholdEditScreen({ route, navigation }) {
         setNonFoodCategoryOrder(hh?.nonFoodCategoryOrder ?? []);
         setCustomBillCats(hh?.billCustomCategories ?? []);
         setCustomExpenseCats(hh?.expenseCustomCategories ?? []);
+        setFoodOverrides(hh?.pantryCategoryOverrides ?? {});
+        setNonFoodOverrides(hh?.nonFoodCategoryOverrides ?? {});
+        setBillOverrides(hh?.billCategoryOverrides ?? {});
+        setExpenseOverrides(hh?.expenseCategoryOverrides ?? {});
         setGoveeApiKey(hh?.goveeApiKey ?? '');
         setOpenRouterApiKey(hh?.openRouterApiKey ?? '');
         const xc = hh?.xiaomiCreds ?? {};
@@ -302,53 +329,104 @@ export default function HouseholdEditScreen({ route, navigation }) {
 
   const openAddCategory = (type = 'food') => {
     setCatModalType(type);
+    setCatEditing(null);
     setCatForm(BLANK_CAT);
     setCatError(null);
     setCatModal(true);
   };
 
-  const handleAddCategory = () => {
-    const label = catForm.label.trim();
+  const openEditCategory = (type, cat) => {
+    setCatModalType(type);
+    setCatEditing({ label: cat.label, baseLabel: cat.baseLabel });
+    setCatForm({ label: cat.label, icon: cat.icon });
+    setCatError(null);
+    setCatModal(true);
+  };
+
+  const orderedFoodCats = useMemo(
+    () => applyOrder([...withOverrides(PANTRY_CATEGORIES, foodOverrides), ...customCategories], foodCategoryOrder),
+    [foodOverrides, customCategories, foodCategoryOrder],
+  );
+
+  const orderedNonFoodCats = useMemo(
+    () => applyOrder([...withOverrides(NON_FOOD_CATEGORIES, nonFoodOverrides), ...customNonFoodCategories], nonFoodCategoryOrder),
+    [nonFoodOverrides, customNonFoodCategories, nonFoodCategoryOrder],
+  );
+
+  const catLocked = !!catEditing && LOCKED_CATEGORY_LABELS.includes(catEditing.baseLabel);
+
+  // Add a custom category, or edit any category (built-in → override, custom → in place).
+  const handleSaveCategory = () => {
+    const label = catLocked ? catEditing.label : catForm.label.trim();
     if (!label) { setCatError('Name is required'); return; }
     const isFood = catModalType === 'food';
-    const builtIn = isFood ? PANTRY_CATEGORIES : NON_FOOD_CATEGORIES;
-    const custom  = isFood ? customCategories : customNonFoodCategories;
-    const allLabels = [...builtIn.map((c) => c.label), ...custom.map((c) => c.label)];
-    if (allLabels.some((l) => l.toLowerCase() === label.toLowerCase())) {
+    // Unique across food and non-food: both store items in the same collections.
+    const taken = [...orderedFoodCats, ...orderedNonFoodCats]
+      .map((c) => c.label)
+      .filter((l) => l !== catEditing?.label);
+    if (taken.some((l) => l.toLowerCase() === label.toLowerCase())) {
       setCatError('A category with this name already exists');
       return;
     }
-    const newCat = { label, icon: catForm.icon };
-    if (isFood) {
-      setCustomCategories((prev) => [...prev, newCat]);
-      setEnabledCategories((prev) => [...prev, label]);
+
+    if (!catEditing) {
+      const newCat = { label, icon: catForm.icon };
+      if (isFood) {
+        setCustomCategories((prev) => [...prev, newCat]);
+        setEnabledCategories((prev) => [...prev, label]);
+      } else {
+        setCustomNonFoodCategories((prev) => [...prev, newCat]);
+        setEnabledNonFoodCategories((prev) => [...prev, label]);
+      }
+      setCatModal(false);
+      return;
+    }
+
+    const from = catEditing.label;
+    if (catEditing.baseLabel) {
+      const builtIn = (isFood ? PANTRY_CATEGORIES : NON_FOOD_CATEGORIES).find((c) => c.label === catEditing.baseLabel);
+      const o = overrideFor(builtIn, { label, icon: catForm.icon });
+      (isFood ? setFoodOverrides : setNonFoodOverrides)((prev) => {
+        const next = { ...prev };
+        if (o) next[builtIn.label] = o; else delete next[builtIn.label];
+        return next;
+      });
     } else {
-      setCustomNonFoodCategories((prev) => [...prev, newCat]);
-      setEnabledNonFoodCategories((prev) => [...prev, label]);
+      (isFood ? setCustomCategories : setCustomNonFoodCategories)((prev) =>
+        prev.map((c) => (c.label === from ? { ...c, label, icon: catForm.icon } : c)));
+    }
+    if (label !== from) {
+      (isFood ? setEnabledCategories : setEnabledNonFoodCategories)((prev) => renameInList(prev, from, label));
+      (isFood ? setFoodCategoryOrder : setNonFoodCategoryOrder)((prev) => renameInList(prev, from, label));
+      setCategoryRenames((prev) => addRename(prev, from, label));
     }
     setCatModal(false);
   };
+
+  // A deleted category's items keep their stored label, so drop any pending rename onto it.
+  const dropRenameTo = (label) => setCategoryRenames((prev) => prev.filter((r) => r.to !== label));
 
   const handleDeleteCustomCategory = (label) => {
     setCustomCategories((prev) => prev.filter((c) => c.label !== label));
     setEnabledCategories((prev) => prev.filter((l) => l !== label));
     setFoodCategoryOrder((prev) => prev.filter((l) => l !== label));
+    dropRenameTo(label);
   };
 
   const handleDeleteCustomNonFoodCategory = (label) => {
     setCustomNonFoodCategories((prev) => prev.filter((c) => c.label !== label));
     setEnabledNonFoodCategories((prev) => prev.filter((l) => l !== label));
     setNonFoodCategoryOrder((prev) => prev.filter((l) => l !== label));
+    dropRenameTo(label);
   };
 
-  const orderedFoodCats = useMemo(
-    () => applyOrder([...PANTRY_CATEGORIES, ...customCategories], foodCategoryOrder),
-    [customCategories, foodCategoryOrder],
+  const allBillCats = useMemo(
+    () => withCustomCats(BILL_CATS, customBillCats, billOverrides),
+    [customBillCats, billOverrides],
   );
-
-  const orderedNonFoodCats = useMemo(
-    () => applyOrder([...NON_FOOD_CATEGORIES, ...customNonFoodCategories], nonFoodCategoryOrder),
-    [customNonFoodCategories, nonFoodCategoryOrder],
+  const allExpenseCats = useMemo(
+    () => withCustomCats(EXPENSE_CATS, customExpenseCats, expenseOverrides),
+    [customExpenseCats, expenseOverrides],
   );
 
   // Snapshot of every batch-saved (staged) field. Emergency contacts are excluded —
@@ -363,6 +441,10 @@ export default function HouseholdEditScreen({ route, navigation }) {
     nonFoodCategoryOrder: orderedNonFoodCats.map((c) => c.label),
     customBillCats,
     customExpenseCats,
+    foodOverrides,
+    nonFoodOverrides,
+    billOverrides,
+    expenseOverrides,
     goveeApiKey,
     openRouterApiKey,
     aiModel,
@@ -375,8 +457,8 @@ export default function HouseholdEditScreen({ route, navigation }) {
   }), [
     nameInput, enabledCategories, customCategories, orderedFoodCats,
     enabledNonFoodCategories, customNonFoodCategories, orderedNonFoodCats,
-    customBillCats, customExpenseCats, goveeApiKey, openRouterApiKey,
-    aiModel, enabledUnits, customUnits, xiaomiCreds, goveeEnabled, xiaomiEnabled,
+    customBillCats, customExpenseCats, foodOverrides, nonFoodOverrides, billOverrides, expenseOverrides,
+    goveeApiKey, openRouterApiKey, aiModel, enabledUnits, customUnits, xiaomiCreds, goveeEnabled, xiaomiEnabled,
     reduceMotionPref,
   ]);
 
@@ -389,6 +471,20 @@ export default function HouseholdEditScreen({ route, navigation }) {
 
   const isDirty = baselineRef.current !== null && JSON.stringify(snapshot) !== baselineRef.current;
   isDirtyRef.current = isDirty;
+
+  // Mobile save button: a round ✓ when clean, springs out to full width when dirty
+  const saveExpanded = isDirty || saving;
+  const animationsEnabled = useAnimationsEnabled();
+  const [saveBarW, setSaveBarW] = useState(0);
+  const saveExpand = useRef(new Animated.Value(saveExpanded ? 1 : 0)).current;
+  useEffect(() => {
+    const to = saveExpanded ? 1 : 0;
+    if (animationsEnabled) {
+      Animated.spring(saveExpand, { toValue: to, useNativeDriver: false, friction: 9, tension: 80 }).start();
+    } else {
+      saveExpand.setValue(to);
+    }
+  }, [saveExpanded, animationsEnabled, saveExpand]);
 
   const reorderFoodCategories = useCallback((from, to) => {
     const labels = orderedFoodCats.map((c) => c.label);
@@ -408,7 +504,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
   // filtered list (a search term is active, where reordering is disabled).
   const renderFoodCatRow = (cat) => {
     const isOn = enabledCategories?.includes(cat.label);
-    const isCustom = !PANTRY_CATEGORIES.some((c) => c.label === cat.label);
+    const isCustom = !cat.baseLabel;
     return (
       <>
         <TouchableOpacity
@@ -425,6 +521,15 @@ export default function HouseholdEditScreen({ route, navigation }) {
             size={21}
             color={isOn ? colors.accent : colors.textTertiary}
           />
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => openEditCategory('food', cat)}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityRole="button"
+          accessibilityLabel={`Edit ${cat.label}`}
+          style={styles.categoryDeleteBtn}
+        >
+          <Ionicons name="create-outline" size={16} color={colors.textSecondary} />
         </TouchableOpacity>
         {isCustom && (
           <TouchableOpacity
@@ -443,7 +548,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
 
   const renderNonFoodCatRow = (cat) => {
     const isOn = enabledNonFoodCategories?.includes(cat.label);
-    const isCustom = !NON_FOOD_CATEGORIES.some((c) => c.label === cat.label);
+    const isCustom = !cat.baseLabel;
     return (
       <>
         <TouchableOpacity
@@ -460,6 +565,15 @@ export default function HouseholdEditScreen({ route, navigation }) {
             size={21}
             color={isOn ? colors.accent : colors.textTertiary}
           />
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => openEditCategory('non-food', cat)}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityRole="button"
+          accessibilityLabel={`Edit ${cat.label}`}
+          style={styles.categoryDeleteBtn}
+        >
+          <Ionicons name="create-outline" size={16} color={colors.textSecondary} />
         </TouchableOpacity>
         {isCustom && (
           <TouchableOpacity
@@ -480,23 +594,73 @@ export default function HouseholdEditScreen({ route, navigation }) {
 
   const openAddFinanceCat = (type) => {
     setFinanceCatType(type);
+    setFinanceCatEditing(null);
     setFinanceCatForm({ label: '', icon: '💡' });
     setFinanceCatError(null);
   };
 
-  const handleAddFinanceCat = () => {
+  const openEditFinanceCat = (type, cat) => {
+    setFinanceCatType(type);
+    setFinanceCatEditing({ key: cat.key, builtIn: !cat.isCustom });
+    setFinanceCatForm({ label: cat.label, icon: cat.icon });
+    setFinanceCatError(null);
+  };
+
+  // Finance items store the category key, so a rename here never touches bills/expenses.
+  const handleSaveFinanceCat = () => {
     const label = financeCatForm.label.trim();
     if (!label) { setFinanceCatError('Name is required'); return; }
-    const existing = financeCatType === 'bill' ? customBillCats : customExpenseCats;
-    if (existing.some((c) => c.label.toLowerCase() === label.toLowerCase())) {
+    const isBill = financeCatType === 'bill';
+    const all = isBill ? allBillCats : allExpenseCats;
+    if (all.some((c) => c.key !== financeCatEditing?.key && c.label.toLowerCase() === label.toLowerCase())) {
       setFinanceCatError('A category with this name already exists');
       return;
     }
-    const newCat = { key: `custom_${Date.now()}`, label, icon: financeCatForm.icon };
-    if (financeCatType === 'bill')    setCustomBillCats((prev) => [...prev, newCat]);
-    else                              setCustomExpenseCats((prev) => [...prev, newCat]);
+    if (!financeCatEditing) {
+      const newCat = { key: `custom_${Date.now()}`, label, icon: financeCatForm.icon };
+      (isBill ? setCustomBillCats : setCustomExpenseCats)((prev) => [...prev, newCat]);
+    } else if (financeCatEditing.builtIn) {
+      const builtIn = (isBill ? BILL_CATS : EXPENSE_CATS).find((c) => c.key === financeCatEditing.key);
+      const o = overrideFor(builtIn, { label, icon: financeCatForm.icon });
+      (isBill ? setBillOverrides : setExpenseOverrides)((prev) => {
+        const next = { ...prev };
+        if (o) next[builtIn.key] = o; else delete next[builtIn.key];
+        return next;
+      });
+    } else {
+      (isBill ? setCustomBillCats : setCustomExpenseCats)((prev) =>
+        prev.map((c) => (c.key === financeCatEditing.key ? { ...c, label, icon: financeCatForm.icon } : c)));
+    }
     setFinanceCatType(null);
   };
+
+  const renderFinanceCatRow = (type, cat, i) => (
+    <View key={cat.key} style={[styles.categoryRow, i > 0 && styles.categoryRowBorder]}>
+      <TouchableOpacity
+        style={styles.categoryRowToggle}
+        onPress={() => openEditFinanceCat(type, cat)}
+        accessibilityRole="button"
+        accessibilityLabel={`Edit ${cat.label}`}
+      >
+        {cat.emoji
+          ? <Text style={styles.categoryRowIcon}>{cat.icon}</Text>
+          : <Ionicons name={cat.icon} size={18} color={colors[cat.colorKey] ?? colors.textSecondary} style={styles.categoryRowIcon} />}
+        <Text style={styles.categoryRowLabel}>{cat.label}</Text>
+        <Ionicons name="create-outline" size={16} color={colors.textSecondary} />
+      </TouchableOpacity>
+      {cat.isCustom && (
+        <TouchableOpacity
+          onPress={() => handleDeleteFinanceCat(type, cat.key)}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          style={styles.categoryDeleteBtn}
+          accessibilityRole="button"
+          accessibilityLabel={`Delete ${cat.label}`}
+        >
+          <Ionicons name="trash-outline" size={16} color={colors.danger} />
+        </TouchableOpacity>
+      )}
+    </View>
+  );
 
   const handleDeleteFinanceCat = (type, key) => {
     if (type === 'bill')    setCustomBillCats((prev) => prev.filter((c) => c.key !== key));
@@ -548,6 +712,17 @@ export default function HouseholdEditScreen({ route, navigation }) {
     if (changed(snap.customBillCats, base.customBillCats) || changed(snap.customExpenseCats, base.customExpenseCats)) {
       writes.push(updateHouseholdFinanceCategories(hhId, snap.customBillCats, snap.customExpenseCats));
     }
+    const overrideChanges = {};
+    if (changed(snap.foodOverrides, base.foodOverrides))       overrideChanges.pantry  = snap.foodOverrides;
+    if (changed(snap.nonFoodOverrides, base.nonFoodOverrides)) overrideChanges.nonFood = snap.nonFoodOverrides;
+    if (changed(snap.billOverrides, base.billOverrides))       overrideChanges.bill    = snap.billOverrides;
+    if (changed(snap.expenseOverrides, base.expenseOverrides)) overrideChanges.expense = snap.expenseOverrides;
+    if (Object.keys(overrideChanges).length) {
+      writes.push(updateHouseholdCategoryOverrides(hhId, overrideChanges));
+    }
+    if (categoryRenames.length) {
+      writes.push(renameItemCategories(hhId, categoryRenames));
+    }
     if (changed(snap.goveeApiKey, base.goveeApiKey)) {
       writes.push(updateHouseholdGoveeApiKey(hhId, snap.goveeApiKey));
     }
@@ -580,6 +755,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
       await Promise.all(writes);
       baselineRef.current = JSON.stringify(snap);
       isDirtyRef.current = false;
+      setCategoryRenames([]);
       setHousehold((h) => ({ ...h, name: snap.name }));
       notify('Saved', 'Household updated.', { type: 'success' });
       return true;
@@ -736,10 +912,13 @@ export default function HouseholdEditScreen({ route, navigation }) {
           ref={scrollRef}
           // Web: the ancestor flex chain doesn't reliably bound a flex:1 ScrollView,
           // so pin it to the viewport minus the fixed nav bar and sticky save bar (web-scroll rule).
-          style={Platform.OS === 'web' ? { height: Math.max(windowHeight - navBarH - footerH, 0) } : { flex: 1 }}
+          // Mobile: the save bar floats over the content, so it's not subtracted.
+          style={Platform.OS === 'web' ? { height: Math.max(windowHeight - navBarH - (isDesktop ? footerH : 0), 0) } : { flex: 1 }}
           contentContainerStyle={[
             styles.scrollContent,
             isDesktop && { maxWidth: DESKTOP_MAX_CONTENT, alignSelf: 'center', width: '100%' },
+            // The end is only reached scrolled down (nav compact) — pad for that position
+            !isDesktop && { paddingBottom: footerH + navClearance - MOBILE_NAV_COMPACT_SHIFT + spacing.md },
           ]}
           showsVerticalScrollIndicator={false}
           {...navScrollProps}
@@ -1104,27 +1283,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
             </TouchableOpacity>
           </View>
           <View style={[styles.card, { padding: 0 }]}>
-            {customBillCats.length === 0 ? (
-              <Text style={[styles.inviteHint, { padding: spacing.lg, textAlign: 'center' }]}>
-                No custom bill categories yet.
-              </Text>
-            ) : customBillCats.map((cat, i) => (
-              <View key={cat.key} style={[styles.categoryRow, i > 0 && styles.categoryRowBorder]}>
-                <View style={styles.categoryRowToggle}>
-                  <Text style={styles.categoryRowIcon}>{cat.icon}</Text>
-                  <Text style={styles.categoryRowLabel}>{cat.label}</Text>
-                </View>
-                <TouchableOpacity
-                  onPress={() => handleDeleteFinanceCat('bill', cat.key)}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  style={styles.categoryDeleteBtn}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Delete ${cat.label}`}
-                >
-                  <Ionicons name="trash-outline" size={16} color={colors.danger} />
-                </TouchableOpacity>
-              </View>
-            ))}
+            {allBillCats.map((cat, i) => renderFinanceCatRow('bill', cat, i))}
           </View>
 
           {/* ── Expense Categories ── */}
@@ -1141,27 +1300,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
             </TouchableOpacity>
           </View>
           <View style={[styles.card, { padding: 0 }]}>
-            {customExpenseCats.length === 0 ? (
-              <Text style={[styles.inviteHint, { padding: spacing.lg, textAlign: 'center' }]}>
-                No custom expense categories yet.
-              </Text>
-            ) : customExpenseCats.map((cat, i) => (
-              <View key={cat.key} style={[styles.categoryRow, i > 0 && styles.categoryRowBorder]}>
-                <View style={styles.categoryRowToggle}>
-                  <Text style={styles.categoryRowIcon}>{cat.icon}</Text>
-                  <Text style={styles.categoryRowLabel}>{cat.label}</Text>
-                </View>
-                <TouchableOpacity
-                  onPress={() => handleDeleteFinanceCat('expense', cat.key)}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  style={styles.categoryDeleteBtn}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Delete ${cat.label}`}
-                >
-                  <Ionicons name="trash-outline" size={16} color={colors.danger} />
-                </TouchableOpacity>
-              </View>
-            ))}
+            {allExpenseCats.map((cat, i) => renderFinanceCatRow('expense', cat, i))}
           </View>
 
           </CollapsibleGroup>
@@ -1484,22 +1623,61 @@ export default function HouseholdEditScreen({ route, navigation }) {
 
       {/* ── Sticky save bar (disabled until there are unsaved changes) ── */}
       {!loading && !loadError && (
-        <View
-          style={[styles.saveBar, { paddingBottom: insets.bottom + spacing.md }]}
+        <Animated.View
+          style={[
+            styles.saveBar,
+            isDesktop
+              ? { paddingBottom: insets.bottom + spacing.md }
+              // Sit above the floating mobile nav (clearance already covers the safe area)
+              // Mobile: just the floating button, no bar background
+              : { position: 'absolute', left: 0, right: 0, bottom: navClearance, paddingBottom: spacing.md, backgroundColor: 'transparent', borderTopWidth: 0, pointerEvents: 'box-none', transform: [{ translateY: saveBarShift }] },
+          ]}
           onLayout={(e) => setFooterH(e.nativeEvent.layout.height)}
         >
-          <View style={isDesktop ? { maxWidth: DESKTOP_MAX_CONTENT, alignSelf: 'center', width: '100%' } : null}>
-            <TouchableOpacity
-              style={[styles.updateButton, { marginTop: 0 }, (!isDirty || saving) && styles.updateButtonDisabled]}
-              onPress={handleSaveAll}
-              disabled={!isDirty || saving}
-              accessibilityRole="button"
-              accessibilityState={{ disabled: !isDirty || saving }}
-            >
-              <Text style={styles.updateButtonLabel}>{saving ? 'Saving…' : isDirty ? 'Save Changes' : 'No Changes'}</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
+          {isDesktop ? (
+            <View style={{ maxWidth: DESKTOP_MAX_CONTENT, alignSelf: 'center', width: '100%' }}>
+              <TouchableOpacity
+                style={[styles.updateButton, { marginTop: 0 }, (!isDirty || saving) && styles.updateButtonDisabled]}
+                onPress={handleSaveAll}
+                disabled={!isDirty || saving}
+                accessibilityRole="button"
+                accessibilityState={{ disabled: !isDirty || saving }}
+              >
+                <Text style={styles.updateButtonLabel}>{saving ? 'Saving…' : isDirty ? 'Save Changes' : 'No Changes'}</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View style={{ pointerEvents: 'box-none' }} onLayout={(e) => setSaveBarW(e.nativeEvent.layout.width)}>
+              <Animated.View
+                style={[
+                  styles.saveFab,
+                  shadow.md,
+                  {
+                    width: saveExpand.interpolate({ inputRange: [0, 1], outputRange: [SAVE_FAB_SIZE, Math.max(saveBarW, SAVE_FAB_SIZE)] }),
+                    borderRadius: saveExpand.interpolate({ inputRange: [0, 1], outputRange: [SAVE_FAB_SIZE / 2, radius.md] }),
+                    backgroundColor: saveExpanded ? colors.accent : colors.muted,
+                  },
+                ]}
+              >
+                <TouchableOpacity
+                  style={styles.saveFabTouch}
+                  onPress={handleSaveAll}
+                  disabled={!isDirty || saving}
+                  accessibilityRole="button"
+                  accessibilityLabel={saving ? 'Saving' : isDirty ? 'Save changes' : 'No changes to save'}
+                  accessibilityState={{ disabled: !isDirty || saving }}
+                >
+                  <Animated.View style={[styles.saveFabLayer, { opacity: saveExpand.interpolate({ inputRange: [0, 0.4], outputRange: [1, 0], extrapolate: 'clamp' }) }]}>
+                    <Ionicons name="checkmark" size={24} color={colors.textSecondary} />
+                  </Animated.View>
+                  <Animated.View style={[styles.saveFabLayer, { opacity: saveExpand.interpolate({ inputRange: [0.6, 1], outputRange: [0, 1], extrapolate: 'clamp' }) }]}>
+                    <Text style={styles.updateButtonLabel} numberOfLines={1}>{saving ? 'Saving…' : 'Save Changes'}</Text>
+                  </Animated.View>
+                </TouchableOpacity>
+              </Animated.View>
+            </View>
+          )}
+        </Animated.View>
       )}
 
       {/* ── Finance Category Modal ── */}
@@ -1513,7 +1691,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
           <View style={styles.modalSheet}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>
-                {financeCatType === 'bill' ? 'Add Bill Category' : 'Add Expense Category'}
+                {`${financeCatEditing ? 'Edit' : 'Add'} ${financeCatType === 'bill' ? 'Bill' : 'Expense'} Category`}
               </Text>
               <TouchableOpacity onPress={() => setFinanceCatType(null)} accessibilityRole="button" accessibilityLabel="Close">
                 <Ionicons name="close" size={22} color={colors.textPrimary} />
@@ -1534,7 +1712,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
               placeholder="e.g. Pet care, Garden"
               placeholderTextColor={colors.textTertiary}
               returnKeyType="done"
-              onSubmitEditing={handleAddFinanceCat}
+              onSubmitEditing={handleSaveFinanceCat}
               autoFocus
               accessibilityLabel="Category name"
             />
@@ -1542,11 +1720,11 @@ export default function HouseholdEditScreen({ route, navigation }) {
 
             <TouchableOpacity
               style={[styles.updateButton, !financeCatForm.label.trim() && { opacity: 0.4 }]}
-              onPress={handleAddFinanceCat}
+              onPress={handleSaveFinanceCat}
               disabled={!financeCatForm.label.trim()}
               accessibilityRole="button"
             >
-              <Text style={styles.updateButtonLabel}>Add Category</Text>
+              <Text style={styles.updateButtonLabel}>{financeCatEditing ? 'Save' : 'Add Category'}</Text>
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
@@ -1562,7 +1740,9 @@ export default function HouseholdEditScreen({ route, navigation }) {
         <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={styles.modalSheet}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>{catModalType === 'non-food' ? 'Add Non-Food Category' : 'Add Food Category'}</Text>
+              <Text style={styles.modalTitle}>
+                {`${catEditing ? 'Edit' : 'Add'} ${catModalType === 'non-food' ? 'Non-Food' : 'Food'} Category`}
+              </Text>
               <TouchableOpacity onPress={() => setCatModal(false)} accessibilityRole="button" accessibilityLabel="Close">
                 <Ionicons name="close" size={22} color={colors.textPrimary} />
               </TouchableOpacity>
@@ -1576,25 +1756,27 @@ export default function HouseholdEditScreen({ route, navigation }) {
 
             <Text style={styles.modalLabel}>Category Name *</Text>
             <TextInput
-              style={[styles.modalInput, !!catError && styles.inputError]}
+              style={[styles.modalInput, !!catError && styles.inputError, catLocked && { opacity: 0.5 }]}
               value={catForm.label}
               onChangeText={(t) => { setCatForm((f) => ({ ...f, label: t })); if (catError) setCatError(null); }}
               placeholder="e.g. Dairy, Fresh Produce"
               placeholderTextColor={colors.textTertiary}
               returnKeyType="done"
-              onSubmitEditing={handleAddCategory}
-              autoFocus
+              onSubmitEditing={handleSaveCategory}
+              autoFocus={!catLocked}
+              editable={!catLocked}
               accessibilityLabel="Category name"
             />
+            {catLocked && <Text style={styles.inviteHint}>This is the fallback category, so only its icon can change.</Text>}
             {!!catError && <Text style={styles.errorText}>{catError}</Text>}
 
             <TouchableOpacity
               style={[styles.updateButton, !catForm.label.trim() && { opacity: 0.4 }]}
-              onPress={handleAddCategory}
+              onPress={handleSaveCategory}
               disabled={!catForm.label.trim()}
               accessibilityRole="button"
             >
-              <Text style={styles.updateButtonLabel}>Add Category</Text>
+              <Text style={styles.updateButtonLabel}>{catEditing ? 'Save' : 'Add Category'}</Text>
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
@@ -1768,6 +1950,9 @@ const makeStyles = (colors) => StyleSheet.create({
     alignItems: 'center', justifyContent: 'center', marginTop: spacing.sm,
   },
   updateButtonLabel: { ...type.bodyMed, color: '#fff', fontWeight: '700' },
+  saveFab: { height: SAVE_FAB_SIZE, alignSelf: 'flex-end', overflow: 'hidden' },
+  saveFabTouch: { flex: 1 },
+  saveFabLayer: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
 
   integrationToggleRow:   { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   integrationToggleTitle: { ...type.body, color: colors.textPrimary, fontWeight: '600' },

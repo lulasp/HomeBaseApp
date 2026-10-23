@@ -117,7 +117,7 @@ const CatChip = memo(function CatChip({ cat, selected, onSelect, colors }) {
       accessibilityRole="radio"
       accessibilityState={{ selected }}
     >
-      {cat.isCustom
+      {cat.emoji
         ? <Text style={chipSt.emoji}>{cat.icon}</Text>
         : <Ionicons name={cat.icon} size={13} color={iconColor} />
       }
@@ -173,7 +173,7 @@ const BillCard = memo(function BillCard({ bill, cats, monthKey, onEdit, onDelete
         {/* Header: icon + name + amount */}
         <View style={styles.billCardHeader}>
           <View style={[styles.billCatIcon, { backgroundColor: iconColor + '22' }]}>
-            {cat.isCustom
+            {cat.emoji
               ? <Text style={styles.catEmoji}>{cat.icon}</Text>
               : <Ionicons name={cat.icon} size={20} color={iconColor} />
             }
@@ -275,7 +275,7 @@ const ExpenseCard = memo(function ExpenseCard({ expense, cats, onEdit, onDelete,
       {/* Header: icon + info + amount */}
       <View style={styles.expCardHeader}>
         <View style={[styles.expCatIcon, { backgroundColor: iconColor + '22' }]}>
-          {cat.isCustom
+          {cat.emoji
             ? <Text style={styles.catEmoji}>{cat.icon}</Text>
             : <Ionicons name={cat.icon} size={20} color={iconColor} />
           }
@@ -377,7 +377,7 @@ const BudgetRow = memo(function BudgetRow({ row, cat, colors, styles, onEdit, on
     <View style={styles.budgetCard}>
       <View style={styles.budgetTop}>
         <View style={[styles.expCatIcon, { backgroundColor: iconColor + '22' }]}>
-          {cat.isCustom
+          {cat.emoji
             ? <Text style={styles.catEmoji}>{cat.icon}</Text>
             : <Ionicons name={cat.icon} size={20} color={iconColor} />}
         </View>
@@ -430,6 +430,8 @@ export default function BillsExpensesScreen({ navigation }) {
   const [budgets,         setBudgets]         = useState([]);
   const [customBillCats,  setCustomBillCats]  = useState([]);
   const [customExpCats,   setCustomExpCats]   = useState([]);
+  const [billOverrides,   setBillOverrides]   = useState(null);
+  const [expOverrides,    setExpOverrides]    = useState(null);
   const [modalVisible,  setModalVisible]  = useState(false);
   const [modalType,     setModalType]     = useState('bill');
   const [editingId,     setEditingId]     = useState(null);
@@ -457,11 +459,13 @@ export default function BillsExpensesScreen({ navigation }) {
     getHousehold(householdId).then(hh => {
       setCustomBillCats(hh?.billCustomCategories ?? []);
       setCustomExpCats(hh?.expenseCustomCategories ?? []);
+      setBillOverrides(hh?.billCategoryOverrides ?? null);
+      setExpOverrides(hh?.expenseCategoryOverrides ?? null);
     });
   }, [householdId]);
 
-  const allBillCats    = useMemo(() => withCustomCats(BILL_CATS, customBillCats), [customBillCats]);
-  const allExpenseCats = useMemo(() => withCustomCats(EXPENSE_CATS, customExpCats), [customExpCats]);
+  const allBillCats    = useMemo(() => withCustomCats(BILL_CATS, customBillCats, billOverrides), [customBillCats, billOverrides]);
+  const allExpenseCats = useMemo(() => withCustomCats(EXPENSE_CATS, customExpCats, expOverrides), [customExpCats, expOverrides]);
 
   useEffect(() => {
     if (!householdId) return;
