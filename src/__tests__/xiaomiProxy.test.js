@@ -111,6 +111,22 @@ describe('handler', () => {
     expect(res.headers['Cache-Control']).toBe('no-store');
   });
 
+  it('wraps a plain-text upstream error as JSON with its status', async () => {
+    global.fetch.mockResolvedValue({ status: 401, text: () => Promise.resolve('auth err') });
+    const res = mockRes();
+    await handler(req(), res);
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(res.json).toHaveBeenCalledWith({ code: -1, message: 'Mi Cloud HTTP 401: auth err' });
+    expect(res.send).not.toHaveBeenCalled();
+  });
+
+  it('wraps an empty upstream body', async () => {
+    global.fetch.mockResolvedValue({ status: 503, text: () => Promise.resolve('') });
+    const res = mockRes();
+    await handler(req(), res);
+    expect(res.json).toHaveBeenCalledWith({ code: -1, message: 'Mi Cloud HTTP 503: empty response' });
+  });
+
   it('returns 502 when Mi Cloud is unreachable', async () => {
     global.fetch.mockRejectedValue(new Error('ECONNRESET'));
     const res = mockRes();

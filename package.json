@@ -2,6 +2,9 @@
   "name": "home-app",
   "version": "1.0.0",
   "main": "index.js",
+  "engines": {
+    "node": "24.x"
+  },
   "dependencies": {
     "@expo/metro-runtime": "~56.0.17",
     "@expo/vector-icons": "^15.1.1",
