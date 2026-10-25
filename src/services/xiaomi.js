@@ -154,6 +154,17 @@ export async function syncCredentialsFromHousehold(creds) {
 
 // ── Core request ──────────────────────────────────────────────────────────────
 
+// Non-JSON bodies (Vercel crash pages, Mi plain-text errors) become a readable error.
+export async function parseResponse(res) {
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    const source = Platform.OS === 'web' ? 'Mi Cloud proxy' : 'Mi Cloud';
+    throw new Error(`${source} error (${res.status}): ${text.slice(0, 120).trim() || 'empty response'}`);
+  }
+}
+
 async function proxyFetch(payload) {
   const idToken = await auth.currentUser?.getIdToken();
   if (!idToken) throw new Error('Sign in to use Xiaomi devices');
@@ -191,7 +202,7 @@ async function miRequest(path, data = {}) {
         body,
       });
 
-  const json = await res.json();
+  const json = await parseResponse(res);
   if (json.code !== 0) throw new Error(json.message || `Mi API error (code: ${json.code})`);
   return json.result;
 }
