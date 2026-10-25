@@ -211,6 +211,15 @@ describe('handler', () => {
     expect(res.send).not.toHaveBeenCalled();
   });
 
+  it('relays an encrypted (non-JSON) 200 reply untouched', async () => {
+    upstream = Promise.resolve({ status: 200, text: () => Promise.resolve('aGVsbG8+/w==') });
+    const res = mockRes();
+    await handler(req(), res);
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.send).toHaveBeenCalledWith('aGVsbG8+/w==');
+    expect(res.headers['Content-Type']).toBe('text/plain');
+  });
+
   it('wraps an empty upstream body', async () => {
     upstream = Promise.resolve({ status: 503, text: () => Promise.resolve('') });
     const res = mockRes();
