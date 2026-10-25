@@ -22,6 +22,7 @@ import {
   setFanSpeed,
   getFanState,
   setHeaterPower,
+  parseResponse,
   setHeaterTargetTemp,
   setHeaterMode,
   setHeaterCountdown,
@@ -44,6 +45,9 @@ const HEATER = { did: '582750941', model: 'leshow.heater.nfj3lx' };
 const UNKNOWN_HEATER = { did: '1', model: 'zhimi.heater.mc2' };
 const X20    = { did: '1140536873', model: 'xiaomi.vacuum.d109gl' };
 const UNKNOWN_VACUUM = { did: '2', model: 'roborock.vacuum.s5' };
+
+const jsonResponse = (body, status = 200) => ({ status, text: () => Promise.resolve(JSON.stringify(body)) });
+const textResponse = (text, status) => ({ status, text: () => Promise.resolve(text) });
 
 const SSECURITY = Buffer.from('test-ssecurity-key').toString('base64');
 
@@ -86,7 +90,7 @@ beforeEach(() => {
     '@xiaomi/region': 'de',
   };
   AsyncStorage.getItem.mockImplementation((k) => Promise.resolve(store[k] ?? null));
-  global.fetch = jest.fn().mockResolvedValue({ json: () => Promise.resolve({ code: 0, result: [] }) });
+  global.fetch = jest.fn().mockResolvedValue(jsonResponse({ code: 0, result: [] }));
 });
 
 describe('getDeviceType', () => {
@@ -242,7 +246,7 @@ describe('heater commands', () => {
   });
 
   it('surfaces Mi API errors', async () => {
-    global.fetch.mockResolvedValueOnce({ json: () => Promise.resolve({ code: -8, message: 'auth err' }) });
+    global.fetch.mockResolvedValueOnce(jsonResponse({ code: -8, message: 'auth err' }));
     await expect(setHeaterPower(HEATER, true)).rejects.toThrow('auth err');
   });
 
@@ -386,8 +390,30 @@ describe('web proxy', () => {
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
+  it('turns a Vercel crash page into a readable proxy error', async () => {
+    global.fetch.mockResolvedValueOnce(textResponse('A server error has occurred\n\nFUNCTION_INVOCATION_FAILED', 500));
+    await expect(setHeaterPower(HEATER, true))
+      .rejects.toThrow('Mi Cloud proxy error (500): A server error has occurred');
+  });
+
   it('surfaces proxy errors', async () => {
-    global.fetch.mockResolvedValueOnce({ json: () => Promise.resolve({ code: -1, message: 'Invalid sign-in token' }) });
+    global.fetch.mockResolvedValueOnce(jsonResponse({ code: -1, message: 'Invalid sign-in token' }));
     await expect(setHeaterPower(HEATER, true)).rejects.toThrow('Invalid sign-in token');
+  });
+});
+
+describe('parseResponse', () => {
+  it('parses JSON bodies', async () =>
+    expect(await parseResponse(jsonResponse({ code: 0 }))).toEqual({ code: 0 }));
+
+  it('throws a readable error for plain text', async () =>
+    expect(parseResponse(textResponse('auth err', 401))).rejects.toThrow('Mi Cloud error (401): auth err'));
+
+  it('handles an empty body', async () =>
+    expect(parseResponse(textResponse('', 502))).rejects.toThrow('(502): empty response'));
+
+  it('truncates long bodies', async () => {
+    const err = await parseResponse(textResponse('<html>' + 'x'.repeat(500), 500)).catch(e => e);
+    expect(err.message.length).toBeLessThan(160);
   });
 });
