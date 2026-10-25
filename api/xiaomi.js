@@ -115,13 +115,14 @@ async function handler(req, res) {
     });
     const text = await upstream.text();
     res.setHeader('Cache-Control', 'no-store');
+    // Successful replies are RC4-encrypted text the client decrypts, so relay them.
     // Mi Cloud answers auth failures etc. as plain text; keep the client's JSON contract.
-    if (safeParse(text) === null) {
+    if (upstream.status >= 400 && safeParse(text) === null) {
       return res.status(upstream.status).json({
         code: -1, message: `Mi Cloud HTTP ${upstream.status}: ${text.slice(0, 200).trim() || 'empty response'}`,
       });
     }
-    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Type', safeParse(text) === null ? 'text/plain' : 'application/json');
     return res.status(upstream.status).send(text);
   } catch {
     return res.status(502).json({ code: -1, message: 'Mi Cloud unreachable' });

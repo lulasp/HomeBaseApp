@@ -55,20 +55,13 @@ async function computeSignedNonce(ssecurity, nonce) {
   return bytesToBase64(new Uint8Array(hash));
 }
 
-async function hmacSha256(keyBase64, message) {
-  const key = await crypto.subtle.importKey(
-    'raw',
-    base64ToBytes(keyBase64),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign'],
-  );
-  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(message));
-  return bytesToBase64(new Uint8Array(sig));
+async function sha1Base64(message) {
+  const hash = await crypto.subtle.digest('SHA-1', new TextEncoder().encode(message));
+  return bytesToBase64(new Uint8Array(hash));
 }
 
-// RC4-drop[1024] encryption used by the Xiaomi Cloud API
-function rc4Encrypt(keyBase64, data) {
+// RC4-drop[1024], the cipher the Xiaomi Cloud API uses both ways.
+function rc4(keyBase64, dataBytes) {
   const key = base64ToBytes(keyBase64);
   const S = Array.from({ length: 256 }, (_, i) => i);
   let j = 0;
@@ -77,40 +70,40 @@ function rc4Encrypt(keyBase64, data) {
     [S[i], S[j]] = [S[j], S[i]];
   }
   let ii = 0, jj = 0;
-  for (let k = 0; k < 1024; k++) {
+  const next = () => {
     ii = (ii + 1) % 256;
     jj = (jj + S[ii]) % 256;
     [S[ii], S[jj]] = [S[jj], S[ii]];
-  }
-  const dataBytes = new TextEncoder().encode(typeof data === 'string' ? data : JSON.stringify(data));
-  const output = new Uint8Array(dataBytes.length);
-  for (let k = 0; k < dataBytes.length; k++) {
-    ii = (ii + 1) % 256;
-    jj = (jj + S[ii]) % 256;
-    [S[ii], S[jj]] = [S[jj], S[ii]];
-    output[k] = dataBytes[k] ^ S[(S[ii] + S[jj]) % 256];
-  }
-  return bytesToBase64(output);
+    return S[(S[ii] + S[jj]) % 256];
+  };
+  for (let k = 0; k < 1024; k++) next();
+  return dataBytes.map(b => b ^ next());
 }
 
+const rc4Encrypt = (keyBase64, text) => bytesToBase64(rc4(keyBase64, new TextEncoder().encode(text)));
+const rc4Decrypt = (keyBase64, b64) => new TextDecoder().decode(rc4(keyBase64, base64ToBytes(b64)));
+
+// SHA1 over METHOD&path&k=v…&signedNonce; the path drops the /app prefix.
+function encSignature(apiPath, params, signedNonce) {
+  const parts = ['POST', apiPath.replace(/^\/app\//, '/'),
+    ...Object.entries(params).map(([k, v]) => `${k}=${v}`), signedNonce];
+  return sha1Base64(parts.join('&'));
+}
+
+// Mirrors the Xiaomi-cloud-tokens-extractor: hash the plain params, encrypt
+// everything, sign the encrypted set, then append ssecurity and _nonce unsigned.
 async function buildSignedParams(apiPath, params, ssecurity) {
   const nonce = generateNonce();
   const signedNonce = await computeSignedNonce(ssecurity, nonce);
 
-  // Encrypt each param value with RC4
+  const plain = { ...params, rc4_hash__: await encSignature(apiPath, params, signedNonce) };
   const enc = {};
-  for (const [k, v] of Object.entries(params)) {
-    enc[k] = rc4Encrypt(signedNonce, typeof v === 'string' ? v : JSON.stringify(v));
-  }
+  for (const [k, v] of Object.entries(plain)) enc[k] = rc4Encrypt(signedNonce, v);
+  enc.signature = await encSignature(apiPath, enc, signedNonce);
+  enc.ssecurity = ssecurity;
   enc._nonce = nonce;
 
-  const sortedPairs1 = Object.keys(enc).sort().map(k => `${k}=${enc[k]}`).join('&');
-  enc.rc4_hash__ = await hmacSha256(signedNonce, `POST&${apiPath}&${sortedPairs1}`);
-
-  const sortedPairs2 = Object.keys(enc).sort().map(k => `${k}=${enc[k]}`).join('&');
-  enc.signature = await hmacSha256(signedNonce, `POST&${apiPath}&${sortedPairs2}`);
-
-  return enc;
+  return { params: enc, signedNonce };
 }
 
 // ── Credentials ───────────────────────────────────────────────────────────────
@@ -154,14 +147,30 @@ export async function syncCredentialsFromHousehold(creds) {
 
 // ── Core request ──────────────────────────────────────────────────────────────
 
-// Non-JSON bodies (Vercel crash pages, Mi plain-text errors) become a readable error.
-export async function parseResponse(res) {
-  const text = await res.text();
+const parseObject = (text) => {
   try {
-    return JSON.parse(text);
+    const value = JSON.parse(text);
+    return value && typeof value === 'object' ? value : null;
   } catch {
-    const source = Platform.OS === 'web' ? 'Mi Cloud proxy' : 'Mi Cloud';
-    throw new Error(`${source} error (${res.status}): ${text.slice(0, 120).trim() || 'empty response'}`);
+    return null;
+  }
+};
+
+// Mi errors come back as plain JSON, successes RC4-encrypted with the request's
+// signed nonce. Anything else (Vercel crash pages, plain text) becomes a readable error.
+export async function parseResponse(res, signedNonce) {
+  const text = await res.text();
+  const json = parseObject(text) ?? (signedNonce && res.status === 200 ? decryptObject(signedNonce, text) : null);
+  if (json) return json;
+  const source = Platform.OS === 'web' ? 'Mi Cloud proxy' : 'Mi Cloud';
+  throw new Error(`${source} error (${res.status}): ${text.slice(0, 120).trim() || 'empty response'}`);
+}
+
+function decryptObject(signedNonce, text) {
+  try {
+    return parseObject(rc4Decrypt(signedNonce, text.trim()));
+  } catch {
+    return null;
   }
 }
 
@@ -182,7 +191,7 @@ async function miRequest(path, data = {}) {
   const region  = REGIONS[creds.region] ? creds.region : 'cn';
   const apiPath = `/app${path}`;
 
-  const signed = await buildSignedParams(apiPath, { data: JSON.stringify(data) }, creds.ssecurity);
+  const { params: signed, signedNonce } = await buildSignedParams(apiPath, { data: JSON.stringify(data) }, creds.ssecurity);
 
   const body = Object.entries(signed)
     .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
@@ -202,8 +211,10 @@ async function miRequest(path, data = {}) {
         body,
       });
 
-  const json = await parseResponse(res);
+  const json = await parseResponse(res, signedNonce);
   if (json.code !== 0) throw new Error(json.message || `Mi API error (code: ${json.code})`);
+  // Rejected requests (e.g. "invalid signature") still say code 0, just without a result.
+  if (json.result === undefined) throw new Error(json.message || 'Mi API returned no result');
   return json.result;
 }
 
