@@ -14,17 +14,20 @@ import { getHouseholdWithPrivate, updateHouseholdXiaomiCreds } from '../../servi
 import { Rise, useEntranceReplay } from '../../components/Motion';
 import {
   getCredentials, saveCredentials, hasCredentials, syncCredentialsFromHousehold,
-  getDevices, getDeviceType,
-  fanStateFromProps, vacuumStateFromProps,
+  getDevices, getDeviceType, getFanSpec, getHeaterSpec, clampTargetTemp,
+  fanStateFromProps, heaterStateFromProps, vacuumStateFromProps,
   getFanState, setFanPower, setFanLevel, setFanMode, setFanOscillation,
-  getVacuumState, startCleaning, pauseCleaning, returnToDock,
+  getHeaterState, setHeaterPower, setHeaterTargetTemp, setHeaterMode,
+  setHeaterOscillation, setHeaterCountdown,
+  getVacuumState, startCleaning, pauseCleaning, resumeCleaning, returnToDock,
   findVacuum, setVacuumSuction,
 } from '../../services/xiaomi';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const DEFAULT_FAN     = { on: false, level: 1, mode: 0, oscillate: false, speed: 25 };
-const DEFAULT_VACUUM  = { status: 2, error: 0, suction: 1, battery: 100 };
+const DEFAULT_HEATER  = { on: false, fault: 0, targetTemp: null, temperature: null, mode: 0, countdown: 0, oscillate: false };
+const DEFAULT_VACUUM  = { status: 'idle', error: 0, suction: 1, battery: 100 };
 
 const FAN_LEVELS = [1, 2, 3, 4];
 
@@ -34,6 +37,34 @@ const FAN_MODES = [
   { id: 2, label: 'Sleep',  icon: 'moon-outline'        },
 ];
 
+const HEATER_MODES = [
+  { id: 0, label: 'Constant', icon: 'thermometer-outline' },
+  { id: 1, label: 'Heat',     icon: 'flame-outline'       },
+  { id: 2, label: 'Warm',     icon: 'sunny-outline'       },
+  { id: 3, label: 'Fan',      icon: 'leaf-outline'        },
+];
+
+const HEATER_FAULTS = {
+  1: 'Room too cold',
+  2: 'Room too hot',
+  3: 'Plug too cold',
+  4: 'Plug too hot',
+};
+
+// Off-timer presets, minutes (device max 480)
+const TIMER_PRESETS = [
+  { minutes: 0,   label: 'Off' },
+  { minutes: 60,  label: '1h'  },
+  { minutes: 120, label: '2h'  },
+  { minutes: 240, label: '4h'  },
+  { minutes: 480, label: '8h'  },
+];
+
+const TEMP_DEBOUNCE_MS = 500;
+
+const formatCountdown = (min) =>
+  min >= 60 ? `${Math.floor(min / 60)}h ${min % 60 ? `${min % 60}m` : ''}`.trim() : `${min}m`;
+
 const SUCTION_LEVELS = [
   { id: 0, label: 'Quiet',    icon: 'volume-low-outline'    },
   { id: 1, label: 'Standard', icon: 'volume-medium-outline' },
@@ -41,13 +72,19 @@ const SUCTION_LEVELS = [
   { id: 3, label: 'Max',      icon: 'flash-outline'         },
 ];
 
+// Keyed by the normalised status from vacuumStateFromProps; color is a theme token.
 const VACUUM_STATUS_MAP = {
-  1: { label: 'Sweeping',  icon: 'refresh',          color: '#7DB07A' },
-  2: { label: 'Idle',      icon: 'ellipse-outline',  color: '#7D6952' },
-  3: { label: 'Paused',    icon: 'pause-circle',     color: '#E0A832' },
-  4: { label: 'Charging',  icon: 'battery-charging', color: '#00BFFF' },
-  5: { label: 'Error',     icon: 'alert-circle',     color: '#E85C4A' },
-  6: { label: 'Returning', icon: 'home',             color: '#9B59B6' },
+  cleaning:  { label: 'Cleaning',  icon: 'refresh',          color: 'sage'         },
+  idle:      { label: 'Idle',      icon: 'ellipse-outline',  color: 'textTertiary' },
+  paused:    { label: 'Paused',    icon: 'pause-circle',     color: 'amber'        },
+  charging:  { label: 'Charging',  icon: 'battery-charging', color: 'accent'       },
+  charged:   { label: 'Charged',   icon: 'battery-full',     color: 'success'      },
+  returning: { label: 'Returning', icon: 'home',             color: 'accent'       },
+  washing:   { label: 'Washing',   icon: 'water-outline',    color: 'accent'       },
+  mapping:   { label: 'Mapping',   icon: 'map-outline',      color: 'accent'       },
+  updating:  { label: 'Updating',  icon: 'cloud-download',   color: 'warning'      },
+  remote:    { label: 'Remote',    icon: 'game-controller',  color: 'accent'       },
+  error:     { label: 'Error',     icon: 'alert-circle',     color: 'danger'       },
 };
 
 const REGIONS = [
@@ -184,7 +221,7 @@ function CredentialsModal({ visible, onClose, onSaved, colors, householdId }) {
 
 // ── FanDeviceCard ─────────────────────────────────────────────────────────────
 
-function FanDeviceCard({ device, isSelected, isOn, onSelect, onToggle }) {
+function FanDeviceCard({ device, isSelected, isOn, onSelect, onToggle, icon = 'aperture' }) {
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   return (
@@ -196,7 +233,7 @@ function FanDeviceCard({ device, isSelected, isOn, onSelect, onToggle }) {
     >
       <View style={[styles.deviceIconWrap, isOn && { backgroundColor: colors.accentSoft }]}>
         <Ionicons
-          name="aperture"
+          name={icon}
           size={22}
           color={isOn || isSelected ? colors.accent : colors.textTertiary}
         />
@@ -222,6 +259,7 @@ function FanDeviceCard({ device, isSelected, isOn, onSelect, onToggle }) {
 
 function FanControls({ device, state, onTogglePower, onSetLevel, onSetMode, onSetOscillation, colors }) {
   const styles = useMemo(() => makeStyles(colors), [colors]);
+  const modes  = FAN_MODES.filter(m => getFanSpec(device.model).modes.includes(m.id));
   return (
     <View style={styles.card}>
       {/* Power + oscillation row */}
@@ -302,7 +340,7 @@ function FanControls({ device, state, onTogglePower, onSetLevel, onSetMode, onSe
       <View style={{ gap: 10 }}>
         <Text style={styles.controlLabel}>Mode</Text>
         <View style={styles.btnRow}>
-          {FAN_MODES.map(m => {
+          {modes.map(m => {
             const active = state.mode === m.id;
             return (
               <TouchableOpacity
@@ -329,13 +367,194 @@ function FanControls({ device, state, onTogglePower, onSetLevel, onSetMode, onSe
   );
 }
 
+// ── HeaterControls ────────────────────────────────────────────────────────────
+
+function HeaterControls({ device, state, onTogglePower, onStepTemp, onSetMode, onSetOscillation, onSetCountdown, colors }) {
+  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const spec   = getHeaterSpec(device.model);
+  const has    = (key) => !!spec.props[key];
+  const modes  = HEATER_MODES.filter(m => spec.modes.includes(m.id));
+  const [minTemp, maxTemp] = spec.tempRange ?? [null, null];
+  const fault  = state.fault ? (HEATER_FAULTS[state.fault] ?? `Fault ${state.fault}`) : null;
+
+  return (
+    <View style={styles.card}>
+      {fault && (
+        <>
+          <View style={styles.heaterFault}>
+            <Ionicons name="warning-outline" size={16} color={colors.danger} />
+            <Text style={styles.heaterFaultText}>{fault}</Text>
+          </View>
+          <View style={styles.divider} />
+        </>
+      )}
+
+      {/* Power */}
+      <View style={styles.controlRow}>
+        <View style={styles.controlRowLeft}>
+          <View style={[styles.controlIcon, state.on && styles.controlIconActive]}>
+            <Ionicons
+              name={state.on ? 'power' : 'power-outline'}
+              size={18}
+              color={state.on ? colors.accent : colors.textTertiary}
+            />
+          </View>
+          <View>
+            <Text style={styles.controlLabel}>Power</Text>
+            <Text style={styles.controlValue}>
+              {state.on ? 'On' : 'Off'}
+              {state.temperature != null ? ` · Room ${state.temperature}°C` : ''}
+            </Text>
+          </View>
+        </View>
+        <Switch
+          value={state.on}
+          onValueChange={onTogglePower}
+          trackColor={{ false: colors.muted, true: colors.accent }}
+          thumbColor="#fff"
+          ios_backgroundColor={colors.muted}
+        />
+      </View>
+
+      {/* Target temperature */}
+      {has('targetTemp') && (
+        <>
+          <View style={styles.divider} />
+          <View style={styles.controlRow}>
+            <View style={styles.controlRowLeft}>
+              <View style={[styles.controlIcon, state.on && styles.controlIconActive]}>
+                <Ionicons name="thermometer-outline" size={18} color={state.on ? colors.accent : colors.textTertiary} />
+              </View>
+              <Text style={styles.controlLabel}>Target</Text>
+            </View>
+            <View style={styles.stepper}>
+              <TouchableOpacity
+                style={[styles.stepperBtn, state.targetTemp != null && state.targetTemp <= minTemp && styles.stepperBtnDisabled]}
+                onPress={() => onStepTemp(-1)}
+                disabled={state.targetTemp != null && state.targetTemp <= minTemp}
+                accessibilityRole="button"
+                accessibilityLabel="Lower target temperature"
+              >
+                <Ionicons name="remove" size={18} color={colors.textSecondary} />
+              </TouchableOpacity>
+              <Text style={styles.stepperValue}>
+                {state.targetTemp != null ? `${state.targetTemp}°C` : '—'}
+              </Text>
+              <TouchableOpacity
+                style={[styles.stepperBtn, state.targetTemp != null && state.targetTemp >= maxTemp && styles.stepperBtnDisabled]}
+                onPress={() => onStepTemp(1)}
+                disabled={state.targetTemp != null && state.targetTemp >= maxTemp}
+                accessibilityRole="button"
+                accessibilityLabel="Raise target temperature"
+              >
+                <Ionicons name="add" size={18} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+          </View>
+        </>
+      )}
+
+      {/* Oscillation */}
+      {has('oscillate') && (
+        <>
+          <View style={styles.divider} />
+          <View style={styles.controlRow}>
+            <View style={styles.controlRowLeft}>
+              <View style={[styles.controlIcon, state.oscillate && styles.controlIconActive]}>
+                <Ionicons
+                  name={state.oscillate ? 'sync' : 'sync-outline'}
+                  size={18}
+                  color={state.oscillate ? colors.accent : colors.textTertiary}
+                />
+              </View>
+              <Text style={styles.controlLabel}>Oscillation</Text>
+            </View>
+            <Switch
+              value={state.oscillate}
+              onValueChange={onSetOscillation}
+              trackColor={{ false: colors.muted, true: colors.accent }}
+              thumbColor="#fff"
+              ios_backgroundColor={colors.muted}
+            />
+          </View>
+        </>
+      )}
+
+      {/* Mode */}
+      {modes.length > 0 && has('mode') && (
+        <>
+          <View style={styles.divider} />
+          <View style={{ gap: 10 }}>
+            <Text style={styles.controlLabel}>Mode</Text>
+            <View style={styles.btnRow}>
+              {modes.map(m => {
+                const active = state.mode === m.id;
+                return (
+                  <TouchableOpacity
+                    key={m.id}
+                    style={[styles.optionBtn, active && styles.optionBtnActive]}
+                    onPress={() => onSetMode(m.id)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Heater mode ${m.label}`}
+                  >
+                    <Ionicons name={m.icon} size={14} color={active ? colors.accent : colors.textTertiary} />
+                    <Text style={[styles.optionBtnLabel, active && styles.optionBtnLabelActive]}>
+                      {m.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        </>
+      )}
+
+      {/* Off timer */}
+      {has('countdown') && (
+        <>
+          <View style={styles.divider} />
+          <View style={{ gap: 10 }}>
+            <View style={styles.controlRow}>
+              <Text style={styles.controlLabel}>Off Timer</Text>
+              {state.countdown > 0 && (
+                <Text style={styles.controlValue}>Off in {formatCountdown(state.countdown)}</Text>
+              )}
+            </View>
+            <View style={styles.btnRow}>
+              {TIMER_PRESETS.map(t => {
+                const active = state.countdown === t.minutes;
+                return (
+                  <TouchableOpacity
+                    key={t.minutes}
+                    style={[styles.optionBtn, active && styles.optionBtnActive]}
+                    onPress={() => onSetCountdown(t.minutes)}
+                    accessibilityRole="button"
+                    accessibilityLabel={t.minutes ? `Turn off in ${t.label}` : 'Cancel off timer'}
+                  >
+                    <Text style={[styles.optionBtnLabel, active && styles.optionBtnLabelActive]}>
+                      {t.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        </>
+      )}
+    </View>
+  );
+}
+
 // ── VacuumCard ────────────────────────────────────────────────────────────────
 
 function VacuumCard({ device, state, onStart, onPause, onDock, onFind, onSetSuction, colors }) {
   const styles = useMemo(() => makeStyles(colors), [colors]);
-  const info = VACUUM_STATUS_MAP[state.status] ?? { label: `Status ${state.status}`, icon: 'ellipse-outline', color: colors.textTertiary };
-  const isCleaning = state.status === 1;
-  const isPaused   = state.status === 3;
+  const known = VACUUM_STATUS_MAP[state.status];
+  const info = known
+    ? { ...known, color: colors[known.color] }
+    : { label: `Status ${state.rawStatus ?? '?'}`, icon: 'ellipse-outline', color: colors.textTertiary };
+  const isCleaning = state.status === 'cleaning';
+  const isPaused   = state.status === 'paused';
 
   return (
     <>
@@ -456,11 +675,14 @@ export default function XiaomiScreen() {
   const [refreshing, setRefreshing]   = useState(false);
 
   const [fans, setFans]         = useState([]);
+  const [heaters, setHeaters]   = useState([]);
   const [vacuums, setVacuums]   = useState([]);
-  const [selectedFan, setSelectedFan]     = useState(null);
+  const [selectedFan, setSelectedFan]       = useState(null);
+  const [selectedHeater, setSelectedHeater] = useState(null);
   const [selectedVacuum, setSelectedVacuum] = useState(null);
-  const [fanStates, setFanStates]         = useState({});
-  const [vacuumStates, setVacuumStates]   = useState({});
+  const [fanStates, setFanStates]           = useState({});
+  const [heaterStates, setHeaterStates]     = useState({});
+  const [vacuumStates, setVacuumStates]     = useState({});
 
   const debounce = useRef({});
 
@@ -480,28 +702,40 @@ export default function XiaomiScreen() {
 
       const all = await getDevices();
       const fanList    = all.filter(d => getDeviceType(d) === 'fan');
+      const heaterList = all.filter(d => getDeviceType(d) === 'heater');
       const vacuumList = all.filter(d => getDeviceType(d) === 'vacuum');
 
       setFans(fanList);
+      setHeaters(heaterList);
       setVacuums(vacuumList);
       if (fanList.length > 0 && !selectedFan)       setSelectedFan(fanList[0].did);
+      if (heaterList.length > 0 && !selectedHeater) setSelectedHeater(heaterList[0].did);
       if (vacuumList.length > 0 && !selectedVacuum) setSelectedVacuum(vacuumList[0].did);
 
       // Fetch initial states
       const fStates = {};
       for (const d of fanList) {
         try {
-          const props = await getFanState(d.did);
-          fStates[d.did] = fanStateFromProps(Array.isArray(props) ? props : []);
+          const props = await getFanState(d);
+          fStates[d.did] = fanStateFromProps(Array.isArray(props) ? props : [], d.model);
         } catch { fStates[d.did] = { ...DEFAULT_FAN }; }
       }
       setFanStates(fStates);
 
+      const hStates = {};
+      for (const d of heaterList) {
+        try {
+          const props = await getHeaterState(d);
+          hStates[d.did] = heaterStateFromProps(Array.isArray(props) ? props : [], d.model);
+        } catch { hStates[d.did] = { ...DEFAULT_HEATER }; }
+      }
+      setHeaterStates(hStates);
+
       const vStates = {};
       for (const d of vacuumList) {
         try {
-          const props = await getVacuumState(d.did);
-          vStates[d.did] = vacuumStateFromProps(Array.isArray(props) ? props : []);
+          const props = await getVacuumState(d);
+          vStates[d.did] = vacuumStateFromProps(Array.isArray(props) ? props : [], d.model);
         } catch { vStates[d.did] = { ...DEFAULT_VACUUM }; }
       }
       setVacuumStates(vStates);
@@ -512,7 +746,7 @@ export default function XiaomiScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [selectedFan, selectedVacuum, householdId]);
+  }, [selectedFan, selectedHeater, selectedVacuum, householdId]);
 
   useEffect(() => { loadDevices(); }, [householdId]);
 
@@ -529,26 +763,78 @@ export default function XiaomiScreen() {
     if (!fan) return;
     const next = !(fanStates[did]?.on ?? false);
     updateFan(did, { on: next });
-    setFanPower(did, next).catch(console.error);
+    setFanPower(fan, next).catch(console.error);
   }, [fans, fanStates, updateFan]);
 
+  const selectedFanDevice = fans.find(f => f.did === selectedFan);
+
   const handleFanLevel = useCallback((lvl) => {
-    if (!selectedFan) return;
+    if (!selectedFanDevice) return;
     updateFan(selectedFan, { level: lvl });
-    setFanLevel(selectedFan, lvl).catch(console.error);
-  }, [selectedFan, updateFan]);
+    setFanLevel(selectedFanDevice, lvl).catch(console.error);
+  }, [selectedFan, selectedFanDevice, updateFan]);
 
   const handleFanMode = useCallback((mode) => {
-    if (!selectedFan) return;
+    if (!selectedFanDevice) return;
     updateFan(selectedFan, { mode });
-    setFanMode(selectedFan, mode).catch(console.error);
-  }, [selectedFan, updateFan]);
+    setFanMode(selectedFanDevice, mode).catch(console.error);
+  }, [selectedFan, selectedFanDevice, updateFan]);
 
   const handleFanOscillation = useCallback((v) => {
-    if (!selectedFan) return;
+    if (!selectedFanDevice) return;
     updateFan(selectedFan, { oscillate: v });
-    setFanOscillation(selectedFan, v).catch(console.error);
-  }, [selectedFan, updateFan]);
+    setFanOscillation(selectedFanDevice, v).catch(console.error);
+  }, [selectedFan, selectedFanDevice, updateFan]);
+
+  // ── Heater helpers ──────────────────────────────────────────────────────────
+
+  const updateHeater = useCallback((did, patch) => {
+    setHeaterStates(prev => ({ ...prev, [did]: { ...(prev[did] ?? DEFAULT_HEATER), ...patch } }));
+  }, []);
+
+  const selectedHeaterDevice = heaters.find(h => h.did === selectedHeater);
+
+  const handleHeaterToggle = useCallback((did, value) => {
+    const heater = heaters.find(h => h.did === did);
+    if (!heater) return;
+    const next = value ?? !(heaterStates[did]?.on ?? false);
+    updateHeater(did, { on: next });
+    setHeaterPower(heater, next).catch(console.error);
+  }, [heaters, heaterStates, updateHeater]);
+
+  // Debounced so rapid taps send one request with the final value.
+  const handleHeaterStepTemp = useCallback((delta) => {
+    const device = selectedHeaterDevice;
+    if (!device) return;
+    const cur  = heaterStates[device.did]?.targetTemp ?? getHeaterSpec(device.model).tempRange?.[0];
+    if (cur == null) return;
+    const next = clampTargetTemp(device.model, cur + delta);
+    updateHeater(device.did, { targetTemp: next });
+    clearTimeout(debounce.current[device.did]);
+    debounce.current[device.did] = setTimeout(() => {
+      setHeaterTargetTemp(device, next).catch(console.error);
+    }, TEMP_DEBOUNCE_MS);
+  }, [selectedHeaterDevice, heaterStates, updateHeater]);
+
+  useEffect(() => () => Object.values(debounce.current).forEach(clearTimeout), []);
+
+  const handleHeaterMode = useCallback((mode) => {
+    if (!selectedHeaterDevice) return;
+    updateHeater(selectedHeater, { mode });
+    setHeaterMode(selectedHeaterDevice, mode).catch(console.error);
+  }, [selectedHeater, selectedHeaterDevice, updateHeater]);
+
+  const handleHeaterOscillation = useCallback((v) => {
+    if (!selectedHeaterDevice) return;
+    updateHeater(selectedHeater, { oscillate: v });
+    setHeaterOscillation(selectedHeaterDevice, v).catch(console.error);
+  }, [selectedHeater, selectedHeaterDevice, updateHeater]);
+
+  const handleHeaterCountdown = useCallback((minutes) => {
+    if (!selectedHeaterDevice) return;
+    updateHeater(selectedHeater, { countdown: minutes });
+    setHeaterCountdown(selectedHeaterDevice, minutes).catch(console.error);
+  }, [selectedHeater, selectedHeaterDevice, updateHeater]);
 
   // ── Vacuum helpers ──────────────────────────────────────────────────────────
 
@@ -556,30 +842,43 @@ export default function XiaomiScreen() {
     setVacuumStates(prev => ({ ...prev, [did]: { ...(prev[did] ?? DEFAULT_VACUUM), ...patch } }));
   }, []);
 
+  const selectedVacuumDevice = vacuums.find(v => v.did === selectedVacuum);
+
+  // Clean button: pause while cleaning, resume while paused, otherwise start.
   const handleVacuumStart = useCallback(() => {
-    if (!selectedVacuum) return;
+    if (!selectedVacuumDevice) return;
     const cur = vacuumStates[selectedVacuum]?.status;
-    const action = cur === 1 ? pauseCleaning : startCleaning;
-    updateVacuum(selectedVacuum, { status: cur === 1 ? 3 : 1 });
-    action(selectedVacuum).catch(console.error);
-  }, [selectedVacuum, vacuumStates, updateVacuum]);
+    if (cur === 'cleaning') {
+      updateVacuum(selectedVacuum, { status: 'paused' });
+      pauseCleaning(selectedVacuumDevice).catch(console.error);
+    } else {
+      updateVacuum(selectedVacuum, { status: 'cleaning' });
+      (cur === 'paused' ? resumeCleaning : startCleaning)(selectedVacuumDevice).catch(console.error);
+    }
+  }, [selectedVacuum, selectedVacuumDevice, vacuumStates, updateVacuum]);
+
+  const handleVacuumPause = useCallback(() => {
+    if (!selectedVacuumDevice) return;
+    updateVacuum(selectedVacuum, { status: 'paused' });
+    pauseCleaning(selectedVacuumDevice).catch(console.error);
+  }, [selectedVacuum, selectedVacuumDevice, updateVacuum]);
 
   const handleVacuumDock = useCallback(() => {
-    if (!selectedVacuum) return;
-    updateVacuum(selectedVacuum, { status: 6 });
-    returnToDock(selectedVacuum).catch(console.error);
-  }, [selectedVacuum, updateVacuum]);
+    if (!selectedVacuumDevice) return;
+    updateVacuum(selectedVacuum, { status: 'returning' });
+    returnToDock(selectedVacuumDevice).catch(console.error);
+  }, [selectedVacuum, selectedVacuumDevice, updateVacuum]);
 
   const handleVacuumFind = useCallback(() => {
-    if (!selectedVacuum) return;
-    findVacuum(selectedVacuum).catch(console.error);
-  }, [selectedVacuum]);
+    if (!selectedVacuumDevice) return;
+    findVacuum(selectedVacuumDevice).catch(console.error);
+  }, [selectedVacuumDevice]);
 
   const handleSuction = useCallback((level) => {
-    if (!selectedVacuum) return;
+    if (!selectedVacuumDevice) return;
     updateVacuum(selectedVacuum, { suction: level });
-    setVacuumSuction(selectedVacuum, level).catch(console.error);
-  }, [selectedVacuum, updateVacuum]);
+    setVacuumSuction(selectedVacuumDevice, level).catch(console.error);
+  }, [selectedVacuum, selectedVacuumDevice, updateVacuum]);
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
@@ -587,9 +886,10 @@ export default function XiaomiScreen() {
     ? { maxWidth: DESKTOP_MAX_CONTENT, alignSelf: 'center', width: '100%' }
     : undefined;
 
-  const selectedFanDevice    = fans.find(f => f.did === selectedFan);
   const selectedFanState     = fanStates[selectedFan]    ?? DEFAULT_FAN;
-  const selectedVacuumDevice = vacuums.find(v => v.did === selectedVacuum);
+  const selectedHeaterState  = heaterStates[selectedHeater] ?? DEFAULT_HEATER;
+  const deviceCount          = fans.length + heaters.length + vacuums.length;
+  const plural = (n, word) => `${n} ${word}${n !== 1 ? 's' : ''}`;
   const selectedVacuumState  = vacuumStates[selectedVacuum] ?? DEFAULT_VACUUM;
 
   if (loading) {
@@ -624,9 +924,9 @@ export default function XiaomiScreen() {
           <View>
             <Text style={styles.title}>Xiaomi</Text>
             <Text style={styles.subtitle}>
-              {fans.length + vacuums.length === 0 && configured
+              {deviceCount === 0 && configured
                 ? 'No devices found'
-                : `${fans.length} fan${fans.length !== 1 ? 's' : ''} · ${vacuums.length} vacuum${vacuums.length !== 1 ? 's' : ''}`
+                : [plural(fans.length, 'fan'), plural(heaters.length, 'heater'), plural(vacuums.length, 'vacuum')].join(' · ')
               }
             </Text>
           </View>
@@ -721,7 +1021,7 @@ export default function XiaomiScreen() {
                 <FanControls
                   device={selectedFanDevice}
                   state={selectedFanState}
-                  onTogglePower={(v) => { updateFan(selectedFan, { on: v }); setFanPower(selectedFan, v).catch(console.error); }}
+                  onTogglePower={(v) => { updateFan(selectedFan, { on: v }); setFanPower(selectedFanDevice, v).catch(console.error); }}
                   onSetLevel={handleFanLevel}
                   onSetMode={handleFanMode}
                   onSetOscillation={handleFanOscillation}
@@ -733,15 +1033,69 @@ export default function XiaomiScreen() {
           </>
         )}
 
-        {/* Vacuum section */}
-        {vacuums.length > 0 && (
+        {/* Heaters section */}
+        {heaters.length > 0 && (
           <>
           <Rise index={2}>
             <View style={[styles.sectionLabelRow, { marginTop: fans.length > 0 ? spacing.xl : 0 }]}>
-              <Text style={[styles.sectionLabel, { marginTop: 0, marginBottom: 0 }]}>VACUUM</Text>
-              {selectedVacuumState.status === 1 && (
+              <Text style={[styles.sectionLabel, { marginTop: 0, marginBottom: 0 }]}>HEATERS</Text>
+              {heaters.filter(h => heaterStates[h.did]?.on).length > 0 && (
                 <View style={styles.activeBadge}>
-                  <View style={[styles.activeDot, { backgroundColor: '#7DB07A' }]} />
+                  <View style={styles.activeDot} />
+                  <Text style={styles.activeBadgeText}>
+                    {heaters.filter(h => heaterStates[h.did]?.on).length} on
+                  </Text>
+                </View>
+              )}
+            </View>
+
+            <View style={styles.card}>
+              {heaters.map((heater, i) => (
+                <React.Fragment key={heater.did}>
+                  <FanDeviceCard
+                    device={heater}
+                    icon="flame"
+                    isSelected={heater.did === selectedHeater}
+                    isOn={heaterStates[heater.did]?.on ?? false}
+                    onSelect={() => setSelectedHeater(heater.did)}
+                    onToggle={() => handleHeaterToggle(heater.did)}
+                  />
+                  {i < heaters.length - 1 && <View style={styles.divider} />}
+                </React.Fragment>
+              ))}
+            </View>
+
+            {selectedHeaterDevice && (
+              <>
+                <View style={styles.controlsHeader}>
+                  <Text style={styles.sectionLabel}>CONTROLS</Text>
+                  <Text style={styles.selectedLabel}>{selectedHeaterDevice.name}</Text>
+                </View>
+                <HeaterControls
+                  device={selectedHeaterDevice}
+                  state={selectedHeaterState}
+                  onTogglePower={(v) => handleHeaterToggle(selectedHeater, v)}
+                  onStepTemp={handleHeaterStepTemp}
+                  onSetMode={handleHeaterMode}
+                  onSetOscillation={handleHeaterOscillation}
+                  onSetCountdown={handleHeaterCountdown}
+                  colors={colors}
+                />
+              </>
+            )}
+          </Rise>
+          </>
+        )}
+
+        {/* Vacuum section */}
+        {vacuums.length > 0 && (
+          <>
+          <Rise index={3}>
+            <View style={[styles.sectionLabelRow, { marginTop: fans.length + heaters.length > 0 ? spacing.xl : 0 }]}>
+              <Text style={[styles.sectionLabel, { marginTop: 0, marginBottom: 0 }]}>VACUUM</Text>
+              {selectedVacuumState.status === 'cleaning' && (
+                <View style={styles.activeBadge}>
+                  <View style={[styles.activeDot, { backgroundColor: colors.sage }]} />
                   <Text style={styles.activeBadgeText}>Cleaning</Text>
                 </View>
               )}
@@ -774,7 +1128,7 @@ export default function XiaomiScreen() {
                 device={selectedVacuumDevice}
                 state={selectedVacuumState}
                 onStart={handleVacuumStart}
-                onPause={() => { updateVacuum(selectedVacuum, { status: 3 }); pauseCleaning(selectedVacuum).catch(console.error); }}
+                onPause={handleVacuumPause}
                 onDock={handleVacuumDock}
                 onFind={handleVacuumFind}
                 onSetSuction={handleSuction}
@@ -786,12 +1140,12 @@ export default function XiaomiScreen() {
         )}
 
         {/* Empty state when configured but no devices */}
-        {configured && fans.length === 0 && vacuums.length === 0 && !error && (
+        {configured && deviceCount === 0 && !error && (
           <View style={styles.emptyState}>
             <Ionicons name="home-outline" size={48} color={colors.textTertiary} />
             <Text style={[styles.title, { marginTop: 16, textAlign: 'center', fontSize: 18 }]}>No devices found</Text>
             <Text style={[styles.subtitle, { textAlign: 'center', marginTop: 8 }]}>
-              Make sure your fans and vacuum are linked in Mi Home and try refreshing.
+              Make sure your fans, heaters and vacuum are linked in Mi Home and try refreshing.
             </Text>
           </View>
         )}
@@ -916,6 +1270,22 @@ const makeStyles = (colors) => StyleSheet.create({
   statusBadgeLabel: { ...type.caption, fontWeight: '700' },
   batteryWrap: { alignItems: 'center', gap: 3 },
   batteryText:  { ...type.caption, fontWeight: '700' },
+
+  // Heater
+  stepper:      { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  stepperBtn: {
+    width: 36, height: 36, borderRadius: radius.md,
+    backgroundColor: colors.muted,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  stepperBtnDisabled: { opacity: 0.4 },
+  stepperValue: { ...type.bodyMed, color: colors.textPrimary, minWidth: 52, textAlign: 'center' },
+  heaterFault: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: colors.dangerSoft,
+    borderRadius: radius.md, padding: spacing.sm,
+  },
+  heaterFaultText: { ...type.caption, color: colors.danger, fontWeight: '700', flex: 1 },
 
   vacuumActions: { flexDirection: 'row', gap: 8 },
   vacuumActionBtn: {
