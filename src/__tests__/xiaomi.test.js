@@ -2,9 +2,14 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
   getItem: jest.fn(),
   setItem: jest.fn().mockResolvedValue(undefined),
 }));
+jest.mock('../config/firebase', () => ({
+  auth: { currentUser: { getIdToken: jest.fn().mockResolvedValue('id-token') } },
+}));
 
 import { createHash } from 'crypto';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Platform } from 'react-native';
+import { auth } from '../config/firebase';
 import {
   getDeviceType,
   getFanSpec,
@@ -325,5 +330,64 @@ describe('vacuum commands', () => {
   it('getVacuumState requests the X20 properties', async () => {
     await getVacuumState(X20);
     expect(lastRequest().data.params.map(p => `${p.siid}.${p.piid}`)).toEqual(['2.2', '2.3', '2.9', '3.1']);
+  });
+});
+
+describe('web proxy', () => {
+  const originalOS = Platform.OS;
+  beforeEach(() => { Platform.OS = 'web'; });
+  afterEach(() => {
+    Platform.OS = originalOS;
+    auth.currentUser = { getIdToken: jest.fn().mockResolvedValue('id-token') };
+  });
+
+  const proxyCall = () => {
+    const [url, opts] = global.fetch.mock.calls.at(-1);
+    return { url, opts, payload: JSON.parse(opts.body) };
+  };
+
+  it('posts to /api/xiaomi with the Firebase ID token and no Cookie header', async () => {
+    await setHeaterPower(HEATER, true);
+    const { url, opts } = proxyCall();
+    expect(url).toBe('/api/xiaomi');
+    expect(opts.headers.Authorization).toBe('Bearer id-token');
+    expect(opts.headers.Cookie).toBeUndefined();
+  });
+
+  it('sends region, path and session creds, but not ssecurity', async () => {
+    await setHeaterPower(HEATER, true);
+    const { payload } = proxyCall();
+    expect(payload).toMatchObject({
+      region: 'de', path: `/app/v2/home/rpc/${HEATER.did}`, userId: '123', serviceToken: 'token',
+    });
+    expect(JSON.stringify(payload)).not.toContain(SSECURITY);
+  });
+
+  it('still signs and encrypts the body in the browser', async () => {
+    await setHeaterPower(HEATER, true);
+    const fields = Object.fromEntries(new URLSearchParams(proxyCall().payload.body));
+    expect(fields).toHaveProperty('signature');
+    expect(fields).toHaveProperty('rc4_hash__');
+    expect(fields.data).not.toContain('set_properties');
+  });
+
+  it('falls back to cn for an unknown region', async () => {
+    AsyncStorage.getItem.mockImplementation((k) => Promise.resolve({
+      '@xiaomi/userId': '123', '@xiaomi/serviceToken': 'token',
+      '@xiaomi/ssecurity': SSECURITY, '@xiaomi/region': 'mars',
+    }[k] ?? null));
+    await setHeaterPower(HEATER, true);
+    expect(proxyCall().payload.region).toBe('cn');
+  });
+
+  it('throws without a signed-in user and makes no request', async () => {
+    auth.currentUser = null;
+    await expect(setHeaterPower(HEATER, true)).rejects.toThrow('Sign in');
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it('surfaces proxy errors', async () => {
+    global.fetch.mockResolvedValueOnce({ json: () => Promise.resolve({ code: -1, message: 'Invalid sign-in token' }) });
+    await expect(setHeaterPower(HEATER, true)).rejects.toThrow('Invalid sign-in token');
   });
 });

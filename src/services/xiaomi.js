@@ -1,4 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Platform } from 'react-native';
+import { auth } from '../config/firebase';
 
 const REGIONS = {
   cn: 'api.io.mi.com',
@@ -10,6 +12,10 @@ const REGIONS = {
   de: 'de.api.io.mi.com',
   tw: 'tw.api.io.mi.com',
 };
+
+// Web relays through our Vercel function (api/xiaomi.js): browsers can't call
+// Mi Cloud directly (no CORS, no Cookie header).
+const WEB_PROXY_PATH = '/api/xiaomi';
 
 const STORAGE_KEYS = {
   userId:       '@xiaomi/userId',
@@ -148,13 +154,22 @@ export async function syncCredentialsFromHousehold(creds) {
 
 // ── Core request ──────────────────────────────────────────────────────────────
 
+async function proxyFetch(payload) {
+  const idToken = await auth.currentUser?.getIdToken();
+  if (!idToken) throw new Error('Sign in to use Xiaomi devices');
+  return fetch(WEB_PROXY_PATH, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify(payload),
+  });
+}
+
 async function miRequest(path, data = {}) {
   const creds = await getCredentials();
   if (!hasCredentials(creds)) throw new Error('NOT_CONFIGURED');
 
-  const host    = REGIONS[creds.region] ?? REGIONS.cn;
+  const region  = REGIONS[creds.region] ? creds.region : 'cn';
   const apiPath = `/app${path}`;
-  const url     = `https://${host}${apiPath}`;
 
   const signed = await buildSignedParams(apiPath, { data: JSON.stringify(data) }, creds.ssecurity);
 
@@ -162,17 +177,19 @@ async function miRequest(path, data = {}) {
     .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
     .join('&');
 
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type':                   'application/x-www-form-urlencoded',
-      'Cookie':                         `userId=${creds.userId}; serviceToken=${creds.serviceToken}; locale=en_US`,
-      'User-Agent':                     'Android-7.1.1-1.0.0-ONEPLUS A3010-136-',
-      'Accept-Encoding':                'gzip',
-      'MIOT-ENCRYPT-ALGORITHM':         'ENCRYPT-RC4',
-    },
-    body,
-  });
+  const res = Platform.OS === 'web'
+    ? await proxyFetch({ region, path: apiPath, body, userId: creds.userId, serviceToken: creds.serviceToken })
+    : await fetch(`https://${REGIONS[region]}${apiPath}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type':                   'application/x-www-form-urlencoded',
+          'Cookie':                         `userId=${creds.userId}; serviceToken=${creds.serviceToken}; locale=en_US`,
+          'User-Agent':                     'Android-7.1.1-1.0.0-ONEPLUS A3010-136-',
+          'Accept-Encoding':                'gzip',
+          'MIOT-ENCRYPT-ALGORITHM':         'ENCRYPT-RC4',
+        },
+        body,
+      });
 
   const json = await res.json();
   if (json.code !== 0) throw new Error(json.message || `Mi API error (code: ${json.code})`);
