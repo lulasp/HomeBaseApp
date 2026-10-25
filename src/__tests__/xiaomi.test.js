@@ -51,8 +51,8 @@ const textResponse = (text, status) => ({ status, text: () => Promise.resolve(te
 
 const SSECURITY = Buffer.from('test-ssecurity-key').toString('base64');
 
-// Inverse of the service's RC4-drop[1024] so tests can read the request payload.
-function rc4Decrypt(keyB64, dataB64) {
+// RC4-drop[1024] (symmetric) so tests can read requests and fake encrypted replies.
+function rc4(keyB64, data) {
   const key = Buffer.from(keyB64, 'base64');
   const S = Array.from({ length: 256 }, (_, i) => i);
   let j = 0;
@@ -68,18 +68,22 @@ function rc4Decrypt(keyB64, dataB64) {
     return S[(S[ii] + S[jj]) % 256];
   };
   for (let k = 0; k < 1024; k++) step();
-  const data = Buffer.from(dataB64, 'base64');
-  return Buffer.from(data.map(b => b ^ step())).toString('utf8');
+  return Buffer.from(data.map(b => b ^ step()));
 }
+const rc4Decrypt = (keyB64, dataB64) => rc4(keyB64, Buffer.from(dataB64, 'base64')).toString('utf8');
+const rc4Encrypt = (keyB64, text) => rc4(keyB64, Buffer.from(text, 'utf8')).toString('base64');
+
+const signedNonceFor = (nonce) => createHash('sha256')
+  .update(Buffer.concat([Buffer.from(SSECURITY, 'base64'), Buffer.from(nonce, 'base64')]))
+  .digest('base64');
+
+const sha1 = (s) => createHash('sha1').update(s).digest('base64');
 
 // Decodes the last fetch call into { url, data } (data = the RPC payload).
 function lastRequest() {
   const [url, opts] = global.fetch.mock.calls.at(-1);
   const fields = Object.fromEntries(new URLSearchParams(opts.body));
-  const signedNonce = createHash('sha256')
-    .update(Buffer.concat([Buffer.from(SSECURITY, 'base64'), Buffer.from(fields._nonce, 'base64')]))
-    .digest('base64');
-  return { url, data: JSON.parse(rc4Decrypt(signedNonce, fields.data)) };
+  return { url, data: JSON.parse(rc4Decrypt(signedNonceFor(fields._nonce), fields.data)) };
 }
 
 beforeEach(() => {
@@ -358,13 +362,13 @@ describe('web proxy', () => {
     expect(opts.headers.Cookie).toBeUndefined();
   });
 
-  it('sends region, path and session creds, but not ssecurity', async () => {
+  it('sends region, path and session creds', async () => {
     await setHeaterPower(HEATER, true);
     const { payload } = proxyCall();
     expect(payload).toMatchObject({
       region: 'de', path: `/app/v2/home/rpc/${HEATER.did}`, userId: '123', serviceToken: 'token',
     });
-    expect(JSON.stringify(payload)).not.toContain(SSECURITY);
+    expect(payload).not.toHaveProperty('ssecurity');
   });
 
   it('still signs and encrypts the body in the browser', async () => {
@@ -399,6 +403,50 @@ describe('web proxy', () => {
   it('surfaces proxy errors', async () => {
     global.fetch.mockResolvedValueOnce(jsonResponse({ code: -1, message: 'Invalid sign-in token' }));
     await expect(setHeaterPower(HEATER, true)).rejects.toThrow('Invalid sign-in token');
+  });
+});
+
+describe('request signing', () => {
+  const fieldsOf = (call = global.fetch.mock.calls.at(-1)) => Object.fromEntries(new URLSearchParams(call[1].body));
+
+  it('hashes the plain params, then signs the encrypted ones without the /app prefix', async () => {
+    await setHeaterPower(HEATER, true);
+    const fields = fieldsOf();
+    const signedNonce = signedNonceFor(fields._nonce);
+    const plainData = rc4Decrypt(signedNonce, fields.data);
+    const path = `/v2/home/rpc/${HEATER.did}`;
+
+    expect(rc4Decrypt(signedNonce, fields.rc4_hash__))
+      .toBe(sha1(`POST&${path}&data=${plainData}&${signedNonce}`));
+    expect(fields.signature)
+      .toBe(sha1(`POST&${path}&data=${fields.data}&rc4_hash__=${fields.rc4_hash__}&${signedNonce}`));
+  });
+
+  it('appends ssecurity and _nonce unencrypted after the signature', async () => {
+    await setHeaterPower(HEATER, true);
+    const fields = fieldsOf();
+    expect(Object.keys(fields)).toEqual(['data', 'rc4_hash__', 'signature', 'ssecurity', '_nonce']);
+    expect(fields.ssecurity).toBe(SSECURITY);
+    expect(Buffer.from(fields._nonce, 'base64')).toHaveLength(12);
+  });
+
+  it('decrypts encrypted replies with the request nonce', async () => {
+    global.fetch.mockImplementationOnce((url, opts) => {
+      const { _nonce } = Object.fromEntries(new URLSearchParams(opts.body));
+      const body = JSON.stringify({ code: 0, result: [{ siid: 2, piid: 1, value: true, code: 0 }] });
+      return Promise.resolve(textResponse(rc4Encrypt(signedNonceFor(_nonce), body), 200));
+    });
+    expect(await getHeaterState(HEATER)).toEqual([{ siid: 2, piid: 1, value: true, code: 0 }]);
+  });
+
+  it('rejects a code 0 reply without a result, e.g. a bad signature', async () => {
+    global.fetch.mockResolvedValueOnce(jsonResponse({ code: 0, message: 'invalid signature' }));
+    await expect(setHeaterPower(HEATER, true)).rejects.toThrow('invalid signature');
+  });
+
+  it('rejects a 200 reply that neither parses nor decrypts', async () => {
+    global.fetch.mockResolvedValueOnce(textResponse('<html>oops</html>', 200));
+    await expect(setHeaterPower(HEATER, true)).rejects.toThrow('error (200): <html>oops');
   });
 });
 
