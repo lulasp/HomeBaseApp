@@ -2,8 +2,10 @@
 // Browsers can't call *.api.io.mi.com directly (no CORS, and pages can't set
 // the Cookie header). The client still signs/encrypts; this only adds the
 // cookie and relays. Credentials are never stored or logged.
-const { initializeApp, getApps } = require('firebase-admin/app');
-const { getAuth } = require('firebase-admin/auth');
+//
+// Dependency-free on purpose: firebase-admin pulls in ESM-only jose, which
+// Vercel's loader can't require() (ERR_REQUIRE_ESM).
+const crypto = require('crypto');
 
 const HOSTS = {
   cn: 'api.io.mi.com',
@@ -23,9 +25,50 @@ const USER_ID_RE = /^\d{1,20}$/;
 const TOKEN_RE = /^[A-Za-z0-9+/=:_.-]{1,1024}$/;
 const MAX_BODY = 64 * 1024;
 
-function getAdminAuth() {
-  if (!getApps().length) initializeApp({ projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID });
-  return getAuth();
+// ── Firebase ID token verification ───────────────────────────────────────────
+// Per https://firebase.google.com/docs/auth/admin/verify-id-tokens (third-party JWT path).
+
+const CERTS_URL = 'https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com';
+const CLOCK_SKEW_S = 60;
+let certCache = { certs: null, expires: 0 };
+
+async function getGoogleCerts() {
+  if (certCache.certs && Date.now() < certCache.expires) return certCache.certs;
+  const res = await fetch(CERTS_URL);
+  if (!res.ok) throw new Error(`certs HTTP ${res.status}`);
+  const certs = await res.json();
+  const maxAge = Number(/max-age=(\d+)/.exec(res.headers.get('cache-control') ?? '')?.[1] ?? 3600);
+  certCache = { certs, expires: Date.now() + maxAge * 1000 };
+  return certs;
+}
+
+const decodePart = (part) => JSON.parse(Buffer.from(part, 'base64url').toString('utf8'));
+
+// Resolves to the token payload, or throws if it isn't a valid ID token for projectId.
+async function verifyIdToken(token, projectId) {
+  if (!projectId) throw new Error('Missing project ID');
+  const parts = token.split('.');
+  if (parts.length !== 3) throw new Error('Malformed token');
+
+  const header  = decodePart(parts[0]);
+  const payload = decodePart(parts[1]);
+  if (header.alg !== 'RS256' || typeof header.kid !== 'string') throw new Error('Bad header');
+
+  const cert = (await getGoogleCerts())[header.kid];
+  if (!cert) throw new Error('Unknown key');
+  const valid = crypto.verify(
+    'RSA-SHA256', Buffer.from(`${parts[0]}.${parts[1]}`), cert, Buffer.from(parts[2], 'base64url'),
+  );
+  if (!valid) throw new Error('Bad signature');
+
+  const now = Math.floor(Date.now() / 1000);
+  if (typeof payload.exp !== 'number' || payload.exp <= now) throw new Error('Expired');
+  if (typeof payload.iat !== 'number' || payload.iat > now + CLOCK_SKEW_S) throw new Error('Issued in future');
+  if (typeof payload.auth_time !== 'number' || payload.auth_time > now + CLOCK_SKEW_S) throw new Error('Bad auth_time');
+  if (payload.aud !== projectId) throw new Error('Wrong audience');
+  if (payload.iss !== `https://securetoken.google.com/${projectId}`) throw new Error('Wrong issuer');
+  if (typeof payload.sub !== 'string' || !payload.sub || payload.sub.length > 128) throw new Error('Bad subject');
+  return payload;
 }
 
 // Returns an error string, or null when the request is acceptable.
@@ -49,7 +92,7 @@ async function handler(req, res) {
   const idToken = (req.headers.authorization ?? '').replace(/^Bearer /, '');
   if (!idToken) return res.status(401).json({ code: -1, message: 'Not signed in' });
   try {
-    await getAdminAuth().verifyIdToken(idToken);
+    await verifyIdToken(idToken, process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID);
   } catch {
     return res.status(401).json({ code: -1, message: 'Invalid sign-in token' });
   }
@@ -91,3 +134,4 @@ function safeParse(s) {
 
 module.exports = handler;
 module.exports.validate = validate;
+module.exports.verifyIdToken = verifyIdToken;
