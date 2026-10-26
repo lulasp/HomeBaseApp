@@ -76,12 +76,19 @@ describe('validate', () => {
 
   it('accepts a valid rpc request', () => expect(validate(VALID)).toBeNull());
   it('accepts the device list path', () => expect(validate({ ...VALID, path: '/app/home/device_list' })).toBeNull());
+  it.each([
+    '/app/v2/homeroom/gethome_merged',
+    '/app/appgateway/miot/appsceneservice/AppSceneService/GetSimpleSceneList',
+    '/app/appgateway/miot/appsceneservice/AppSceneService/NewRunScene',
+  ])('accepts %s', (path) => expect(validate({ ...VALID, path })).toBeNull());
 
   it.each([
     ['null payload', null],
     ['unknown region', { ...VALID, region: 'mars' }],
     ['prototype key as region', { ...VALID, region: 'constructor' }],
     ['other Mi path', { ...VALID, path: '/app/user/get_user_device_data' }],
+    ['other scene operation', { ...VALID, path: '/app/appgateway/miot/appsceneservice/AppSceneService/EditScene' }],
+    ['suffix after an allowed path', { ...VALID, path: '/app/v2/homeroom/gethome_merged/x' }],
     ['path traversal', { ...VALID, path: '/app/home/device_list/../../x' }],
     ['non-numeric did', { ...VALID, path: '/app/v2/home/rpc/abc' }],
     ['absolute URL path', { ...VALID, path: 'https://evil.example/app/home/device_list' }],

@@ -19,7 +19,12 @@ const HOSTS = {
 };
 
 // Only the endpoints the app uses.
-const PATH_RE = /^\/app(\/home\/device_list|\/v2\/home\/rpc\/\d{1,20})$/;
+const PATH_RE = new RegExp('^/app(' + [
+  '/home/device_list',
+  '/v2/home/rpc/\\d{1,20}',
+  '/v2/homeroom/gethome_merged',
+  '/appgateway/miot/appsceneservice/AppSceneService/(GetSimpleSceneList|NewRunScene)',
+].join('|') + ')$');
 const USER_ID_RE = /^\d{1,20}$/;
 // Cookie-safe token chars; rejects ';' and whitespace so it can't inject cookies.
 const TOKEN_RE = /^[A-Za-z0-9+/=:_.-]{1,1024}$/;

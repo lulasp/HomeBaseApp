@@ -9,6 +9,7 @@ import { useTheme } from '../../context/ThemeContext';
 import { useNavScrollProps } from '../../context/NavScrollContext';
 import { useAuth } from '../../context/AuthContext';
 import { useAlert } from '../../context/AlertContext';
+import { useNotification } from '../../context/NotificationContext';
 import { spacing, radius, type } from '../../theme/colors';
 import { useIsDesktop, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
 import { getHouseholdWithPrivate, updateHouseholdXiaomiCreds } from '../../services/firestore';
@@ -22,7 +23,7 @@ import {
   getHeaterState, setHeaterPower, setHeaterTargetTemp, setHeaterMode,
   setHeaterOscillation, setHeaterCountdown, setHeaterChildLock, setHeaterDisplay, setHeaterBeep,
   getVacuumState, startCleaning, pauseCleaning, resumeCleaning, returnToDock,
-  findVacuum, setVacuumSuction, resetVacuumPart,
+  findVacuum, setVacuumSuction, resetVacuumPart, getScenes, runScene,
 } from '../../services/xiaomi';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -799,6 +800,7 @@ export default function XiaomiScreen() {
   const navScrollProps = useNavScrollProps();
   const { householdId } = useAuth();
   const { showAlert, showConfirm } = useAlert();
+  const { notify } = useNotification();
   const styles    = useMemo(() => makeStyles(colors), [colors]);
   const isDesktop = useIsDesktop();
   const contentKey = useEntranceReplay();
@@ -812,6 +814,8 @@ export default function XiaomiScreen() {
   const [fans, setFans]         = useState([]);
   const [heaters, setHeaters]   = useState([]);
   const [vacuums, setVacuums]   = useState([]);
+  const [scenes, setScenes]     = useState([]);
+  const [runningScene, setRunningScene] = useState(null);
   const [selectedFan, setSelectedFan]       = useState(null);
   const [selectedHeater, setSelectedHeater] = useState(null);
   const [selectedVacuum, setSelectedVacuum] = useState(null);
@@ -835,6 +839,8 @@ export default function XiaomiScreen() {
       setConfigured(hasCredentials(creds));
       if (!hasCredentials(creds)) { setLoading(false); return; }
 
+      // Scenes are optional: a failure here shouldn't hide the devices.
+      const scenesPromise = getScenes().catch((e) => { console.error(e); return []; });
       const all = await getDevices();
       const fanList    = all.filter(d => getDeviceType(d) === 'fan');
       const heaterList = all.filter(d => getDeviceType(d) === 'heater');
@@ -874,6 +880,7 @@ export default function XiaomiScreen() {
         } catch { vStates[d.did] = { ...DEFAULT_VACUUM }; }
       }
       setVacuumStates(vStates);
+      setScenes(await scenesPromise);
       setError(null);
     } catch (e) {
       if (e.message !== 'NOT_CONFIGURED') setError(e.message);
@@ -1028,6 +1035,20 @@ export default function XiaomiScreen() {
     updateVacuum(selectedVacuum, { suction: level });
     setVacuumSuction(selectedVacuumDevice, level).catch(console.error);
   }, [selectedVacuum, selectedVacuumDevice, updateVacuum]);
+
+  // ── Scenes ──────────────────────────────────────────────────────────────────
+
+  const handleRunScene = useCallback(async (scene) => {
+    setRunningScene(scene.id);
+    try {
+      await runScene(scene);
+      notify('Scene started', scene.name, { type: 'success' });
+    } catch (e) {
+      showAlert({ title: `Couldn't run ${scene.name}`, message: e.message, type: 'error' });
+    } finally {
+      setRunningScene(null);
+    }
+  }, [notify, showAlert]);
 
   const handleResetPart = useCallback(async (key, label) => {
     const device = selectedVacuumDevice;
@@ -1310,6 +1331,35 @@ export default function XiaomiScreen() {
           </>
         )}
 
+        {/* Scenes */}
+        {scenes.length > 0 && (
+          <Rise index={4}>
+            <View style={[styles.sectionLabelRow, { marginTop: deviceCount > 0 ? spacing.xl : 0 }]}>
+              <Text style={[styles.sectionLabel, { marginTop: 0, marginBottom: 0 }]}>SCENES</Text>
+            </View>
+            <View style={[styles.card, styles.sceneGrid]}>
+              {scenes.map(scene => {
+                const running = runningScene === scene.id;
+                return (
+                  <TouchableOpacity
+                    key={`${scene.homeId}-${scene.id}`}
+                    style={styles.sceneBtn}
+                    onPress={() => handleRunScene(scene)}
+                    disabled={running}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Run scene ${scene.name}`}
+                  >
+                    {running
+                      ? <ActivityIndicator size="small" color={colors.accent} />
+                      : <Ionicons name="play-circle-outline" size={18} color={colors.accent} />}
+                    <Text style={styles.sceneLabel} numberOfLines={2}>{scene.name}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </Rise>
+        )}
+
         {/* Empty state when configured but no devices */}
         {configured && deviceCount === 0 && !error && (
           <View style={styles.emptyState}>
@@ -1424,6 +1474,16 @@ const makeStyles = (colors) => StyleSheet.create({
   optionBtnActive:      { backgroundColor: colors.accentSoft, borderColor: colors.accent },
   optionBtnLabel:       { ...type.caption, color: colors.textSecondary, fontWeight: '700' },
   optionBtnLabelActive: { color: colors.accent },
+
+  // Scenes (wrapping View, not a horizontal ScrollView — see web-scroll rule)
+  sceneGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  sceneBtn: {
+    flexGrow: 1, flexBasis: '45%',
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingHorizontal: 12, paddingVertical: 12,
+    backgroundColor: colors.muted, borderRadius: radius.md,
+  },
+  sceneLabel: { ...type.caption, color: colors.textPrimary, fontWeight: '700', flex: 1 },
 
   // Vacuum
   vacuumStatusRow: { flexDirection: 'row', alignItems: 'center' },

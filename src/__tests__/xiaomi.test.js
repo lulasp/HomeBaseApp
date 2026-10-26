@@ -45,6 +45,9 @@ import {
   setVacuumSuction,
   getVacuumState,
   resetVacuumPart,
+  getHomes,
+  getScenes,
+  runScene,
 } from '../services/xiaomi';
 
 const P18    = { did: '411402474', model: 'dmaker.fan.p18' };
@@ -89,12 +92,12 @@ const signedNonceFor = (nonce) => createHash('sha256')
 
 const sha1 = (s) => createHash('sha1').update(s).digest('base64');
 
-// Decodes the last fetch call into { url, data } (data = the RPC payload).
-function lastRequest() {
-  const [url, opts] = global.fetch.mock.calls.at(-1);
+// Decodes a fetch call into { url, data } (data = the RPC payload).
+function decodeCall([url, opts]) {
   const fields = Object.fromEntries(new URLSearchParams(opts.body));
   return { url, data: JSON.parse(rc4Decrypt(signedNonceFor(fields._nonce), fields.data)) };
 }
+const lastRequest = () => decodeCall(global.fetch.mock.calls.at(-1));
 
 beforeEach(() => {
   const store = {
@@ -504,6 +507,72 @@ describe('web proxy', () => {
   it('surfaces proxy errors', async () => {
     global.fetch.mockResolvedValueOnce(jsonResponse({ code: -1, message: 'Invalid sign-in token' }));
     await expect(setHeaterPower(HEATER, true)).rejects.toThrow('Invalid sign-in token');
+  });
+});
+
+describe('homes and scenes', () => {
+  const SCENES_URL = 'https://de.api.io.mi.com/app/appgateway/miot/appsceneservice/AppSceneService';
+  const HOMES = [{ id: '589001096441', uid: 8278474663, name: 'Home' }, { id: '7', uid: 99, name: 'Shared' }];
+  const SCENES = {
+    '589001096441': [{ scene_id: 111, name: 'Good night' }, { scene_id: 112 }],
+    '7': [{ scene_id: '700', name: 'Away' }],
+  };
+
+  // Answers by endpoint (and home_id for scene lists).
+  const mockCloud = ({ homes = HOMES, scenes = SCENES } = {}) =>
+    global.fetch.mockImplementation((url, opts) => {
+      const { data } = decodeCall([url, opts]);
+      if (url.endsWith('/v2/homeroom/gethome_merged')) return Promise.resolve(jsonResponse({ code: 0, result: { homelist: homes } }));
+      if (url.endsWith('/GetSimpleSceneList')) {
+        return Promise.resolve(jsonResponse({ code: 0, result: { manual_scene_info_list: scenes[data.home_id] } }));
+      }
+      return Promise.resolve(jsonResponse({ code: 0, result: {} }));
+    });
+
+  it('getHomes asks for own and shared homes', async () => {
+    mockCloud();
+    expect(await getHomes()).toEqual(HOMES);
+    const { url, data } = lastRequest();
+    expect(url).toBe('https://de.api.io.mi.com/app/v2/homeroom/gethome_merged');
+    expect(data).toMatchObject({ fetch_share: true, fetch_share_dev: true });
+  });
+
+  it('getHomes returns [] without a homelist', async () => {
+    global.fetch.mockResolvedValueOnce(jsonResponse({ code: 0, result: {} }));
+    expect(await getHomes()).toEqual([]);
+  });
+
+  it('getScenes lists manual scenes from every home with their owner', async () => {
+    mockCloud();
+    expect(await getScenes()).toEqual([
+      { id: '111', name: 'Good night', homeId: '589001096441', ownerUid: 8278474663 },
+      { id: '112', name: 'Scene',      homeId: '589001096441', ownerUid: 8278474663 },
+      { id: '700', name: 'Away',       homeId: '7',            ownerUid: 99 },
+    ]);
+    const sceneCalls = global.fetch.mock.calls.filter(([url]) => url === `${SCENES_URL}/GetSimpleSceneList`).map(decodeCall);
+    expect(sceneCalls.map(c => c.data)).toEqual([
+      { app_version: 12, get_type: 2, home_id: '589001096441', owner_uid: 8278474663 },
+      { app_version: 12, get_type: 2, home_id: '7', owner_uid: 99 },
+    ]);
+  });
+
+  it('getScenes tolerates homes without scenes', async () => {
+    mockCloud({ scenes: {} });
+    expect(await getScenes()).toEqual([]);
+  });
+
+  it('getScenes surfaces Mi errors', async () => {
+    global.fetch.mockResolvedValueOnce(jsonResponse({ code: -8, message: 'auth err' }));
+    await expect(getScenes()).rejects.toThrow('auth err');
+  });
+
+  it('runScene sends the scene, its home and owner', async () => {
+    await runScene({ id: '111', name: 'Good night', homeId: '589001096441', ownerUid: 8278474663 });
+    const { url, data } = lastRequest();
+    expect(url).toBe(`${SCENES_URL}/NewRunScene`);
+    expect(data).toEqual({
+      scene_id: '111', scene_type: 2, phone_id: 'null', home_id: '589001096441', owner_uid: 8278474663,
+    });
   });
 });
 

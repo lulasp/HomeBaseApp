@@ -228,6 +228,43 @@ export async function getDevices() {
   return result?.list ?? [];
 }
 
+// ── Homes & scenes ────────────────────────────────────────────────────────────
+// Endpoints as used by the Mi Home app (see Do1e/mijia-api); manual scenes only.
+
+const SCENE_SERVICE = '/appgateway/miot/appsceneservice/AppSceneService';
+
+// Own and shared homes: [{ id, uid (owner), name, … }].
+export async function getHomes() {
+  const result = await miRequest('/v2/homeroom/gethome_merged', {
+    fg: true, fetch_share: true, fetch_share_dev: true, fetch_cariot: true,
+    limit: 300, app_ver: 7, plat_form: 0,
+  });
+  return result?.homelist ?? [];
+}
+
+// Manual ("tap to run") scenes across all homes: [{ id, name, homeId, ownerUid }].
+export async function getScenes() {
+  const homes = await getHomes();
+  const perHome = await Promise.all(homes.map(async (home) => {
+    const result = await miRequest(`${SCENE_SERVICE}/GetSimpleSceneList`, {
+      app_version: 12, get_type: 2, home_id: String(home.id), owner_uid: Number(home.uid),
+    });
+    return (result?.manual_scene_info_list ?? []).map(scene => ({
+      id: String(scene.scene_id),
+      name: scene.name ?? 'Scene',
+      homeId: String(home.id),
+      ownerUid: Number(home.uid),
+    }));
+  }));
+  return perHome.flat();
+}
+
+export function runScene(scene) {
+  return miRequest(`${SCENE_SERVICE}/NewRunScene`, {
+    scene_id: scene.id, scene_type: 2, phone_id: 'null', home_id: scene.homeId, owner_uid: scene.ownerUid,
+  });
+}
+
 // ── Generic MiIO RPC ──────────────────────────────────────────────────────────
 
 export async function callDevice(did, method, params) {
