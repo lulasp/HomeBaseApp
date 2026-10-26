@@ -20,6 +20,10 @@ import {
   setFanMode,
   setFanOscillation,
   setFanSpeed,
+  setFanTimer,
+  setFanChildLock,
+  setFanDisplay,
+  setFanBeep,
   getFanState,
   setHeaterPower,
   parseResponse,
@@ -27,6 +31,9 @@ import {
   setHeaterMode,
   setHeaterCountdown,
   setHeaterOscillation,
+  setHeaterChildLock,
+  setHeaterDisplay,
+  setHeaterBeep,
   getHeaterState,
   getVacuumSpec,
   vacuumStateFromProps,
@@ -37,6 +44,10 @@ import {
   findVacuum,
   setVacuumSuction,
   getVacuumState,
+  resetVacuumPart,
+  getHomes,
+  getScenes,
+  runScene,
 } from '../services/xiaomi';
 
 const P18    = { did: '411402474', model: 'dmaker.fan.p18' };
@@ -48,6 +59,8 @@ const UNKNOWN_VACUUM = { did: '2', model: 'roborock.vacuum.s5' };
 
 const jsonResponse = (body, status = 200) => ({ status, text: () => Promise.resolve(JSON.stringify(body)) });
 const textResponse = (text, status) => ({ status, text: () => Promise.resolve(text) });
+
+const SETTINGS = { childLock: false, display: true, beep: true };
 
 const SSECURITY = Buffer.from('test-ssecurity-key').toString('base64');
 
@@ -79,12 +92,12 @@ const signedNonceFor = (nonce) => createHash('sha256')
 
 const sha1 = (s) => createHash('sha1').update(s).digest('base64');
 
-// Decodes the last fetch call into { url, data } (data = the RPC payload).
-function lastRequest() {
-  const [url, opts] = global.fetch.mock.calls.at(-1);
+// Decodes a fetch call into { url, data } (data = the RPC payload).
+function decodeCall([url, opts]) {
   const fields = Object.fromEntries(new URLSearchParams(opts.body));
   return { url, data: JSON.parse(rc4Decrypt(signedNonceFor(fields._nonce), fields.data)) };
 }
+const lastRequest = () => decodeCall(global.fetch.mock.calls.at(-1));
 
 beforeEach(() => {
   const store = {
@@ -140,7 +153,8 @@ describe('fanStateFromProps', () => {
       { siid: 2, piid: 5, value: true },
       { siid: 2, piid: 11, value: 60 },
     ];
-    expect(fanStateFromProps(props, P39.model)).toEqual({ on: true, level: 3, mode: 2, oscillate: true, speed: 60 });
+    expect(fanStateFromProps(props, P39.model))
+      .toEqual({ on: true, level: 3, mode: 2, oscillate: true, speed: 60, timer: 0, ...SETTINGS });
   });
 
   it('reads p18 speed from piid 10', () =>
@@ -148,7 +162,16 @@ describe('fanStateFromProps', () => {
 
   it('keeps defaults for missing or null values', () =>
     expect(fanStateFromProps([{ siid: 2, piid: 1, value: null }], P18.model))
-      .toEqual({ on: false, level: 1, mode: 0, oscillate: false, speed: 25 }));
+      .toEqual({ on: false, level: 1, mode: 0, oscillate: false, speed: 25, timer: 0, ...SETTINGS }));
+
+  it.each([
+    ['p18', P18, { timer: [2, 6], display: [2, 7], beep: [2, 8], childLock: [3, 1] }],
+    ['p39', P39, { timer: [2, 8], display: [2, 9], beep: [2, 7], childLock: [3, 1] }],
+  ])('reads %s timer and settings from their own piids', (_, device, ids) => {
+    const values = { timer: 90, display: false, beep: false, childLock: true };
+    const props = Object.entries(ids).map(([k, [siid, piid]]) => ({ siid, piid, value: values[k] }));
+    expect(fanStateFromProps(props, device.model)).toMatchObject(values);
+  });
 
   it('handles undefined props', () => expect(fanStateFromProps(undefined, P18.model).on).toBe(false));
 });
@@ -163,9 +186,13 @@ describe('heaterStateFromProps', () => {
       { siid: 3, piid: 1, value: 90 },
       { siid: 4, piid: 7, value: 19 },
       { siid: 8, piid: 1, value: true },
+      { siid: 5, piid: 1, value: true },
+      { siid: 6, piid: 1, value: false },
+      { siid: 7, piid: 1, value: false },
     ];
     expect(heaterStateFromProps(props, HEATER.model)).toEqual({
       on: true, fault: 0, targetTemp: 24, temperature: 19, mode: 1, countdown: 90, oscillate: true,
+      childLock: true, beep: false, display: false,
     });
   });
 
@@ -208,7 +235,24 @@ describe('fan commands', () => {
     await getFanState(P18);
     const { data } = lastRequest();
     expect(data.method).toBe('get_properties');
-    expect(data.params.map(p => p.piid)).toEqual([1, 2, 3, 4, 10]);
+    expect(data.params.map(p => `${p.siid}.${p.piid}`)).toEqual(['2.1', '2.2', '2.3', '2.4', '2.10', '2.6', '2.7', '2.8', '3.1']);
+  });
+
+  it.each([
+    ['timer', setFanTimer, 120, { p18: [2, 6], p39: [2, 8] }],
+    ['child lock', setFanChildLock, true, { p18: [3, 1], p39: [3, 1] }],
+    ['display', setFanDisplay, false, { p18: [2, 7], p39: [2, 9] }],
+    ['beep', setFanBeep, false, { p18: [2, 8], p39: [2, 7] }],
+  ])('%s writes the per-model piid', async (_, fn, value, ids) => {
+    for (const [device, [siid, piid]] of [[P18, ids.p18], [P39, ids.p39]]) {
+      await fn(device, value);
+      expect(lastRequest().data.params[0]).toEqual({ did: device.did, siid, piid, value });
+    }
+  });
+
+  it('rejects settings on unknown fans without a request', async () => {
+    await expect(setFanChildLock({ did: '3', model: 'zhimi.fan.za4' }, true)).rejects.toThrow('UNSUPPORTED: childLock');
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 });
 
@@ -241,7 +285,21 @@ describe('heater commands', () => {
   it('getHeaterState requests every spec property', async () => {
     await getHeaterState(HEATER);
     expect(lastRequest().data.params.map(p => `${p.siid}.${p.piid}`))
-      .toEqual(['2.1', '2.2', '2.3', '2.5', '3.1', '4.7', '8.1']);
+      .toEqual(['2.1', '2.2', '2.3', '2.5', '3.1', '4.7', '8.1', '5.1', '6.1', '7.1']);
+  });
+
+  it.each([
+    ['child lock', setHeaterChildLock, true, 5],
+    ['beep', setHeaterBeep, false, 6],
+    ['display', setHeaterDisplay, false, 7],
+  ])('%s writes its own siid', async (_, fn, value, siid) => {
+    await fn(HEATER, value);
+    expect(lastRequest().data.params[0]).toEqual({ did: HEATER.did, siid, piid: 1, value });
+  });
+
+  it('rejects settings on unknown heaters without a request', async () => {
+    await expect(setHeaterBeep(UNKNOWN_HEATER, false)).rejects.toThrow('UNSUPPORTED: beep');
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 
   it('rejects unsupported properties without a request', async () => {
@@ -294,6 +352,32 @@ describe('vacuumStateFromProps', () => {
     expect(vacuumStateFromProps(props, UNKNOWN_VACUUM.model)).toMatchObject({ status: 'cleaning', suction: 0 });
   });
 
+  it('reads cleaning area and time', () => {
+    const props = [...x20(4), { siid: 2, piid: 6, value: 42 }, { siid: 2, piid: 7, value: 1800 }];
+    expect(vacuumStateFromProps(props, X20.model)).toMatchObject({ cleanArea: 42, cleanTime: 1800 });
+  });
+
+  it('lists reported parts in spec order with life and hours left', () => {
+    const props = [
+      { siid: 14, piid: 1, value: 30 }, { siid: 14, piid: 2, value: 45 },
+      { siid: 12, piid: 1, value: 80 }, { siid: 12, piid: 2, value: 240 },
+      { siid: 18, piid: 1, value: 60 },
+    ];
+    expect(vacuumStateFromProps(props, X20.model).parts).toEqual([
+      { key: 'mainBrush', life: 80, hoursLeft: 240 },
+      { key: 'filter',    life: 30, hoursLeft: 45 },
+      { key: 'detergent', life: 60, hoursLeft: null },
+    ]);
+  });
+
+  it('skips parts the device did not report (e.g. failed props)', () => {
+    const props = [{ siid: 19, piid: 1, code: -4004 }, { siid: 9, piid: 1, value: 0 }];
+    expect(vacuumStateFromProps(props, X20.model).parts).toEqual([{ key: 'mop', life: 0, hoursLeft: null }]);
+  });
+
+  it('has no parts or stats for unknown models', () =>
+    expect(vacuumStateFromProps([], UNKNOWN_VACUUM.model)).toMatchObject({ parts: [], cleanArea: null, cleanTime: null }));
+
   it('every X20 status code from the spec is mapped', () => {
     const map = getVacuumSpec(X20.model).statusMap;
     for (let code = 1; code <= 21; code++) expect(map[code]).toBeDefined();
@@ -335,9 +419,29 @@ describe('vacuum commands', () => {
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
-  it('getVacuumState requests the X20 properties', async () => {
+  it('getVacuumState requests the X20 status, stats and part properties', async () => {
     await getVacuumState(X20);
-    expect(lastRequest().data.params.map(p => `${p.siid}.${p.piid}`)).toEqual(['2.2', '2.3', '2.9', '3.1']);
+    expect(lastRequest().data.params.map(p => `${p.siid}.${p.piid}`)).toEqual([
+      '2.2', '2.3', '2.9', '3.1', '2.6', '2.7',
+      '12.1', '12.2', '13.1', '13.2', '14.1', '14.2', '9.1', '9.2', '19.1', '19.2', '18.1',
+    ]);
+  });
+
+  it('getVacuumState only asks unknown models for the base properties', async () => {
+    await getVacuumState(UNKNOWN_VACUUM);
+    expect(lastRequest().data.params).toHaveLength(4);
+  });
+
+  it.each([
+    ['mainBrush', 12], ['sideBrush', 13], ['filter', 14], ['mop', 9], ['dustBag', 19], ['detergent', 18],
+  ])('resetVacuumPart %s → action %i.1', async (key, siid) => {
+    await resetVacuumPart(X20, key);
+    expect(lastAction()).toEqual({ did: X20.did, siid, aiid: 1, in: [] });
+  });
+
+  it('rejects resetting an unknown part without a request', async () => {
+    await expect(resetVacuumPart(UNKNOWN_VACUUM, 'filter')).rejects.toThrow('UNSUPPORTED: filter');
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 });
 
@@ -403,6 +507,72 @@ describe('web proxy', () => {
   it('surfaces proxy errors', async () => {
     global.fetch.mockResolvedValueOnce(jsonResponse({ code: -1, message: 'Invalid sign-in token' }));
     await expect(setHeaterPower(HEATER, true)).rejects.toThrow('Invalid sign-in token');
+  });
+});
+
+describe('homes and scenes', () => {
+  const SCENES_URL = 'https://de.api.io.mi.com/app/appgateway/miot/appsceneservice/AppSceneService';
+  const HOMES = [{ id: '589001096441', uid: 8278474663, name: 'Home' }, { id: '7', uid: 99, name: 'Shared' }];
+  const SCENES = {
+    '589001096441': [{ scene_id: 111, name: 'Good night' }, { scene_id: 112 }],
+    '7': [{ scene_id: '700', name: 'Away' }],
+  };
+
+  // Answers by endpoint (and home_id for scene lists).
+  const mockCloud = ({ homes = HOMES, scenes = SCENES } = {}) =>
+    global.fetch.mockImplementation((url, opts) => {
+      const { data } = decodeCall([url, opts]);
+      if (url.endsWith('/v2/homeroom/gethome_merged')) return Promise.resolve(jsonResponse({ code: 0, result: { homelist: homes } }));
+      if (url.endsWith('/GetSimpleSceneList')) {
+        return Promise.resolve(jsonResponse({ code: 0, result: { manual_scene_info_list: scenes[data.home_id] } }));
+      }
+      return Promise.resolve(jsonResponse({ code: 0, result: {} }));
+    });
+
+  it('getHomes asks for own and shared homes', async () => {
+    mockCloud();
+    expect(await getHomes()).toEqual(HOMES);
+    const { url, data } = lastRequest();
+    expect(url).toBe('https://de.api.io.mi.com/app/v2/homeroom/gethome_merged');
+    expect(data).toMatchObject({ fetch_share: true, fetch_share_dev: true });
+  });
+
+  it('getHomes returns [] without a homelist', async () => {
+    global.fetch.mockResolvedValueOnce(jsonResponse({ code: 0, result: {} }));
+    expect(await getHomes()).toEqual([]);
+  });
+
+  it('getScenes lists manual scenes from every home with their owner', async () => {
+    mockCloud();
+    expect(await getScenes()).toEqual([
+      { id: '111', name: 'Good night', homeId: '589001096441', ownerUid: 8278474663 },
+      { id: '112', name: 'Scene',      homeId: '589001096441', ownerUid: 8278474663 },
+      { id: '700', name: 'Away',       homeId: '7',            ownerUid: 99 },
+    ]);
+    const sceneCalls = global.fetch.mock.calls.filter(([url]) => url === `${SCENES_URL}/GetSimpleSceneList`).map(decodeCall);
+    expect(sceneCalls.map(c => c.data)).toEqual([
+      { app_version: 12, get_type: 2, home_id: '589001096441', owner_uid: 8278474663 },
+      { app_version: 12, get_type: 2, home_id: '7', owner_uid: 99 },
+    ]);
+  });
+
+  it('getScenes tolerates homes without scenes', async () => {
+    mockCloud({ scenes: {} });
+    expect(await getScenes()).toEqual([]);
+  });
+
+  it('getScenes surfaces Mi errors', async () => {
+    global.fetch.mockResolvedValueOnce(jsonResponse({ code: -8, message: 'auth err' }));
+    await expect(getScenes()).rejects.toThrow('auth err');
+  });
+
+  it('runScene sends the scene, its home and owner', async () => {
+    await runScene({ id: '111', name: 'Good night', homeId: '589001096441', ownerUid: 8278474663 });
+    const { url, data } = lastRequest();
+    expect(url).toBe(`${SCENES_URL}/NewRunScene`);
+    expect(data).toEqual({
+      scene_id: '111', scene_type: 2, phone_id: 'null', home_id: '589001096441', owner_uid: 8278474663,
+    });
   });
 });
 
