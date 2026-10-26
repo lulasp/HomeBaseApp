@@ -228,6 +228,43 @@ export async function getDevices() {
   return result?.list ?? [];
 }
 
+// ── Homes & scenes ────────────────────────────────────────────────────────────
+// Endpoints as used by the Mi Home app (see Do1e/mijia-api); manual scenes only.
+
+const SCENE_SERVICE = '/appgateway/miot/appsceneservice/AppSceneService';
+
+// Own and shared homes: [{ id, uid (owner), name, … }].
+export async function getHomes() {
+  const result = await miRequest('/v2/homeroom/gethome_merged', {
+    fg: true, fetch_share: true, fetch_share_dev: true, fetch_cariot: true,
+    limit: 300, app_ver: 7, plat_form: 0,
+  });
+  return result?.homelist ?? [];
+}
+
+// Manual ("tap to run") scenes across all homes: [{ id, name, homeId, ownerUid }].
+export async function getScenes() {
+  const homes = await getHomes();
+  const perHome = await Promise.all(homes.map(async (home) => {
+    const result = await miRequest(`${SCENE_SERVICE}/GetSimpleSceneList`, {
+      app_version: 12, get_type: 2, home_id: String(home.id), owner_uid: Number(home.uid),
+    });
+    return (result?.manual_scene_info_list ?? []).map(scene => ({
+      id: String(scene.scene_id),
+      name: scene.name ?? 'Scene',
+      homeId: String(home.id),
+      ownerUid: Number(home.uid),
+    }));
+  }));
+  return perHome.flat();
+}
+
+export function runScene(scene) {
+  return miRequest(`${SCENE_SERVICE}/NewRunScene`, {
+    scene_id: scene.id, scene_type: 2, phone_id: 'null', home_id: scene.homeId, owner_uid: scene.ownerUid,
+  });
+}
+
 // ── Generic MiIO RPC ──────────────────────────────────────────────────────────
 
 export async function callDevice(did, method, params) {
@@ -259,11 +296,17 @@ const DEFAULT_FAN_SPEC = {
 
 const FAN_SPECS = {
   'dmaker.fan.p18': {
-    props: { on: [2, 1], level: [2, 2], mode: [2, 3], oscillate: [2, 4], speed: [2, 10] },
+    props: {
+      on: [2, 1], level: [2, 2], mode: [2, 3], oscillate: [2, 4], speed: [2, 10],
+      timer: [2, 6], display: [2, 7], beep: [2, 8], childLock: [3, 1],
+    },
     modes: [0, 1],
   },
   'dmaker.fan.p39': {
-    props: { on: [2, 1], level: [2, 2], mode: [2, 4], oscillate: [2, 5], speed: [2, 11] },
+    props: {
+      on: [2, 1], level: [2, 2], mode: [2, 4], oscillate: [2, 5], speed: [2, 11],
+      timer: [2, 8], display: [2, 9], beep: [2, 7], childLock: [3, 1],
+    },
     modes: [0, 1, 2],
   },
 };
@@ -279,6 +322,7 @@ const HEATER_SPECS = {
     props: {
       on: [2, 1], fault: [2, 2], targetTemp: [2, 3], mode: [2, 5],
       countdown: [3, 1], temperature: [4, 7], oscillate: [8, 1],
+      childLock: [5, 1], beep: [6, 1], display: [7, 1],
     },
     tempRange: [22, 28],
     modes: [0, 1, 2, 3],
@@ -288,16 +332,21 @@ const HEATER_SPECS = {
 // Vacuum status codes vary per model; statusMap normalises them to:
 // idle, cleaning, paused, charging, charged, returning, washing, mapping, updating, error, remote.
 // suctionLevels lists the raw values from quietest to strongest.
+// parts: wearable parts, each with life (%), optional hoursLeft, and a reset action.
 const DEFAULT_VACUUM_SPEC = {
   props:   { status: [2, 1], error: [2, 2], suction: [2, 8], battery: [3, 1] },
   actions: { start: [2, 1], pause: [2, 2], dock: [2, 3], find: [6, 1] },
   statusMap: { 1: 'cleaning', 2: 'idle', 3: 'paused', 4: 'charging', 5: 'error', 6: 'returning' },
   suctionLevels: [0, 1, 2, 3],
+  parts: {},
 };
 
 const VACUUM_SPECS = {
   'xiaomi.vacuum.d109gl': {
-    props:   { status: [2, 2], error: [2, 3], suction: [2, 9], battery: [3, 1] },
+    props: {
+      status: [2, 2], error: [2, 3], suction: [2, 9], battery: [3, 1],
+      cleanArea: [2, 6], cleanTime: [2, 7],
+    },
     actions: { start: [2, 1], pause: [2, 7], resume: [2, 8], dock: [2, 3], find: [6, 1] },
     statusMap: {
       1: 'idle',     2: 'charging',  3: 'charging',  4: 'cleaning',  5: 'paused',
@@ -307,6 +356,14 @@ const VACUUM_SPECS = {
       21: 'mapping',
     },
     suctionLevels: [1, 2, 3, 4],
+    parts: {
+      mainBrush: { life: [12, 1], hoursLeft: [12, 2], reset: [12, 1] },
+      sideBrush: { life: [13, 1], hoursLeft: [13, 2], reset: [13, 1] },
+      filter:    { life: [14, 1], hoursLeft: [14, 2], reset: [14, 1] },
+      mop:       { life: [9, 1],  hoursLeft: [9, 2],  reset: [9, 1]  },
+      dustBag:   { life: [19, 1], hoursLeft: [19, 2], reset: [19, 1] },
+      detergent: { life: [18, 1], reset: [18, 1] },
+    },
   },
 };
 
@@ -333,25 +390,37 @@ function stateFromSpec(props, spec, defaults) {
   return state;
 }
 
-const FAN_DEFAULTS    = { on: false, level: 1, mode: 0, oscillate: false, speed: 25 };
-const HEATER_DEFAULTS = { on: false, fault: 0, targetTemp: null, temperature: null, mode: 0, countdown: 0, oscillate: false };
+const SETTING_DEFAULTS = { childLock: false, display: true, beep: true };
+const FAN_DEFAULTS    = { on: false, level: 1, mode: 0, oscillate: false, speed: 25, timer: 0, ...SETTING_DEFAULTS };
+const HEATER_DEFAULTS = {
+  on: false, fault: 0, targetTemp: null, temperature: null, mode: 0, countdown: 0, oscillate: false, ...SETTING_DEFAULTS,
+};
 
 export const fanStateFromProps    = (props, model) => stateFromSpec(props, getFanSpec(model), FAN_DEFAULTS);
 export const heaterStateFromProps = (props, model) => stateFromSpec(props, getHeaterSpec(model), HEATER_DEFAULTS);
 
-const VACUUM_DEFAULTS = { status: null, error: 0, suction: null, battery: 100 };
+const VACUUM_DEFAULTS = { status: null, error: 0, suction: null, battery: 100, cleanArea: null, cleanTime: null };
 
-// status → normalised key ('unknown' for unmapped codes); suction → index into suctionLevels.
+// status → normalised key ('unknown' for unmapped codes); suction → index into suctionLevels;
+// parts → [{ key, life, hoursLeft }] for parts the device reported.
 export function vacuumStateFromProps(props, model) {
   const spec = getVacuumSpec(model);
   const raw  = stateFromSpec(props, spec, VACUUM_DEFAULTS);
   const idx  = spec.suctionLevels.indexOf(raw.suction);
+  const m    = propMap(props);
+  const read = (id) => (id ? m[`${id[0]}_${id[1]}`] ?? null : null);
+  const parts = Object.entries(spec.parts)
+    .map(([key, part]) => ({ key, life: read(part.life), hoursLeft: read(part.hoursLeft) }))
+    .filter(p => p.life !== null);
   return {
     status:    raw.status == null ? 'idle' : (spec.statusMap[raw.status] ?? 'unknown'),
     rawStatus: raw.status,
     error:     raw.error,
     suction:   idx === -1 ? 1 : idx,
     battery:   raw.battery,
+    cleanArea: raw.cleanArea,
+    cleanTime: raw.cleanTime,
+    parts,
   };
 }
 
@@ -370,9 +439,9 @@ function setSpecProp(device, spec, key, value) {
   return callDevice(device.did, 'set_properties', [{ did: device.did, siid, piid, value }]);
 }
 
-function getSpecProps(device, spec) {
+function getSpecProps(device, spec, extraIds = []) {
   return callDevice(device.did, 'get_properties',
-    Object.values(spec.props).map(([siid, piid]) => ({ did: device.did, siid, piid })));
+    [...Object.values(spec.props), ...extraIds].map(([siid, piid]) => ({ did: device.did, siid, piid })));
 }
 
 // ── Fan commands ──────────────────────────────────────────────────────────────
@@ -385,6 +454,10 @@ export const setFanLevel       = (device, level)   => setFanProp(device, 'level'
 export const setFanMode        = (device, mode)    => setFanProp(device, 'mode', mode);
 export const setFanOscillation = (device, enabled) => setFanProp(device, 'oscillate', enabled);
 export const setFanSpeed       = (device, percent) => setFanProp(device, 'speed', percent);
+export const setFanTimer       = (device, minutes) => setFanProp(device, 'timer', minutes);
+export const setFanChildLock   = (device, enabled) => setFanProp(device, 'childLock', enabled);
+export const setFanDisplay     = (device, enabled) => setFanProp(device, 'display', enabled);
+export const setFanBeep        = (device, enabled) => setFanProp(device, 'beep', enabled);
 
 export const getFanState = (device) => getSpecProps(device, getFanSpec(device.model));
 
@@ -397,18 +470,21 @@ export const setHeaterTargetTemp  = (device, celsius) => setHeaterProp(device, '
 export const setHeaterMode        = (device, mode)    => setHeaterProp(device, 'mode', mode);
 export const setHeaterOscillation = (device, enabled) => setHeaterProp(device, 'oscillate', enabled);
 export const setHeaterCountdown   = (device, minutes) => setHeaterProp(device, 'countdown', minutes);
+export const setHeaterChildLock   = (device, enabled) => setHeaterProp(device, 'childLock', enabled);
+export const setHeaterDisplay     = (device, enabled) => setHeaterProp(device, 'display', enabled);
+export const setHeaterBeep        = (device, enabled) => setHeaterProp(device, 'beep', enabled);
 
 export const getHeaterState = (device) => getSpecProps(device, getHeaterSpec(device.model));
 
 // ── Vacuum commands ───────────────────────────────────────────────────────────
 
-function vacuumAction(device, key) {
-  const spec = getVacuumSpec(device.model);
-  const id = spec.actions[key];
+function runAction(device, id, key) {
   if (!id) return Promise.reject(new Error(`UNSUPPORTED: ${key} on ${device.model}`));
   const [siid, aiid] = id;
   return callDevice(device.did, 'action', { did: device.did, siid, aiid, in: [] });
 }
+
+const vacuumAction = (device, key) => runAction(device, getVacuumSpec(device.model).actions[key], key);
 
 export const startCleaning  = (device) => vacuumAction(device, 'start');
 export const pauseCleaning  = (device) => vacuumAction(device, 'pause');
@@ -426,4 +502,12 @@ export function setVacuumSuction(device, level) {
   return setSpecProp(device, spec, 'suction', value);
 }
 
-export const getVacuumState = (device) => getSpecProps(device, getVacuumSpec(device.model));
+// Resets a wearable part's life counter after replacing/cleaning it.
+export const resetVacuumPart = (device, key) =>
+  runAction(device, getVacuumSpec(device.model).parts[key]?.reset, key);
+
+export function getVacuumState(device) {
+  const spec = getVacuumSpec(device.model);
+  const partIds = Object.values(spec.parts).flatMap(p => [p.life, p.hoursLeft].filter(Boolean));
+  return getSpecProps(device, spec, partIds);
+}
