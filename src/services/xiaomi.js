@@ -259,11 +259,17 @@ const DEFAULT_FAN_SPEC = {
 
 const FAN_SPECS = {
   'dmaker.fan.p18': {
-    props: { on: [2, 1], level: [2, 2], mode: [2, 3], oscillate: [2, 4], speed: [2, 10] },
+    props: {
+      on: [2, 1], level: [2, 2], mode: [2, 3], oscillate: [2, 4], speed: [2, 10],
+      timer: [2, 6], display: [2, 7], beep: [2, 8], childLock: [3, 1],
+    },
     modes: [0, 1],
   },
   'dmaker.fan.p39': {
-    props: { on: [2, 1], level: [2, 2], mode: [2, 4], oscillate: [2, 5], speed: [2, 11] },
+    props: {
+      on: [2, 1], level: [2, 2], mode: [2, 4], oscillate: [2, 5], speed: [2, 11],
+      timer: [2, 8], display: [2, 9], beep: [2, 7], childLock: [3, 1],
+    },
     modes: [0, 1, 2],
   },
 };
@@ -279,6 +285,7 @@ const HEATER_SPECS = {
     props: {
       on: [2, 1], fault: [2, 2], targetTemp: [2, 3], mode: [2, 5],
       countdown: [3, 1], temperature: [4, 7], oscillate: [8, 1],
+      childLock: [5, 1], beep: [6, 1], display: [7, 1],
     },
     tempRange: [22, 28],
     modes: [0, 1, 2, 3],
@@ -346,8 +353,11 @@ function stateFromSpec(props, spec, defaults) {
   return state;
 }
 
-const FAN_DEFAULTS    = { on: false, level: 1, mode: 0, oscillate: false, speed: 25 };
-const HEATER_DEFAULTS = { on: false, fault: 0, targetTemp: null, temperature: null, mode: 0, countdown: 0, oscillate: false };
+const SETTING_DEFAULTS = { childLock: false, display: true, beep: true };
+const FAN_DEFAULTS    = { on: false, level: 1, mode: 0, oscillate: false, speed: 25, timer: 0, ...SETTING_DEFAULTS };
+const HEATER_DEFAULTS = {
+  on: false, fault: 0, targetTemp: null, temperature: null, mode: 0, countdown: 0, oscillate: false, ...SETTING_DEFAULTS,
+};
 
 export const fanStateFromProps    = (props, model) => stateFromSpec(props, getFanSpec(model), FAN_DEFAULTS);
 export const heaterStateFromProps = (props, model) => stateFromSpec(props, getHeaterSpec(model), HEATER_DEFAULTS);
@@ -407,6 +417,10 @@ export const setFanLevel       = (device, level)   => setFanProp(device, 'level'
 export const setFanMode        = (device, mode)    => setFanProp(device, 'mode', mode);
 export const setFanOscillation = (device, enabled) => setFanProp(device, 'oscillate', enabled);
 export const setFanSpeed       = (device, percent) => setFanProp(device, 'speed', percent);
+export const setFanTimer       = (device, minutes) => setFanProp(device, 'timer', minutes);
+export const setFanChildLock   = (device, enabled) => setFanProp(device, 'childLock', enabled);
+export const setFanDisplay     = (device, enabled) => setFanProp(device, 'display', enabled);
+export const setFanBeep        = (device, enabled) => setFanProp(device, 'beep', enabled);
 
 export const getFanState = (device) => getSpecProps(device, getFanSpec(device.model));
 
@@ -419,6 +433,9 @@ export const setHeaterTargetTemp  = (device, celsius) => setHeaterProp(device, '
 export const setHeaterMode        = (device, mode)    => setHeaterProp(device, 'mode', mode);
 export const setHeaterOscillation = (device, enabled) => setHeaterProp(device, 'oscillate', enabled);
 export const setHeaterCountdown   = (device, minutes) => setHeaterProp(device, 'countdown', minutes);
+export const setHeaterChildLock   = (device, enabled) => setHeaterProp(device, 'childLock', enabled);
+export const setHeaterDisplay     = (device, enabled) => setHeaterProp(device, 'display', enabled);
+export const setHeaterBeep        = (device, enabled) => setHeaterProp(device, 'beep', enabled);
 
 export const getHeaterState = (device) => getSpecProps(device, getHeaterSpec(device.model));
 

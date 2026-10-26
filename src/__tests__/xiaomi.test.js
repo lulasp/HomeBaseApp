@@ -20,6 +20,10 @@ import {
   setFanMode,
   setFanOscillation,
   setFanSpeed,
+  setFanTimer,
+  setFanChildLock,
+  setFanDisplay,
+  setFanBeep,
   getFanState,
   setHeaterPower,
   parseResponse,
@@ -27,6 +31,9 @@ import {
   setHeaterMode,
   setHeaterCountdown,
   setHeaterOscillation,
+  setHeaterChildLock,
+  setHeaterDisplay,
+  setHeaterBeep,
   getHeaterState,
   getVacuumSpec,
   vacuumStateFromProps,
@@ -49,6 +56,8 @@ const UNKNOWN_VACUUM = { did: '2', model: 'roborock.vacuum.s5' };
 
 const jsonResponse = (body, status = 200) => ({ status, text: () => Promise.resolve(JSON.stringify(body)) });
 const textResponse = (text, status) => ({ status, text: () => Promise.resolve(text) });
+
+const SETTINGS = { childLock: false, display: true, beep: true };
 
 const SSECURITY = Buffer.from('test-ssecurity-key').toString('base64');
 
@@ -141,7 +150,8 @@ describe('fanStateFromProps', () => {
       { siid: 2, piid: 5, value: true },
       { siid: 2, piid: 11, value: 60 },
     ];
-    expect(fanStateFromProps(props, P39.model)).toEqual({ on: true, level: 3, mode: 2, oscillate: true, speed: 60 });
+    expect(fanStateFromProps(props, P39.model))
+      .toEqual({ on: true, level: 3, mode: 2, oscillate: true, speed: 60, timer: 0, ...SETTINGS });
   });
 
   it('reads p18 speed from piid 10', () =>
@@ -149,7 +159,16 @@ describe('fanStateFromProps', () => {
 
   it('keeps defaults for missing or null values', () =>
     expect(fanStateFromProps([{ siid: 2, piid: 1, value: null }], P18.model))
-      .toEqual({ on: false, level: 1, mode: 0, oscillate: false, speed: 25 }));
+      .toEqual({ on: false, level: 1, mode: 0, oscillate: false, speed: 25, timer: 0, ...SETTINGS }));
+
+  it.each([
+    ['p18', P18, { timer: [2, 6], display: [2, 7], beep: [2, 8], childLock: [3, 1] }],
+    ['p39', P39, { timer: [2, 8], display: [2, 9], beep: [2, 7], childLock: [3, 1] }],
+  ])('reads %s timer and settings from their own piids', (_, device, ids) => {
+    const values = { timer: 90, display: false, beep: false, childLock: true };
+    const props = Object.entries(ids).map(([k, [siid, piid]]) => ({ siid, piid, value: values[k] }));
+    expect(fanStateFromProps(props, device.model)).toMatchObject(values);
+  });
 
   it('handles undefined props', () => expect(fanStateFromProps(undefined, P18.model).on).toBe(false));
 });
@@ -164,9 +183,13 @@ describe('heaterStateFromProps', () => {
       { siid: 3, piid: 1, value: 90 },
       { siid: 4, piid: 7, value: 19 },
       { siid: 8, piid: 1, value: true },
+      { siid: 5, piid: 1, value: true },
+      { siid: 6, piid: 1, value: false },
+      { siid: 7, piid: 1, value: false },
     ];
     expect(heaterStateFromProps(props, HEATER.model)).toEqual({
       on: true, fault: 0, targetTemp: 24, temperature: 19, mode: 1, countdown: 90, oscillate: true,
+      childLock: true, beep: false, display: false,
     });
   });
 
@@ -209,7 +232,24 @@ describe('fan commands', () => {
     await getFanState(P18);
     const { data } = lastRequest();
     expect(data.method).toBe('get_properties');
-    expect(data.params.map(p => p.piid)).toEqual([1, 2, 3, 4, 10]);
+    expect(data.params.map(p => `${p.siid}.${p.piid}`)).toEqual(['2.1', '2.2', '2.3', '2.4', '2.10', '2.6', '2.7', '2.8', '3.1']);
+  });
+
+  it.each([
+    ['timer', setFanTimer, 120, { p18: [2, 6], p39: [2, 8] }],
+    ['child lock', setFanChildLock, true, { p18: [3, 1], p39: [3, 1] }],
+    ['display', setFanDisplay, false, { p18: [2, 7], p39: [2, 9] }],
+    ['beep', setFanBeep, false, { p18: [2, 8], p39: [2, 7] }],
+  ])('%s writes the per-model piid', async (_, fn, value, ids) => {
+    for (const [device, [siid, piid]] of [[P18, ids.p18], [P39, ids.p39]]) {
+      await fn(device, value);
+      expect(lastRequest().data.params[0]).toEqual({ did: device.did, siid, piid, value });
+    }
+  });
+
+  it('rejects settings on unknown fans without a request', async () => {
+    await expect(setFanChildLock({ did: '3', model: 'zhimi.fan.za4' }, true)).rejects.toThrow('UNSUPPORTED: childLock');
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 });
 
@@ -242,7 +282,21 @@ describe('heater commands', () => {
   it('getHeaterState requests every spec property', async () => {
     await getHeaterState(HEATER);
     expect(lastRequest().data.params.map(p => `${p.siid}.${p.piid}`))
-      .toEqual(['2.1', '2.2', '2.3', '2.5', '3.1', '4.7', '8.1']);
+      .toEqual(['2.1', '2.2', '2.3', '2.5', '3.1', '4.7', '8.1', '5.1', '6.1', '7.1']);
+  });
+
+  it.each([
+    ['child lock', setHeaterChildLock, true, 5],
+    ['beep', setHeaterBeep, false, 6],
+    ['display', setHeaterDisplay, false, 7],
+  ])('%s writes its own siid', async (_, fn, value, siid) => {
+    await fn(HEATER, value);
+    expect(lastRequest().data.params[0]).toEqual({ did: HEATER.did, siid, piid: 1, value });
+  });
+
+  it('rejects settings on unknown heaters without a request', async () => {
+    await expect(setHeaterBeep(UNKNOWN_HEATER, false)).rejects.toThrow('UNSUPPORTED: beep');
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 
   it('rejects unsupported properties without a request', async () => {

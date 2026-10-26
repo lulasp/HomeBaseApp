@@ -18,16 +18,20 @@ import {
   getDevices, getDeviceType, getFanSpec, getHeaterSpec, clampTargetTemp,
   fanStateFromProps, heaterStateFromProps, vacuumStateFromProps,
   getFanState, setFanPower, setFanLevel, setFanMode, setFanOscillation,
+  setFanTimer, setFanChildLock, setFanDisplay, setFanBeep,
   getHeaterState, setHeaterPower, setHeaterTargetTemp, setHeaterMode,
-  setHeaterOscillation, setHeaterCountdown,
+  setHeaterOscillation, setHeaterCountdown, setHeaterChildLock, setHeaterDisplay, setHeaterBeep,
   getVacuumState, startCleaning, pauseCleaning, resumeCleaning, returnToDock,
   findVacuum, setVacuumSuction, resetVacuumPart,
 } from '../../services/xiaomi';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const DEFAULT_FAN     = { on: false, level: 1, mode: 0, oscillate: false, speed: 25 };
-const DEFAULT_HEATER  = { on: false, fault: 0, targetTemp: null, temperature: null, mode: 0, countdown: 0, oscillate: false };
+const DEFAULT_SETTINGS = { childLock: false, display: true, beep: true };
+const DEFAULT_FAN     = { on: false, level: 1, mode: 0, oscillate: false, speed: 25, timer: 0, ...DEFAULT_SETTINGS };
+const DEFAULT_HEATER  = {
+  on: false, fault: 0, targetTemp: null, temperature: null, mode: 0, countdown: 0, oscillate: false, ...DEFAULT_SETTINGS,
+};
 const DEFAULT_VACUUM  = { status: 'idle', error: 0, suction: 1, battery: 100, cleanArea: null, cleanTime: null, parts: [] };
 
 const FAN_LEVELS = [1, 2, 3, 4];
@@ -60,6 +64,16 @@ const TIMER_PRESETS = [
   { minutes: 240, label: '4h'  },
   { minutes: 480, label: '8h'  },
 ];
+
+// Shown only for keys the model's spec supports.
+const DEVICE_SETTINGS = [
+  { key: 'childLock', label: 'Child lock', on: 'lock-closed',  off: 'lock-open-outline' },
+  { key: 'display',   label: 'Display',    on: 'bulb',         off: 'bulb-outline'      },
+  { key: 'beep',      label: 'Beep',       on: 'volume-high',  off: 'volume-mute-outline' },
+];
+
+const FAN_SETTERS    = { timer: setFanTimer, childLock: setFanChildLock, display: setFanDisplay, beep: setFanBeep };
+const HEATER_SETTERS = { childLock: setHeaterChildLock, display: setHeaterDisplay, beep: setHeaterBeep };
 
 const TEMP_DEBOUNCE_MS = 500;
 
@@ -270,9 +284,76 @@ function FanDeviceCard({ device, isSelected, isOn, onSelect, onToggle, icon = 'a
 
 // ── FanControls ───────────────────────────────────────────────────────────────
 
-function FanControls({ device, state, onTogglePower, onSetLevel, onSetMode, onSetOscillation, colors }) {
+// ── Shared device controls ────────────────────────────────────────────────────
+
+function OffTimer({ minutes, onSet, colors }) {
   const styles = useMemo(() => makeStyles(colors), [colors]);
-  const modes  = FAN_MODES.filter(m => getFanSpec(device.model).modes.includes(m.id));
+  return (
+    <View style={{ gap: 10 }}>
+      <View style={styles.controlRow}>
+        <Text style={styles.controlLabel}>Off Timer</Text>
+        {minutes > 0 && (
+          <Text style={styles.controlValue}>Off in {formatCountdown(minutes)}</Text>
+        )}
+      </View>
+      <View style={styles.btnRow}>
+        {TIMER_PRESETS.map(t => {
+          const active = minutes === t.minutes;
+          return (
+            <TouchableOpacity
+              key={t.minutes}
+              style={[styles.optionBtn, active && styles.optionBtnActive]}
+              onPress={() => onSet(t.minutes)}
+              accessibilityRole="button"
+              accessibilityLabel={t.minutes ? `Turn off in ${t.label}` : 'Cancel off timer'}
+            >
+              <Text style={[styles.optionBtnLabel, active && styles.optionBtnLabelActive]}>
+                {t.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+// Child lock / display / beep toggles; renders nothing if the spec has none.
+function DeviceSettings({ spec, state, onSet, colors }) {
+  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const items  = DEVICE_SETTINGS.filter(i => spec.props[i.key]);
+  if (items.length === 0) return null;
+  return (
+    <>
+      <View style={styles.divider} />
+      <View style={styles.btnRow}>
+        {items.map(i => {
+          const active = !!state[i.key];
+          return (
+            <TouchableOpacity
+              key={i.key}
+              style={[styles.optionBtn, active && styles.optionBtnActive]}
+              onPress={() => onSet(i.key, !active)}
+              accessibilityRole="switch"
+              accessibilityState={{ checked: active }}
+              accessibilityLabel={i.label}
+            >
+              <Ionicons name={active ? i.on : i.off} size={14} color={active ? colors.accent : colors.textTertiary} />
+              <Text style={[styles.optionBtnLabel, active && styles.optionBtnLabelActive]}>{i.label}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+    </>
+  );
+}
+
+// ── FanControls ───────────────────────────────────────────────────────────────
+
+function FanControls({ device, state, onTogglePower, onSetLevel, onSetMode, onSetOscillation, onSetSetting, colors }) {
+  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const spec   = getFanSpec(device.model);
+  const modes  = FAN_MODES.filter(m => spec.modes.includes(m.id));
   return (
     <View style={styles.card}>
       {/* Power + oscillation row */}
@@ -376,13 +457,22 @@ function FanControls({ device, state, onTogglePower, onSetLevel, onSetMode, onSe
           })}
         </View>
       </View>
+
+      {spec.props.timer && (
+        <>
+          <View style={styles.divider} />
+          <OffTimer minutes={state.timer} onSet={(m) => onSetSetting('timer', m)} colors={colors} />
+        </>
+      )}
+
+      <DeviceSettings spec={spec} state={state} onSet={onSetSetting} colors={colors} />
     </View>
   );
 }
 
 // ── HeaterControls ────────────────────────────────────────────────────────────
 
-function HeaterControls({ device, state, onTogglePower, onStepTemp, onSetMode, onSetOscillation, onSetCountdown, colors }) {
+function HeaterControls({ device, state, onTogglePower, onStepTemp, onSetMode, onSetOscillation, onSetCountdown, onSetSetting, colors }) {
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const spec   = getHeaterSpec(device.model);
   const has    = (key) => !!spec.props[key];
@@ -526,34 +616,11 @@ function HeaterControls({ device, state, onTogglePower, onStepTemp, onSetMode, o
       {has('countdown') && (
         <>
           <View style={styles.divider} />
-          <View style={{ gap: 10 }}>
-            <View style={styles.controlRow}>
-              <Text style={styles.controlLabel}>Off Timer</Text>
-              {state.countdown > 0 && (
-                <Text style={styles.controlValue}>Off in {formatCountdown(state.countdown)}</Text>
-              )}
-            </View>
-            <View style={styles.btnRow}>
-              {TIMER_PRESETS.map(t => {
-                const active = state.countdown === t.minutes;
-                return (
-                  <TouchableOpacity
-                    key={t.minutes}
-                    style={[styles.optionBtn, active && styles.optionBtnActive]}
-                    onPress={() => onSetCountdown(t.minutes)}
-                    accessibilityRole="button"
-                    accessibilityLabel={t.minutes ? `Turn off in ${t.label}` : 'Cancel off timer'}
-                  >
-                    <Text style={[styles.optionBtnLabel, active && styles.optionBtnLabelActive]}>
-                      {t.label}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          </View>
+          <OffTimer minutes={state.countdown} onSet={onSetCountdown} colors={colors} />
         </>
       )}
+
+      <DeviceSettings spec={spec} state={state} onSet={onSetSetting} colors={colors} />
     </View>
   );
 }
@@ -854,6 +921,13 @@ export default function XiaomiScreen() {
     setFanOscillation(selectedFanDevice, v).catch(console.error);
   }, [selectedFan, selectedFanDevice, updateFan]);
 
+  // Timer, child lock, display, beep.
+  const handleFanSetting = useCallback((key, value) => {
+    if (!selectedFanDevice) return;
+    updateFan(selectedFan, { [key]: value });
+    FAN_SETTERS[key](selectedFanDevice, value).catch(console.error);
+  }, [selectedFan, selectedFanDevice, updateFan]);
+
   // ── Heater helpers ──────────────────────────────────────────────────────────
 
   const updateHeater = useCallback((did, patch) => {
@@ -902,6 +976,13 @@ export default function XiaomiScreen() {
     if (!selectedHeaterDevice) return;
     updateHeater(selectedHeater, { countdown: minutes });
     setHeaterCountdown(selectedHeaterDevice, minutes).catch(console.error);
+  }, [selectedHeater, selectedHeaterDevice, updateHeater]);
+
+  // Child lock, display, beep.
+  const handleHeaterSetting = useCallback((key, value) => {
+    if (!selectedHeaterDevice) return;
+    updateHeater(selectedHeater, { [key]: value });
+    HEATER_SETTERS[key](selectedHeaterDevice, value).catch(console.error);
   }, [selectedHeater, selectedHeaterDevice, updateHeater]);
 
   // ── Vacuum helpers ──────────────────────────────────────────────────────────
@@ -1112,6 +1193,7 @@ export default function XiaomiScreen() {
                   onSetLevel={handleFanLevel}
                   onSetMode={handleFanMode}
                   onSetOscillation={handleFanOscillation}
+                  onSetSetting={handleFanSetting}
                   colors={colors}
                 />
               </>
@@ -1166,6 +1248,7 @@ export default function XiaomiScreen() {
                   onSetMode={handleHeaterMode}
                   onSetOscillation={handleHeaterOscillation}
                   onSetCountdown={handleHeaterCountdown}
+                  onSetSetting={handleHeaterSetting}
                   colors={colors}
                 />
               </>
