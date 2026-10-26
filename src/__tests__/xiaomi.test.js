@@ -37,6 +37,7 @@ import {
   findVacuum,
   setVacuumSuction,
   getVacuumState,
+  resetVacuumPart,
 } from '../services/xiaomi';
 
 const P18    = { did: '411402474', model: 'dmaker.fan.p18' };
@@ -294,6 +295,32 @@ describe('vacuumStateFromProps', () => {
     expect(vacuumStateFromProps(props, UNKNOWN_VACUUM.model)).toMatchObject({ status: 'cleaning', suction: 0 });
   });
 
+  it('reads cleaning area and time', () => {
+    const props = [...x20(4), { siid: 2, piid: 6, value: 42 }, { siid: 2, piid: 7, value: 1800 }];
+    expect(vacuumStateFromProps(props, X20.model)).toMatchObject({ cleanArea: 42, cleanTime: 1800 });
+  });
+
+  it('lists reported parts in spec order with life and hours left', () => {
+    const props = [
+      { siid: 14, piid: 1, value: 30 }, { siid: 14, piid: 2, value: 45 },
+      { siid: 12, piid: 1, value: 80 }, { siid: 12, piid: 2, value: 240 },
+      { siid: 18, piid: 1, value: 60 },
+    ];
+    expect(vacuumStateFromProps(props, X20.model).parts).toEqual([
+      { key: 'mainBrush', life: 80, hoursLeft: 240 },
+      { key: 'filter',    life: 30, hoursLeft: 45 },
+      { key: 'detergent', life: 60, hoursLeft: null },
+    ]);
+  });
+
+  it('skips parts the device did not report (e.g. failed props)', () => {
+    const props = [{ siid: 19, piid: 1, code: -4004 }, { siid: 9, piid: 1, value: 0 }];
+    expect(vacuumStateFromProps(props, X20.model).parts).toEqual([{ key: 'mop', life: 0, hoursLeft: null }]);
+  });
+
+  it('has no parts or stats for unknown models', () =>
+    expect(vacuumStateFromProps([], UNKNOWN_VACUUM.model)).toMatchObject({ parts: [], cleanArea: null, cleanTime: null }));
+
   it('every X20 status code from the spec is mapped', () => {
     const map = getVacuumSpec(X20.model).statusMap;
     for (let code = 1; code <= 21; code++) expect(map[code]).toBeDefined();
@@ -335,9 +362,29 @@ describe('vacuum commands', () => {
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
-  it('getVacuumState requests the X20 properties', async () => {
+  it('getVacuumState requests the X20 status, stats and part properties', async () => {
     await getVacuumState(X20);
-    expect(lastRequest().data.params.map(p => `${p.siid}.${p.piid}`)).toEqual(['2.2', '2.3', '2.9', '3.1']);
+    expect(lastRequest().data.params.map(p => `${p.siid}.${p.piid}`)).toEqual([
+      '2.2', '2.3', '2.9', '3.1', '2.6', '2.7',
+      '12.1', '12.2', '13.1', '13.2', '14.1', '14.2', '9.1', '9.2', '19.1', '19.2', '18.1',
+    ]);
+  });
+
+  it('getVacuumState only asks unknown models for the base properties', async () => {
+    await getVacuumState(UNKNOWN_VACUUM);
+    expect(lastRequest().data.params).toHaveLength(4);
+  });
+
+  it.each([
+    ['mainBrush', 12], ['sideBrush', 13], ['filter', 14], ['mop', 9], ['dustBag', 19], ['detergent', 18],
+  ])('resetVacuumPart %s → action %i.1', async (key, siid) => {
+    await resetVacuumPart(X20, key);
+    expect(lastAction()).toEqual({ did: X20.did, siid, aiid: 1, in: [] });
+  });
+
+  it('rejects resetting an unknown part without a request', async () => {
+    await expect(resetVacuumPart(UNKNOWN_VACUUM, 'filter')).rejects.toThrow('UNSUPPORTED: filter');
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 });
 

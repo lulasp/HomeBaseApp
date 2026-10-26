@@ -288,16 +288,21 @@ const HEATER_SPECS = {
 // Vacuum status codes vary per model; statusMap normalises them to:
 // idle, cleaning, paused, charging, charged, returning, washing, mapping, updating, error, remote.
 // suctionLevels lists the raw values from quietest to strongest.
+// parts: wearable parts, each with life (%), optional hoursLeft, and a reset action.
 const DEFAULT_VACUUM_SPEC = {
   props:   { status: [2, 1], error: [2, 2], suction: [2, 8], battery: [3, 1] },
   actions: { start: [2, 1], pause: [2, 2], dock: [2, 3], find: [6, 1] },
   statusMap: { 1: 'cleaning', 2: 'idle', 3: 'paused', 4: 'charging', 5: 'error', 6: 'returning' },
   suctionLevels: [0, 1, 2, 3],
+  parts: {},
 };
 
 const VACUUM_SPECS = {
   'xiaomi.vacuum.d109gl': {
-    props:   { status: [2, 2], error: [2, 3], suction: [2, 9], battery: [3, 1] },
+    props: {
+      status: [2, 2], error: [2, 3], suction: [2, 9], battery: [3, 1],
+      cleanArea: [2, 6], cleanTime: [2, 7],
+    },
     actions: { start: [2, 1], pause: [2, 7], resume: [2, 8], dock: [2, 3], find: [6, 1] },
     statusMap: {
       1: 'idle',     2: 'charging',  3: 'charging',  4: 'cleaning',  5: 'paused',
@@ -307,6 +312,14 @@ const VACUUM_SPECS = {
       21: 'mapping',
     },
     suctionLevels: [1, 2, 3, 4],
+    parts: {
+      mainBrush: { life: [12, 1], hoursLeft: [12, 2], reset: [12, 1] },
+      sideBrush: { life: [13, 1], hoursLeft: [13, 2], reset: [13, 1] },
+      filter:    { life: [14, 1], hoursLeft: [14, 2], reset: [14, 1] },
+      mop:       { life: [9, 1],  hoursLeft: [9, 2],  reset: [9, 1]  },
+      dustBag:   { life: [19, 1], hoursLeft: [19, 2], reset: [19, 1] },
+      detergent: { life: [18, 1], reset: [18, 1] },
+    },
   },
 };
 
@@ -339,19 +352,28 @@ const HEATER_DEFAULTS = { on: false, fault: 0, targetTemp: null, temperature: nu
 export const fanStateFromProps    = (props, model) => stateFromSpec(props, getFanSpec(model), FAN_DEFAULTS);
 export const heaterStateFromProps = (props, model) => stateFromSpec(props, getHeaterSpec(model), HEATER_DEFAULTS);
 
-const VACUUM_DEFAULTS = { status: null, error: 0, suction: null, battery: 100 };
+const VACUUM_DEFAULTS = { status: null, error: 0, suction: null, battery: 100, cleanArea: null, cleanTime: null };
 
-// status → normalised key ('unknown' for unmapped codes); suction → index into suctionLevels.
+// status → normalised key ('unknown' for unmapped codes); suction → index into suctionLevels;
+// parts → [{ key, life, hoursLeft }] for parts the device reported.
 export function vacuumStateFromProps(props, model) {
   const spec = getVacuumSpec(model);
   const raw  = stateFromSpec(props, spec, VACUUM_DEFAULTS);
   const idx  = spec.suctionLevels.indexOf(raw.suction);
+  const m    = propMap(props);
+  const read = (id) => (id ? m[`${id[0]}_${id[1]}`] ?? null : null);
+  const parts = Object.entries(spec.parts)
+    .map(([key, part]) => ({ key, life: read(part.life), hoursLeft: read(part.hoursLeft) }))
+    .filter(p => p.life !== null);
   return {
     status:    raw.status == null ? 'idle' : (spec.statusMap[raw.status] ?? 'unknown'),
     rawStatus: raw.status,
     error:     raw.error,
     suction:   idx === -1 ? 1 : idx,
     battery:   raw.battery,
+    cleanArea: raw.cleanArea,
+    cleanTime: raw.cleanTime,
+    parts,
   };
 }
 
@@ -370,9 +392,9 @@ function setSpecProp(device, spec, key, value) {
   return callDevice(device.did, 'set_properties', [{ did: device.did, siid, piid, value }]);
 }
 
-function getSpecProps(device, spec) {
+function getSpecProps(device, spec, extraIds = []) {
   return callDevice(device.did, 'get_properties',
-    Object.values(spec.props).map(([siid, piid]) => ({ did: device.did, siid, piid })));
+    [...Object.values(spec.props), ...extraIds].map(([siid, piid]) => ({ did: device.did, siid, piid })));
 }
 
 // ── Fan commands ──────────────────────────────────────────────────────────────
@@ -402,13 +424,13 @@ export const getHeaterState = (device) => getSpecProps(device, getHeaterSpec(dev
 
 // ── Vacuum commands ───────────────────────────────────────────────────────────
 
-function vacuumAction(device, key) {
-  const spec = getVacuumSpec(device.model);
-  const id = spec.actions[key];
+function runAction(device, id, key) {
   if (!id) return Promise.reject(new Error(`UNSUPPORTED: ${key} on ${device.model}`));
   const [siid, aiid] = id;
   return callDevice(device.did, 'action', { did: device.did, siid, aiid, in: [] });
 }
+
+const vacuumAction = (device, key) => runAction(device, getVacuumSpec(device.model).actions[key], key);
 
 export const startCleaning  = (device) => vacuumAction(device, 'start');
 export const pauseCleaning  = (device) => vacuumAction(device, 'pause');
@@ -426,4 +448,12 @@ export function setVacuumSuction(device, level) {
   return setSpecProp(device, spec, 'suction', value);
 }
 
-export const getVacuumState = (device) => getSpecProps(device, getVacuumSpec(device.model));
+// Resets a wearable part's life counter after replacing/cleaning it.
+export const resetVacuumPart = (device, key) =>
+  runAction(device, getVacuumSpec(device.model).parts[key]?.reset, key);
+
+export function getVacuumState(device) {
+  const spec = getVacuumSpec(device.model);
+  const partIds = Object.values(spec.parts).flatMap(p => [p.life, p.hoursLeft].filter(Boolean));
+  return getSpecProps(device, spec, partIds);
+}

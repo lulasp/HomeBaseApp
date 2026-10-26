@@ -8,6 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../context/ThemeContext';
 import { useNavScrollProps } from '../../context/NavScrollContext';
 import { useAuth } from '../../context/AuthContext';
+import { useAlert } from '../../context/AlertContext';
 import { spacing, radius, type } from '../../theme/colors';
 import { useIsDesktop, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
 import { getHouseholdWithPrivate, updateHouseholdXiaomiCreds } from '../../services/firestore';
@@ -20,14 +21,14 @@ import {
   getHeaterState, setHeaterPower, setHeaterTargetTemp, setHeaterMode,
   setHeaterOscillation, setHeaterCountdown,
   getVacuumState, startCleaning, pauseCleaning, resumeCleaning, returnToDock,
-  findVacuum, setVacuumSuction,
+  findVacuum, setVacuumSuction, resetVacuumPart,
 } from '../../services/xiaomi';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const DEFAULT_FAN     = { on: false, level: 1, mode: 0, oscillate: false, speed: 25 };
 const DEFAULT_HEATER  = { on: false, fault: 0, targetTemp: null, temperature: null, mode: 0, countdown: 0, oscillate: false };
-const DEFAULT_VACUUM  = { status: 'idle', error: 0, suction: 1, battery: 100 };
+const DEFAULT_VACUUM  = { status: 'idle', error: 0, suction: 1, battery: 100, cleanArea: null, cleanTime: null, parts: [] };
 
 const FAN_LEVELS = [1, 2, 3, 4];
 
@@ -71,6 +72,18 @@ const SUCTION_LEVELS = [
   { id: 2, label: 'Turbo',    icon: 'volume-high-outline'   },
   { id: 3, label: 'Max',      icon: 'flash-outline'         },
 ];
+
+// Keyed by part key from the vacuum spec.
+const VACUUM_PARTS = {
+  mainBrush: { label: 'Main brush', icon: 'sync-outline'   },
+  sideBrush: { label: 'Side brush', icon: 'flower-outline' },
+  filter:    { label: 'Filter',     icon: 'funnel-outline' },
+  mop:       { label: 'Mop pads',   icon: 'water-outline'  },
+  dustBag:   { label: 'Dust bag',   icon: 'trash-outline'  },
+  detergent: { label: 'Detergent',  icon: 'flask-outline'  },
+};
+
+const partColor = (life, colors) => (life <= 10 ? colors.danger : life <= 25 ? colors.warning : colors.sage);
 
 // Keyed by the normalised status from vacuumStateFromProps; color is a theme token.
 const VACUUM_STATUS_MAP = {
@@ -547,7 +560,7 @@ function HeaterControls({ device, state, onTogglePower, onStepTemp, onSetMode, o
 
 // ── VacuumCard ────────────────────────────────────────────────────────────────
 
-function VacuumCard({ device, state, onStart, onPause, onDock, onFind, onSetSuction, colors }) {
+function VacuumCard({ device, state, onStart, onPause, onDock, onFind, onSetSuction, onResetPart, colors }) {
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const known = VACUUM_STATUS_MAP[state.status];
   const info = known
@@ -555,6 +568,10 @@ function VacuumCard({ device, state, onStart, onPause, onDock, onFind, onSetSuct
     : { label: `Status ${state.rawStatus ?? '?'}`, icon: 'ellipse-outline', color: colors.textTertiary };
   const isCleaning = state.status === 'cleaning';
   const isPaused   = state.status === 'paused';
+  const stats = [
+    state.cleanArea != null && `${state.cleanArea} m²`,
+    state.cleanTime != null && formatCountdown(Math.round(state.cleanTime / 60)),
+  ].filter(Boolean);
 
   return (
     <>
@@ -584,6 +601,15 @@ function VacuumCard({ device, state, onStart, onPause, onDock, onFind, onSetSuct
             </Text>
           </View>
         </View>
+
+        {stats.length > 0 && (
+          <View style={styles.vacuumStatsRow}>
+            <Ionicons name="stats-chart-outline" size={13} color={colors.textTertiary} />
+            <Text style={styles.vacuumStatsText}>
+              {isCleaning ? 'This run' : 'Last run'} · {stats.join(' · ')}
+            </Text>
+          </View>
+        )}
 
         <View style={styles.divider} />
 
@@ -654,6 +680,47 @@ function VacuumCard({ device, state, onStart, onPause, onDock, onFind, onSetSuct
           })}
         </View>
       </View>
+
+      {/* Maintenance */}
+      {state.parts.length > 0 && (
+        <>
+          <Text style={styles.sectionLabel}>MAINTENANCE</Text>
+          <View style={styles.card}>
+            {state.parts.map((part, i) => {
+              const meta  = VACUUM_PARTS[part.key] ?? { label: part.key, icon: 'construct-outline' };
+              const color = partColor(part.life, colors);
+              return (
+                <React.Fragment key={part.key}>
+                  <View style={styles.partRow}>
+                    <Ionicons name={meta.icon} size={18} color={colors.textTertiary} />
+                    <View style={styles.partInfo}>
+                      <View style={styles.partHeader}>
+                        <Text style={styles.controlLabel}>{meta.label}</Text>
+                        <Text style={[styles.partLife, { color }]}>{part.life}%</Text>
+                      </View>
+                      <View style={styles.partTrack}>
+                        <View style={[styles.partFill, { width: `${part.life}%`, backgroundColor: color }]} />
+                      </View>
+                      {part.hoursLeft != null && (
+                        <Text style={styles.controlValue}>{part.hoursLeft} h left</Text>
+                      )}
+                    </View>
+                    <TouchableOpacity
+                      style={styles.partResetBtn}
+                      onPress={() => onResetPart(part.key, meta.label)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Reset ${meta.label}`}
+                    >
+                      <Text style={styles.partResetLabel}>Reset</Text>
+                    </TouchableOpacity>
+                  </View>
+                  {i < state.parts.length - 1 && <View style={styles.divider} />}
+                </React.Fragment>
+              );
+            })}
+          </View>
+        </>
+      )}
     </>
   );
 }
@@ -664,6 +731,7 @@ export default function XiaomiScreen() {
   const { colors } = useTheme();
   const navScrollProps = useNavScrollProps();
   const { householdId } = useAuth();
+  const { showAlert, showConfirm } = useAlert();
   const styles    = useMemo(() => makeStyles(colors), [colors]);
   const isDesktop = useIsDesktop();
   const contentKey = useEntranceReplay();
@@ -879,6 +947,25 @@ export default function XiaomiScreen() {
     updateVacuum(selectedVacuum, { suction: level });
     setVacuumSuction(selectedVacuumDevice, level).catch(console.error);
   }, [selectedVacuum, selectedVacuumDevice, updateVacuum]);
+
+  const handleResetPart = useCallback(async (key, label) => {
+    const device = selectedVacuumDevice;
+    if (!device) return;
+    const ok = await showConfirm({
+      title: `Reset ${label.toLowerCase()}?`,
+      message: 'Do this after replacing or cleaning it. Its life goes back to 100%.',
+      type: 'warning',
+      confirmLabel: 'Reset',
+    });
+    if (!ok) return;
+    try {
+      await resetVacuumPart(device, key);
+      const props = await getVacuumState(device);
+      updateVacuum(device.did, vacuumStateFromProps(Array.isArray(props) ? props : [], device.model));
+    } catch (e) {
+      showAlert({ title: 'Reset failed', message: e.message, type: 'error' });
+    }
+  }, [selectedVacuumDevice, showConfirm, showAlert, updateVacuum]);
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
@@ -1132,6 +1219,7 @@ export default function XiaomiScreen() {
                 onDock={handleVacuumDock}
                 onFind={handleVacuumFind}
                 onSetSuction={handleSuction}
+                onResetPart={handleResetPart}
                 colors={colors}
               />
             )}
@@ -1269,6 +1357,19 @@ const makeStyles = (colors) => StyleSheet.create({
   },
   statusBadgeLabel: { ...type.caption, fontWeight: '700' },
   batteryWrap: { alignItems: 'center', gap: 3 },
+  vacuumStatsRow:  { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: spacing.md },
+  vacuumStatsText: { ...type.caption, color: colors.textTertiary },
+  partRow:    { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 4 },
+  partInfo:   { flex: 1, gap: 4 },
+  partHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' },
+  partLife:   { ...type.caption, fontWeight: '700' },
+  partTrack:  { height: 6, borderRadius: radius.full, backgroundColor: colors.muted, overflow: 'hidden' },
+  partFill:   { height: '100%', borderRadius: radius.full },
+  partResetBtn: {
+    paddingHorizontal: 12, paddingVertical: 7,
+    backgroundColor: colors.muted, borderRadius: radius.md,
+  },
+  partResetLabel: { ...type.caption, color: colors.textSecondary, fontWeight: '700' },
   batteryText:  { ...type.caption, fontWeight: '700' },
 
   // Heater
