@@ -17,11 +17,13 @@ import { useAlert } from '../../context/AlertContext';
 import { useNotification } from '../../context/NotificationContext';
 import {
   getHouseholdWithPrivate, subscribeExpenses, addExpensesBatch, addBill,
+  subscribeBills, recordBillPayment,
 } from '../../services/firestore';
 import { parseBankStatement, parseStatementText } from '../../services/openrouter';
 import {
-  normalizeTransaction, flagDuplicates, toExpenseDoc, toBillDoc,
+  normalizeTransaction, flagDuplicates, toExpenseDoc, toBillDoc, suggestBillId, linkRowToBill,
 } from '../../utils/statementImport';
+import { payableBills } from '../../utils/recurring';
 import { xlsxBase64ToCsv, isSpreadsheet } from '../../utils/spreadsheet';
 import { DEFAULT_AI_MODEL } from '../../utils/aiModels';
 import { BILL_CATS, EXPENSE_CATS, withCustomCats } from '../../utils/financeCategories';
@@ -83,12 +85,13 @@ function CatChip({ cat, selected, onPress, colors }) {
 
 // ── Review row ─────────────────────────────────────────────────────────────────
 
-function ReviewRow({ row, index, onChange, expenseCats, billCats, colors, styles }) {
+function ReviewRow({ row, index, onChange, expenseCats, billCats, bills, colors, styles }) {
   const cats = row.type === 'bill' ? billCats : expenseCats;
   const dateLabel = row.date ? format(new Date(row.date + 'T00:00:00'), 'MMM d') : 'No date';
   const isIncome = row.direction === 'in';
 
   const set = (patch) => onChange(index, patch);
+  const payable = payableBills(bills, (row.date || '').slice(0, 7));
 
   return (
     <View style={[styles.row, !row.include && { opacity: 0.5 }]}>
@@ -148,7 +151,7 @@ function ReviewRow({ row, index, onChange, expenseCats, billCats, colors, styles
             <TouchableOpacity
               key={val}
               style={[styles.segBtn, row.direction === val && styles.segBtnActive]}
-              onPress={() => set({ direction: val })}
+              onPress={() => set({ direction: val, ...(val === 'in' ? { billId: null } : {}) })}
             >
               <Text style={[styles.segText, row.direction === val && styles.segTextActive]}>{label}</Text>
             </TouchableOpacity>
@@ -159,13 +162,31 @@ function ReviewRow({ row, index, onChange, expenseCats, billCats, colors, styles
             <TouchableOpacity
               key={val}
               style={[styles.segBtn, row.type === val && styles.segBtnActive]}
-              onPress={() => set({ type: val, category: 'other' })}
+              onPress={() => set({ type: val, category: 'other', billId: null })}
             >
               <Text style={[styles.segText, row.type === val && styles.segTextActive]}>{label}</Text>
             </TouchableOpacity>
           ))}
         </View>
       </View>
+
+      {/* existing bill this pays — a linked row updates that bill, never adds one */}
+      {!isIncome && payable.length > 0 && (
+        <View style={styles.billLink}>
+          <Text style={styles.billLinkLabel}>Pays a bill?</Text>
+          <View style={styles.chipRow}>
+            {payable.map((bill) => (
+              <CatChip
+                key={bill.id}
+                cat={{ key: bill.id, label: bill.name, icon: 'receipt', colorKey: 'accent' }}
+                selected={row.billId === bill.id}
+                onPress={() => onChange(index, linkRowToBill(row, row.billId === bill.id ? null : bill.id))}
+                colors={colors}
+              />
+            ))}
+          </View>
+        </View>
+      )}
 
       {/* category chips — wrapping row (a nested horizontal ScrollView would
           block the outer list from scrolling on web) */}
@@ -202,6 +223,7 @@ export default function StatementImportScreen({ navigation }) {
   const [billOverrides, setBillOverrides] = useState(null);
   const [expOverrides, setExpOverrides] = useState(null);
   const [existingExpenses, setExistingExpenses] = useState([]);
+  const [bills, setBills] = useState([]);
   const [apiKey, setApiKey] = useState('');
   const [aiModel, setAiModel] = useState(DEFAULT_AI_MODEL);
 
@@ -224,6 +246,11 @@ export default function StatementImportScreen({ navigation }) {
       setAiModel(hh?.aiModel ?? DEFAULT_AI_MODEL);
     });
     return subscribeExpenses(householdId, setExistingExpenses);
+  }, [householdId]);
+
+  useEffect(() => {
+    if (!householdId) return;
+    return subscribeBills(householdId, setBills);
   }, [householdId]);
 
   // Restore a previously analyzed (but not imported) statement.
@@ -293,7 +320,10 @@ export default function StatementImportScreen({ navigation }) {
       const normalized = (transactions ?? []).map((t) =>
         normalizeTransaction(t, { validCategoryKeys: validKeys }));
       const flagged = flagDuplicates(normalized, existingExpenses);
-      setRows(flagged.map((r) => ({ ...r, include: !r.duplicate })));
+      setRows(flagged.map((r) => ({
+        ...linkRowToBill(r, suggestBillId(r, payableBills(bills, r.date.slice(0, 7)))),
+        include: !r.duplicate,
+      })));
       if (!flagged.length) {
         showAlert({
           title: 'No transactions found',
@@ -329,6 +359,10 @@ export default function StatementImportScreen({ navigation }) {
 
       await addExpensesBatch(householdId, expenseDocs);
       await Promise.all(billRows.map((r) => addBill(householdId, toBillDoc(r))));
+      await Promise.all(selected.filter((r) => r.billId && r.date).map((r) => {
+        const bill = bills.find((b) => b.id === r.billId);
+        return bill ? recordBillPayment(householdId, bill, r.date.slice(0, 7), r.amount) : null;
+      }));
 
       await AsyncStorage.removeItem(draftKey(householdId));
       notify(
@@ -457,6 +491,7 @@ export default function StatementImportScreen({ navigation }) {
                     onChange={updateRow}
                     expenseCats={expenseCats}
                     billCats={billCats}
+                    bills={bills}
                     colors={colors}
                     styles={styles}
                   />
@@ -557,6 +592,8 @@ const makeStyles = (colors) => StyleSheet.create({
   segTextActive: { color: colors.textPrimary },
 
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingVertical: 2 },
+  billLink: { gap: 4 },
+  billLinkLabel: { ...type.caption, color: colors.textTertiary },
 
   confirmBtn: {
     backgroundColor: colors.accent, borderRadius: radius.md,

@@ -12,12 +12,15 @@ import {
   onSnapshot,
   serverTimestamp,
   deleteField,
+  arrayUnion,
   writeBatch,
   increment,
 } from 'firebase/firestore';
 
 import { db } from '../config/firebase';
 import { weightLogId } from '../utils/bodyMetrics';
+import { monthKey as currentMonthKey } from '../utils/financeSummary';
+import { amountForMonth, billTypeOf } from '../utils/recurring';
 
 // ── Households ───────────────────────────────────────────
 const sanitizeProfile = ({ name, email } = {}) => ({
@@ -598,8 +601,10 @@ export const subscribeBills = (householdId, callback) =>
 
 export const addBill = (householdId, bill) =>
   addDoc(collection(db, 'households', householdId, 'bills'), {
+    startMonth: currentMonthKey(),
     ...bill,
     paidMonths: [],
+    monthOverrides: {},
     createdAt: serverTimestamp(),
   });
 
@@ -608,6 +613,50 @@ export const updateBill = (householdId, billId, data) =>
 
 export const deleteBill = (householdId, billId) =>
   deleteDoc(doc(db, 'households', householdId, 'bills', billId));
+
+// Change one month's amount without touching the others; null restores the usual amount.
+const monthOverrideUpdate = (key, amount) => ({
+  [`monthOverrides.${key}`]: amount === null ? deleteField() : amount,
+});
+
+export const setBillMonthAmount = (householdId, billId, key, amount) =>
+  updateBill(householdId, billId, monthOverrideUpdate(key, amount));
+
+// A payment for a bill: marks the month paid and records the real amount when it
+// differs (always for varying bills, where it replaces the estimate).
+export const recordBillPayment = (householdId, bill, key, amount) => {
+  const data = { paidMonths: arrayUnion(key) };
+  if (billTypeOf(bill) === 'variable' || amountForMonth(bill, key) !== amount) {
+    Object.assign(data, monthOverrideUpdate(key, amount));
+  }
+  return updateBill(householdId, bill.id, data);
+};
+
+// ── Recurring income ─────────────────────────────────────
+// One doc per monthly income: { name, amount, ownerUid (null = household), notes,
+// startMonth, monthOverrides }. One-off income stays in `expenses` (direction 'in').
+export const subscribeIncomeSources = (householdId, callback) =>
+  onSnapshot(
+    collection(db, 'households', householdId, 'incomeSources'),
+    (snap) => callback(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+  );
+
+export const addIncomeSource = (householdId, source) =>
+  addDoc(collection(db, 'households', householdId, 'incomeSources'), {
+    startMonth: currentMonthKey(),
+    ...source,
+    monthOverrides: {},
+    createdAt: serverTimestamp(),
+  });
+
+export const updateIncomeSource = (householdId, sourceId, data) =>
+  updateDoc(doc(db, 'households', householdId, 'incomeSources', sourceId), data);
+
+export const deleteIncomeSource = (householdId, sourceId) =>
+  deleteDoc(doc(db, 'households', householdId, 'incomeSources', sourceId));
+
+export const setIncomeMonthAmount = (householdId, sourceId, key, amount) =>
+  updateIncomeSource(householdId, sourceId, monthOverrideUpdate(key, amount));
 
 // ── Expenses ─────────────────────────────────────────────
 export const subscribeExpenses = (householdId, callback) =>
