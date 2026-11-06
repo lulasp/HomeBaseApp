@@ -4,6 +4,8 @@ import {
   flagDuplicates,
   toExpenseDoc,
   toBillDoc,
+  suggestBillId,
+  linkRowToBill,
 } from '../utils/statementImport';
 
 describe('normalizeTransaction', () => {
@@ -112,5 +114,47 @@ describe('toExpenseDoc / toBillDoc', () => {
     const doc = toBillDoc({ description: 'Rent', category: 'rent', amount: 900, date: '2026-01-20' });
     expect(doc.dueDayOfMonth).toBe(20);
     expect(doc.name).toBe('Rent');
+  });
+});
+
+describe('suggestBillId', () => {
+  const bills = [{ id: 'e', name: 'Electricity' }, { id: 'm', name: 'Mortgage' }];
+
+  it('matches on name overlap, ignoring case and spacing', () => {
+    expect(suggestBillId({ description: 'DD  ELECTRICITY  CO', direction: 'out' }, bills)).toBe('e');
+  });
+
+  it('returns null with no match, no text, or for income', () => {
+    expect(suggestBillId({ description: 'Coffee', direction: 'out' }, bills)).toBeNull();
+    expect(suggestBillId({ description: '', direction: 'out' }, bills)).toBeNull();
+    expect(suggestBillId({ description: 'Mortgage refund', direction: 'in' }, bills)).toBeNull();
+  });
+
+  it('skips bills with empty names', () => {
+    expect(suggestBillId({ description: 'Coffee', direction: 'out' }, [{ id: 'x', name: '' }])).toBeNull();
+  });
+});
+
+describe('linkRowToBill', () => {
+  it('turns a bill row into an expense so no new bill is created', () => {
+    expect(linkRowToBill({ type: 'bill', category: 'electricity' }, 'b1'))
+      .toEqual({ type: 'expense', category: 'other', billId: 'b1' });
+  });
+
+  it('keeps an expense row category', () => {
+    expect(linkRowToBill({ type: 'expense', category: 'utilities' }, 'b1').category).toBe('utilities');
+  });
+
+  it('unlinks with null and leaves the row otherwise unchanged', () => {
+    expect(linkRowToBill({ type: 'expense', category: 'utilities', billId: 'b1' }, null))
+      .toEqual({ type: 'expense', category: 'utilities', billId: null });
+  });
+});
+
+describe('toExpenseDoc billId', () => {
+  it('carries billId only when linked', () => {
+    const tx = { description: 'x', amount: 1, date: '2026-01-15' };
+    expect(toExpenseDoc({ ...tx, billId: 'b1' }).billId).toBe('b1');
+    expect(toExpenseDoc(tx)).not.toHaveProperty('billId');
   });
 });

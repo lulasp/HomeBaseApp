@@ -56,7 +56,27 @@ export function toExpenseDoc(tx, { paidBy = '' } = {}) {
     direction: tx.direction || 'out',
     paidBy,
     notes: 'Imported from bank statement',
+    ...(tx.billId ? { billId: tx.billId } : {}),
   };
+}
+
+// The existing bill a money-out row looks like a payment for, by name overlap.
+export function suggestBillId(tx, bills = []) {
+  if (tx.direction === 'in') return null;
+  const a = normDesc(tx.description);
+  if (!a) return null;
+  const match = bills.find((bill) => {
+    const b = normDesc(bill.name);
+    return b && (a.includes(b) || b.includes(a));
+  });
+  return match?.id ?? null;
+}
+
+// Link a row to a bill, or unlink with null. A linked row is saved as an expense
+// and never creates a new bill; bill categories don't exist on expenses.
+export function linkRowToBill(row, billId) {
+  if (!billId) return { ...row, billId: null };
+  return { ...row, billId, type: 'expense', category: row.type === 'bill' ? 'other' : row.category };
 }
 
 // Convert a reviewed recurring transaction into the Firestore bill doc shape.
