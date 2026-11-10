@@ -9,3 +9,5 @@
 - Navigation is React Navigation (bottom tabs + stacks) with a custom `src/navigation/TabBar.js`; new screens are registered in `src/navigation/index.js`.
 - Handle safe areas with `react-native-safe-area-context`. Data-backed screens need loading, empty, and error states.
 - Use the alert/toast contexts (`AlertContext`, `ToastNotification`) instead of React Native's `Alert.alert`.
+- All user-facing text goes through `t()` from `src/i18n` (or `useLanguage()`), with the key added to both `src/i18n/en.js` and `src/i18n/pt.js` in the same change. Never hardcode strings. See `docs/translations.md`.
+- Show dates and money through `src/utils/format.js` (`formatDate`, `formatMoney`, `dayName`, …), never with hardcoded `$` or date-fns patterns, and call `useFormat()` in the component so it follows the household's Date & currency setting. See `docs/date-currency.md`.

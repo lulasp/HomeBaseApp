@@ -33,6 +33,7 @@ jest.mock('firebase/firestore', () => ({
   onSnapshot: jest.fn(),
   serverTimestamp: () => mockServerTimestamp(),
   deleteField: () => mockDeleteField(),
+  arrayUnion: (v) => ({ __arrayUnion: v }),
   writeBatch: (...args) => mockWriteBatch(...args),
   increment: (n) => ({ __increment: n }),
 }));
@@ -53,11 +54,19 @@ import {
   upsertMemberProfile,
   updateHouseholdUnits,
   addExpensesBatch,
+  addBill,
+  setBillMonthAmount,
+  recordBillPayment,
+  addIncomeSource,
+  updateIncomeSource,
+  deleteIncomeSource,
+  setIncomeMonthAmount,
   updateHouseholdOpenRouterApiKey,
   updateHouseholdAiModel,
   updateHouseholdXiaomiCreds,
   updateHouseholdIntegrationFlags,
   updateHouseholdReduceMotion,
+  updateHouseholdFormat,
   subscribeHouseholdPrivate,
   subscribePriceEntries,
   getPriceEntries,
@@ -568,6 +577,19 @@ describe('updateHouseholdReduceMotion', () => {
     expect(mockSetDoc).toHaveBeenCalledWith(
       'households/hh1/private/data',
       { reduceMotion: true },
+      { merge: true },
+    );
+  });
+});
+
+// ── updateHouseholdFormat ─────────────────────────────────────────────────────
+
+describe('updateHouseholdFormat', () => {
+  it('merges the date format and currency into the private doc', async () => {
+    await updateHouseholdFormat('hh1', { dateFormat: 'long', currency: 'EUR' });
+    expect(mockSetDoc).toHaveBeenCalledWith(
+      'households/hh1/private/data',
+      { dateFormat: 'long', currency: 'EUR' },
       { merge: true },
     );
   });
@@ -1222,5 +1244,79 @@ describe('renameItemCategories', () => {
     mockGetDocs.mockRejectedValue(new Error('denied'));
     await expect(renameItemCategories('hh1', [{ from: 'A', to: 'B' }])).rejects.toThrow('denied');
     expect(mockBatchCommit).not.toHaveBeenCalled();
+  });
+});
+
+describe('recurring bills and income', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockDeleteField.mockReturnValue('DELETE');
+  });
+
+  it('addBill defaults startMonth to the current month and starts with no overrides', async () => {
+    jest.useFakeTimers().setSystemTime(new Date(2026, 10, 6));
+    await addBill('hh1', { name: 'Internet', amount: 40 });
+    jest.useRealTimers();
+    expect(mockAddDoc.mock.calls[0][1]).toMatchObject({
+      name: 'Internet', amount: 40, startMonth: '2026-11', paidMonths: [], monthOverrides: {},
+    });
+  });
+
+  it('addBill keeps an explicit startMonth', async () => {
+    await addBill('hh1', { name: 'Rent', amount: 900, startMonth: '2026-09' });
+    expect(mockAddDoc.mock.calls[0][1].startMonth).toBe('2026-09');
+  });
+
+  it('setBillMonthAmount writes only that month', async () => {
+    await setBillMonthAmount('hh1', 'b1', '2026-11', 120);
+    expect(mockDoc).toHaveBeenCalledWith({}, 'households', 'hh1', 'bills', 'b1');
+    expect(mockUpdateDoc.mock.calls[0][1]).toEqual({ 'monthOverrides.2026-11': 120 });
+  });
+
+  it('keeps an override of 0, which skips the month', async () => {
+    await setBillMonthAmount('hh1', 'b1', '2026-11', 0);
+    expect(mockUpdateDoc.mock.calls[0][1]).toEqual({ 'monthOverrides.2026-11': 0 });
+  });
+
+  it('null removes the override', async () => {
+    await setBillMonthAmount('hh1', 'b1', '2026-11', null);
+    expect(mockUpdateDoc.mock.calls[0][1]).toEqual({ 'monthOverrides.2026-11': 'DELETE' });
+  });
+
+  it('recordBillPayment marks a fixed bill paid without an override when the amount matches', async () => {
+    await recordBillPayment('hh1', { id: 'b1', amount: 900 }, '2026-11', 900);
+    expect(mockUpdateDoc.mock.calls[0][1]).toEqual({ paidMonths: { __arrayUnion: '2026-11' } });
+  });
+
+  it('recordBillPayment stores a different amount on a fixed bill', async () => {
+    await recordBillPayment('hh1', { id: 'b1', amount: 900 }, '2026-11', 915);
+    expect(mockUpdateDoc.mock.calls[0][1]).toEqual({
+      paidMonths: { __arrayUnion: '2026-11' }, 'monthOverrides.2026-11': 915,
+    });
+  });
+
+  it('recordBillPayment always stores the amount on a varying bill, replacing the estimate', async () => {
+    await recordBillPayment('hh1', { id: 'b2', billType: 'variable', amount: 80 }, '2026-11', 80);
+    expect(mockUpdateDoc.mock.calls[0][1]).toEqual({
+      paidMonths: { __arrayUnion: '2026-11' }, 'monthOverrides.2026-11': 80,
+    });
+  });
+
+  it('adds income sources under the household', async () => {
+    await addIncomeSource('hh1', { name: 'Salary', amount: 3000, ownerUid: 'u1', startMonth: '2026-10' });
+    expect(mockCollection).toHaveBeenCalledWith({}, 'households', 'hh1', 'incomeSources');
+    expect(mockAddDoc.mock.calls[0][1]).toMatchObject({
+      name: 'Salary', amount: 3000, ownerUid: 'u1', startMonth: '2026-10', monthOverrides: {},
+    });
+  });
+
+  it('updates, deletes and overrides income sources by id', async () => {
+    await updateIncomeSource('hh1', 's1', { amount: 3100 });
+    await setIncomeMonthAmount('hh1', 's1', '2026-12', 4000);
+    await deleteIncomeSource('hh1', 's1');
+    expect(mockDoc).toHaveBeenCalledWith({}, 'households', 'hh1', 'incomeSources', 's1');
+    expect(mockUpdateDoc.mock.calls[0][1]).toEqual({ amount: 3100 });
+    expect(mockUpdateDoc.mock.calls[1][1]).toEqual({ 'monthOverrides.2026-12': 4000 });
+    expect(mockDeleteDoc).toHaveBeenCalledTimes(1);
   });
 });

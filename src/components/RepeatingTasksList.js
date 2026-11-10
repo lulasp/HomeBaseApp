@@ -12,6 +12,8 @@ import {
   subscribeTodoRecurrences, updateTodoRecurrence, deleteTodoRecurrence,
 } from '../services/firestore';
 import { formatRecurrenceDays } from '../utils/weeklyTodos';
+import { t } from '../i18n';
+import { useLanguage } from '../context/LanguageContext';
 
 // Household settings → Repeating tasks. Changes save immediately (not via the
 // screen's Save button) since rules are live, household-wide state.
@@ -20,6 +22,7 @@ export default function RepeatingTasksList({ householdId }) {
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const { showConfirm } = useAlert();
   const { notify } = useNotification();
+  useLanguage();
   const [rules, setRules] = useState(null);
   const [error, setError] = useState(null);
 
@@ -28,7 +31,7 @@ export default function RepeatingTasksList({ householdId }) {
     return subscribeTodoRecurrences(
       householdId,
       (r) => { setRules(r); setError(null); },
-      (err) => setError(err?.message || 'Could not load repeating tasks.'),
+      (err) => setError(err?.message || t('components.couldNotLoadRepeating')),
     );
   }, [householdId]);
 
@@ -39,7 +42,7 @@ export default function RepeatingTasksList({ householdId }) {
 
   const fail = (title) => (err) => {
     console.error(err);
-    notify(title, err?.message || 'Please try again.', { type: 'error' });
+    notify(title, err?.message || t('components.tryAgain'), { type: 'error' });
   };
 
   // Resuming starts from today so it doesn't back-fill days already gone this week
@@ -47,17 +50,17 @@ export default function RepeatingTasksList({ householdId }) {
     const patch = active
       ? { active, startsOn: format(new Date(), 'yyyy-MM-dd'), lastMaterializedWeek: null }
       : { active };
-    updateTodoRecurrence(householdId, rule.id, patch).catch(fail('Could not update'));
+    updateTodoRecurrence(householdId, rule.id, patch).catch(fail(t('components.couldNotUpdateTitle')));
   };
 
   const remove = async (rule) => {
     const confirmed = await showConfirm({
-      title: 'Delete repeating task',
-      message: `"${rule.text}" won't be added to future weeks. Tasks already created stay.`,
+      title: t('components.deleteRepeating'),
+      message: t('components.deleteRepeatingMessage', { text: rule.text }),
       type: 'danger',
-      confirmLabel: 'Delete',
+      confirmLabel: t('common.delete'),
     });
-    if (confirmed) deleteTodoRecurrence(householdId, rule.id).catch(fail('Could not delete'));
+    if (confirmed) deleteTodoRecurrence(householdId, rule.id).catch(fail(t('components.couldNotDeleteTitle')));
   };
 
   if (error) {
@@ -80,7 +83,7 @@ export default function RepeatingTasksList({ householdId }) {
     <View style={styles.card}>
       {sorted.length === 0 ? (
         <Text style={styles.hint}>
-          No repeating tasks yet. On Home, long-press a task (or tap it, then the repeat icon) to repeat it weekly.
+          {t('components.noRepeating')}
         </Text>
       ) : (
         <>
@@ -92,7 +95,7 @@ export default function RepeatingTasksList({ householdId }) {
                   {rule.text}
                 </Text>
                 <Text style={styles.hint}>
-                  {formatRecurrenceDays(rule.days)}{rule.active ? '' : ' · paused'}
+                  {formatRecurrenceDays(rule.days)}{rule.active ? '' : t('components.paused')}
                 </Text>
               </View>
               <Switch
@@ -101,20 +104,20 @@ export default function RepeatingTasksList({ householdId }) {
                 trackColor={{ false: colors.muted, true: colors.accent }}
                 thumbColor="#fff"
                 ios_backgroundColor={colors.muted}
-                accessibilityLabel={`${rule.text} active`}
+                accessibilityLabel={t('components.activeLabel', { text: rule.text })}
               />
               <TouchableOpacity
                 onPress={() => remove(rule)}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 accessibilityRole="button"
-                accessibilityLabel={`Delete ${rule.text}`}
+                accessibilityLabel={t('components.deleteItem', { text: rule.text })}
               >
                 <Ionicons name="trash-outline" size={18} color={colors.danger} />
               </TouchableOpacity>
             </View>
           ))}
           <Text style={styles.hint}>
-            Paused tasks aren't added to new weeks. Change the days by long-pressing the task on Home.
+            {t('components.pausedHint')}
           </Text>
         </>
       )}

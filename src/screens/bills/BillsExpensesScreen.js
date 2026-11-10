@@ -16,8 +16,10 @@ import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { useNavScrollProps } from '../../context/NavScrollContext';
 import { useAlert } from '../../context/AlertContext';
+import { useLanguage } from '../../context/LanguageContext';
 import {
-  subscribeBills, addBill, updateBill, deleteBill,
+  subscribeBills, addBill, updateBill, deleteBill, setBillMonthAmount, recordBillPayment,
+  subscribeIncomeSources, addIncomeSource, updateIncomeSource, deleteIncomeSource, setIncomeMonthAmount,
   subscribeExpenses, addExpense, updateExpense, deleteExpense,
   subscribeBudgets, setBudget, deleteBudget,
   getHousehold,
@@ -27,6 +29,12 @@ import { useIsDesktop, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
 import DatePickerInput from '../../components/DatePickerInput';
 import { BILL_CATS, EXPENSE_CATS, withCustomCats } from '../../utils/financeCategories';
 import { cashFlow, monthlyTrend, budgetProgress } from '../../utils/financeSummary';
+import {
+  amountForMonth, billTypeOf, estimatedTotal, hasMonthOverride, incomeForMonth,
+  isActiveInMonth, isEstimate, isRecurringBill, payableBills, recurringTotal, shiftMonth, withRecurring,
+} from '../../utils/recurring';
+import { formatMoney, formatMoneyCompact, formatMonthKey, formatMonthShort, formatDate, currencySymbol } from '../../utils/format';
+import useFormat from '../../hooks/useFormat';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -40,31 +48,34 @@ function ordinal(n) {
   return n + (s[(v - 20) % 10] || s[v] || s[0]);
 }
 
-function fmtCurrency(n) {
-  return `$${Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
+// "5th" in English, a plain "5" in Portuguese ("Vence dia 5").
+const dueDayNumber = (n, language) => (language === 'en' ? ordinal(n) : String(n));
 
-// Compact form for tight spaces (chart labels, summary cards): $1.2k, $980.
-function fmtCompact(n) {
-  const v = Number(n || 0);
-  if (Math.abs(v) >= 1000) return `$${(v / 1000).toLocaleString('en-US', { maximumFractionDigits: 1 })}k`;
-  return `$${Math.round(v)}`;
-}
+// Money in the household currency (Household settings → Date & currency).
+const fmtCurrency = (n) => formatMoney(n);
+
+// Compact form for tight spaces (chart labels, summary cards): $1.2k, 980 €.
+const fmtCompact = (n) => formatMoneyCompact(n);
 
 // Money spent by an expense — income rows (direction 'in') don't count toward spend totals.
 function spentAmount(e) {
   return e.direction === 'in' ? 0 : Number(e.amount || 0);
 }
 
-function fmtMonthGroup(key) {
-  const [yr, mo] = key.split('-');
-  return format(new Date(Number(yr), Number(mo) - 1, 1), 'MMMM yyyy');
-}
+// 'yyyy-MM' → 'November 2026' in the person's language.
+const fmtMonthGroup = (key) => formatMonthKey(key);
 
-const BLANK_BILL    = { name: '', category: 'other', amount: '', dueDayOfMonth: '', notes: '' };
+const BLANK_BILL    = { name: '', category: 'other', billType: 'fixed', amount: '', dueDayOfMonth: '', notes: '' };
+// Values are i18n keys.
+const BILL_TYPES    = [['fixed', 'fin.billTypeFixed'], ['variable', 'fin.billTypeVariable'], ['once', 'fin.billTypeOnce']];
+const BILL_AMOUNT_LABEL = { fixed: 'fin.amountFixed', variable: 'fin.amountVariable', once: 'fin.amountOnce' };
+const BILL_TYPE_HINT = { fixed: 'fin.hintFixed', variable: 'fin.hintVariable', once: 'fin.hintOnce' };
 const blankExpense  = () => ({
   title: '', category: 'other', amount: '',
-  date: format(new Date(), 'yyyy-MM-dd'), paidBy: '', notes: '',
+  date: format(new Date(), 'yyyy-MM-dd'), paidBy: '', billId: '', notes: '',
+});
+const blankIncome   = (date) => ({
+  name: '', amount: '', ownerUid: null, recurring: true, date, notes: '',
 });
 
 // ── Animation helpers ────────────────────────────────────────────────────────────
@@ -140,30 +151,45 @@ const chipSt = StyleSheet.create({
 
 // ── Bill card ──────────────────────────────────────────────────────────────────
 
-const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const MONTH_INDEXES = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
 
-const BillCard = memo(function BillCard({ bill, cats, monthKey, onEdit, onDelete, onTogglePaid, colors, styles }) {
+const BillCard = memo(function BillCard({ bill, cats, monthKey, currentMonth, onEdit, onEditMonth, onDelete, onTogglePaid, colors, styles }) {
+  const { t, language } = useLanguage();
+  useFormat();
   const cat       = cats.find(c => c.key === bill.category) || cats[cats.length - 1];
   const iconColor = colors[cat.colorKey] || colors.textSecondary;
   const today     = new Date();
   const todayDay  = today.getDate();
   const isPaid    = bill.paidMonths?.includes(monthKey);
-  const isOverdue = !isPaid && bill.dueDayOfMonth < todayDay;
-  const isDueSoon = !isPaid && !isOverdue && bill.dueDayOfMonth <= todayDay + 5;
+  const isCurrent = monthKey === currentMonth;
+  const isPast    = monthKey < currentMonth;
+  const isOverdue = !isPaid && (isPast || (isCurrent && bill.dueDayOfMonth < todayDay));
+  const isDueSoon = !isPaid && isCurrent && !isOverdue && bill.dueDayOfMonth <= todayDay + 5;
+  const adjusted  = hasMonthOverride(bill, monthKey);
+  const billType  = billTypeOf(bill);
+  const estimate  = isEstimate(bill, monthKey);
+  const amountSub = billType === 'once' ? t('fin.subOneTime')
+    : estimate ? t('fin.subEstimate')
+    : billType === 'variable' ? t('fin.subThisMonth')
+    : adjusted ? t('fin.subUsually', { amount: fmtCurrency(bill.amount) })
+    : t('fin.subPerMonth');
 
   const statusColor = isPaid ? colors.sage : isOverdue ? colors.danger : isDueSoon ? colors.amber : colors.textTertiary;
   const statusBg    = isPaid ? colors.sageSoft : isOverdue ? colors.dangerSoft : isDueSoon ? colors.amberSoft : colors.muted;
   const statusIcon  = isPaid ? 'checkmark-circle' : isOverdue ? 'alert-circle' : isDueSoon ? 'time' : 'calendar-outline';
-  const statusLabel = isPaid ? 'Paid' : isOverdue ? 'Overdue' : isDueSoon ? 'Due soon' : `Due ${ordinal(bill.dueDayOfMonth)}`;
+  const dueDay      = dueDayNumber(bill.dueDayOfMonth, language);
+  const statusLabel = isPaid ? t('fin.statusPaid') : isPast ? t('fin.statusUnpaid') : isOverdue ? t('fin.statusOverdue')
+    : isDueSoon ? t('fin.statusDueSoon') : t('fin.dueDay', { day: dueDay });
 
   const daysUntil = bill.dueDayOfMonth - todayDay;
-  const daysText  = isPaid ? `Due ${ordinal(bill.dueDayOfMonth)} each month`
-    : daysUntil === 0 ? 'Due today'
-    : daysUntil < 0   ? `${Math.abs(daysUntil)}d overdue`
-    : `in ${daysUntil}d`;
+  const daysText  = isPaid || !isCurrent
+    ? t(billType === 'once' ? 'fin.dueDay' : 'fin.dueDayEachMonth', { day: dueDay })
+    : daysUntil === 0 ? t('fin.dueToday')
+    : daysUntil < 0   ? t('fin.daysOverdue', { days: Math.abs(daysUntil) })
+    : t('fin.inDays', { days: daysUntil });
   const daysColor = isPaid ? colors.textTertiary : isOverdue ? colors.danger : isDueSoon ? colors.amber : colors.textTertiary;
 
-  const year = today.getFullYear();
+  const year = Number(monthKey.slice(0, 4));
 
   return (
     <View style={styles.billCard}>
@@ -186,9 +212,9 @@ const BillCard = memo(function BillCard({ bill, cats, monthKey, onEdit, onDelete
           </View>
           <View style={styles.billCardAmountCol}>
             <Text style={[styles.billCardAmount, isPaid && { color: colors.textTertiary }]}>
-              {fmtCurrency(bill.amount)}
+              {fmtCurrency(amountForMonth(bill, monthKey))}
             </Text>
-            <Text style={styles.billCardAmountSub}>/ month</Text>
+            <Text style={[styles.billCardAmountSub, estimate && { color: colors.amber }]}>{amountSub}</Text>
           </View>
         </View>
 
@@ -210,14 +236,14 @@ const BillCard = memo(function BillCard({ bill, cats, monthKey, onEdit, onDelete
         )}
 
         {/* 12-month payment history */}
-        <View style={styles.historyRow}>
-          {MONTHS_SHORT.map((m, i) => {
+        {billType !== 'once' && <View style={styles.historyRow}>
+          {MONTH_INDEXES.map((i) => {
             const mk    = `${year}-${String(i + 1).padStart(2, '0')}`;
             const paid  = bill.paidMonths?.includes(mk);
             const isCur = mk === monthKey;
-            const fut   = mk > monthKey;
+            const fut   = mk > currentMonth;
             return (
-              <View key={m} style={styles.historyItem}>
+              <View key={i} style={styles.historyItem}>
                 <View style={[
                   styles.historyDot,
                   { borderColor: isCur ? statusColor : colors.border },
@@ -227,12 +253,12 @@ const BillCard = memo(function BillCard({ bill, cats, monthKey, onEdit, onDelete
                   {paid && <Ionicons name="checkmark" size={7} color="#fff" />}
                 </View>
                 <Text style={[styles.historyMonth, isCur && { color: colors.textPrimary, fontWeight: '700' }]}>
-                  {m[0]}
+                  {formatMonthShort(new Date(year, i, 1)).charAt(0).toUpperCase()}
                 </Text>
               </View>
             );
           })}
-        </View>
+        </View>}
 
         {/* Actions */}
         <View style={styles.billCardActions}>
@@ -243,13 +269,23 @@ const BillCard = memo(function BillCard({ bill, cats, monthKey, onEdit, onDelete
             }]}
             onPress={() => onTogglePaid(bill, monthKey, isPaid)}
             accessibilityRole="button"
-            accessibilityLabel={isPaid ? 'Mark unpaid' : 'Mark paid'}
+            accessibilityLabel={isPaid ? t('fin.markUnpaid') : t('fin.markPaid')}
           >
             <Ionicons name={isPaid ? 'checkmark-circle' : 'ellipse-outline'} size={15} color={isPaid ? colors.sage : colors.textTertiary} />
             <Text style={[styles.togglePaidLabel, { color: isPaid ? colors.sage : colors.textSecondary }]}>
-              {isPaid ? 'Paid this month' : 'Mark as paid'}
+              {isPaid ? (isCurrent ? t('fin.paidThisMonth') : t('fin.statusPaid')) : t('fin.markAsPaid')}
             </Text>
           </TouchableOpacity>
+          {billType !== 'once' && (
+            <TouchableOpacity
+              onPress={() => onEditMonth('bill', bill)}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityRole="button"
+              accessibilityLabel={t('fin.changeAmountFor', { month: fmtMonthGroup(monthKey) })}
+            >
+              <Ionicons name="calendar-outline" size={16} color={estimate ? colors.amber : adjusted ? colors.accent : colors.textTertiary} />
+            </TouchableOpacity>
+          )}
           <TouchableOpacity onPress={() => onEdit(bill)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
             <Ionicons name="pencil-outline" size={16} color={colors.textTertiary} />
           </TouchableOpacity>
@@ -264,11 +300,14 @@ const BillCard = memo(function BillCard({ bill, cats, monthKey, onEdit, onDelete
 
 // ── Expense card ───────────────────────────────────────────────────────────────
 
-const ExpenseCard = memo(function ExpenseCard({ expense, cats, onEdit, onDelete, colors, styles }) {
+const ExpenseCard = memo(function ExpenseCard({ expense, cats, ownerLabel, onEdit, onDelete, colors, styles }) {
+  const { t } = useLanguage();
+  useFormat();
   const cat       = cats.find(c => c.key === expense.category) || cats[cats.length - 1];
   const iconColor = colors[cat.colorKey] || colors.textSecondary;
-  const dateLabel = expense.date ? format(new Date(expense.date + 'T00:00:00'), 'MMM d, yyyy') : '';
+  const dateLabel = formatDate(expense.date);
   const isIncome  = expense.direction === 'in';
+  const person    = ownerLabel || expense.paidBy;
 
   return (
     <View style={styles.expenseCard}>
@@ -285,11 +324,18 @@ const ExpenseCard = memo(function ExpenseCard({ expense, cats, onEdit, onDelete,
           <View style={styles.expCardMeta}>
             <Ionicons name="calendar-outline" size={11} color={colors.textTertiary} />
             <Text style={styles.expCardDate}>{dateLabel}</Text>
-            {!!expense.paidBy && (
+            {!!person && (
               <>
                 <Text style={styles.expCardSep}>·</Text>
                 <Ionicons name="person-outline" size={11} color={colors.textTertiary} />
-                <Text style={styles.expCardPaidBy}>{expense.paidBy}</Text>
+                <Text style={styles.expCardPaidBy}>{person}</Text>
+              </>
+            )}
+            {!!expense.billId && (
+              <>
+                <Text style={styles.expCardSep}>·</Text>
+                <Ionicons name="link-outline" size={11} color={colors.textTertiary} />
+                <Text style={styles.expCardPaidBy}>{t('fin.billPayment')}</Text>
               </>
             )}
           </View>
@@ -326,18 +372,161 @@ const ExpenseCard = memo(function ExpenseCard({ expense, cats, onEdit, onDelete,
   );
 });
 
+// ── Recurring income card ──────────────────────────────────────────────────────
+
+const IncomeCard = memo(function IncomeCard({ source, monthKey, ownerLabel, onEdit, onEditMonth, onDelete, colors, styles }) {
+  const { t } = useLanguage();
+  useFormat();
+  const adjusted = hasMonthOverride(source, monthKey);
+  return (
+    <View style={styles.expenseCard}>
+      <View style={styles.expCardHeader}>
+        <View style={[styles.expCatIcon, { backgroundColor: colors.sageSoft }]}>
+          <Ionicons name="repeat" size={20} color={colors.sage} />
+        </View>
+        <View style={styles.expCardInfo}>
+          <Text style={styles.expCardTitle} numberOfLines={1}>{source.name}</Text>
+          <View style={styles.expCardMeta}>
+            <Ionicons name="person-outline" size={11} color={colors.textTertiary} />
+            <Text style={styles.expCardPaidBy}>{ownerLabel}</Text>
+          </View>
+        </View>
+        <View style={styles.expCardRight}>
+          <Text style={[styles.expCardAmount, { color: colors.sage }]}>
+            +{fmtCurrency(amountForMonth(source, monthKey))}
+          </Text>
+          <Text style={styles.billCardAmountSub}>
+            {adjusted ? t('fin.subUsually', { amount: fmtCurrency(source.amount) }) : t('fin.subPerMonth')}
+          </Text>
+        </View>
+      </View>
+
+      {!!source.notes && (
+        <View style={styles.notesRow}>
+          <Ionicons name="document-text-outline" size={12} color={colors.textTertiary} />
+          <Text style={styles.notesText} numberOfLines={2}>{source.notes}</Text>
+        </View>
+      )}
+
+      <View style={styles.expCardActions}>
+        <View style={{ flex: 1 }} />
+        <TouchableOpacity
+          onPress={() => onEditMonth('income', source)}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityRole="button"
+          accessibilityLabel={t('fin.changeAmountFor', { month: fmtMonthGroup(monthKey) })}
+        >
+          <Ionicons name="calendar-outline" size={16} color={adjusted ? colors.accent : colors.textTertiary} />
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => onEdit(source)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+          <Ionicons name="pencil-outline" size={16} color={colors.textTertiary} />
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => onDelete(source)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+          <Ionicons name="trash-outline" size={16} color={colors.textTertiary} />
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+});
+
+// ── Dropdown ────────────────────────────────────────────────────────────────────
+// Opens inline: the expense form is already in a Modal. Tap the chosen option to
+// clear it. A value with no matching option (an older free-text name, a deleted
+// bill) shows `fallback` and isn't offered.
+
+const Dropdown = memo(function Dropdown({ label, placeholder, emptyText, value, fallback, options, onChange, colors, styles }) {
+  const [open, setOpen] = useState(false);
+  const { t } = useLanguage();
+  useFormat();
+  const shown = value ? (options.find(o => o.value === value)?.label ?? fallback) : '';
+  return (
+    <View>
+      <TouchableOpacity
+        style={[styles.input, styles.dropdownBtn]}
+        onPress={() => setOpen(o => !o)}
+        accessibilityRole="button"
+        accessibilityLabel={`${label}: ${shown || t('fin.notSet')}`}
+        accessibilityState={{ expanded: open }}
+      >
+        <Text style={[styles.dropdownValue, !value && { color: colors.textTertiary }]} numberOfLines={1}>
+          {shown || placeholder}
+        </Text>
+        <Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={18} color={colors.textTertiary} />
+      </TouchableOpacity>
+      {open && (
+        <View style={styles.dropdownList}>
+          {options.length === 0 && <Text style={styles.dropdownEmpty}>{emptyText}</Text>}
+          {options.map(option => {
+            const selected = option.value === value;
+            return (
+              <TouchableOpacity
+                key={option.value}
+                style={styles.dropdownOption}
+                onPress={() => { onChange(selected ? '' : option.value); setOpen(false); }}
+                accessibilityRole="button"
+                accessibilityState={{ selected }}
+              >
+                <Text style={[styles.dropdownValue, selected && { color: colors.accent }]} numberOfLines={1}>{option.label}</Text>
+                {selected && <Ionicons name="checkmark" size={18} color={colors.accent} />}
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      )}
+    </View>
+  );
+});
+
+// ── Month stepper (Bills and Income tabs) ───────────────────────────────────────
+
+const MonthStepper = memo(function MonthStepper({ value, currentMonth, onChange, colors, styles }) {
+  const { t } = useLanguage();
+  useFormat();
+  return (
+    <View style={styles.monthStepper}>
+      <TouchableOpacity
+        onPress={() => onChange(shiftMonth(value, -1))}
+        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        accessibilityRole="button"
+        accessibilityLabel={t('fin.previousMonth')}
+      >
+        <Ionicons name="chevron-back" size={20} color={colors.textSecondary} />
+      </TouchableOpacity>
+      <TouchableOpacity
+        onPress={() => onChange(currentMonth)}
+        disabled={value === currentMonth}
+        accessibilityRole="button"
+        accessibilityLabel={value === currentMonth ? fmtMonthGroup(value) : t('fin.backToThisMonthLabel', { month: fmtMonthGroup(value) })}
+      >
+        <Text style={styles.monthStepperLabel}>{fmtMonthGroup(value)}</Text>
+        {value !== currentMonth && <Text style={styles.monthStepperHint}>{t('fin.backToThisMonth')}</Text>}
+      </TouchableOpacity>
+      <TouchableOpacity
+        onPress={() => onChange(shiftMonth(value, 1))}
+        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        accessibilityRole="button"
+        accessibilityLabel={t('fin.nextMonth')}
+      >
+        <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
+      </TouchableOpacity>
+    </View>
+  );
+});
+
 // ── Spending trend (dependency-free View bars) ───────────────────────────────────
 
 const CHART_H = 130;
 
 const TrendChart = memo(function TrendChart({ data, colors, styles }) {
+  const { t }      = useLanguage();
+  useFormat();
   const max        = Math.max(1, ...data.map(d => d.spending));
   const currentKey = data.length ? data[data.length - 1].key : null;
   return (
     <View style={styles.chartCard}>
       <View style={styles.cardHeaderRow}>
-        <Text style={styles.cardTitle}>Spending trend</Text>
-        <Text style={styles.cardHint}>Last {data.length} months</Text>
+        <Text style={styles.cardTitle}>{t('fin.spendingTrend')}</Text>
+        <Text style={styles.cardHint}>{t('fin.lastMonths', { count: data.length })}</Text>
       </View>
       <View style={styles.chartBars}>
         {data.map((d, i) => {
@@ -370,6 +559,8 @@ const TrendChart = memo(function TrendChart({ data, colors, styles }) {
 // ── Budget progress row ──────────────────────────────────────────────────────────
 
 const BudgetRow = memo(function BudgetRow({ row, cat, colors, styles, onEdit, onDelete }) {
+  const { t }     = useLanguage();
+  useFormat();
   const iconColor = colors[cat.colorKey] || colors.textSecondary;
   const pct       = Math.min(1, row.ratio);
   const barColor  = row.over ? colors.danger : row.ratio >= 0.8 ? colors.amber : colors.sage;
@@ -383,10 +574,10 @@ const BudgetRow = memo(function BudgetRow({ row, cat, colors, styles, onEdit, on
         </View>
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text style={styles.budgetName} numberOfLines={1}>{cat.label}</Text>
-          <Text style={styles.budgetSub}>{fmtCurrency(row.spent)} of {fmtCurrency(row.budget)}</Text>
+          <Text style={styles.budgetSub}>{t('fin.budgetOf', { spent: fmtCurrency(row.spent), budget: fmtCurrency(row.budget) })}</Text>
         </View>
         <Text style={[styles.budgetRemain, { color: row.over ? colors.danger : colors.sage }]}>
-          {row.over ? `${fmtCurrency(-row.remaining)} over` : `${fmtCurrency(row.remaining)} left`}
+          {row.over ? t('fin.budgetOver', { amount: fmtCurrency(-row.remaining) }) : t('fin.budgetLeft', { amount: fmtCurrency(row.remaining) })}
         </Text>
       </View>
 
@@ -414,20 +605,23 @@ const BudgetRow = memo(function BudgetRow({ row, cat, colors, styles, onEdit, on
 // ── Screen ─────────────────────────────────────────────────────────────────────
 
 export default function BillsExpensesScreen({ navigation }) {
-  const { householdId, displayName } = useAuth();
+  const { householdId } = useAuth();
   const { colors }    = useTheme();
   const { showConfirm } = useAlert();
+  const { t, language } = useLanguage();
+  useFormat();
   const isDesktop     = useIsDesktop();
   const windowHeight = useVisualViewportHeight();
   const fab           = useFabHideOnScroll();
   const styles        = useMemo(() => makeStyles(colors), [colors]);
   const navScrollProps = useNavScrollProps();
-  const { animationsEnabled } = useHousehold();
+  const { animationsEnabled, privateData } = useHousehold();
 
   const [activeTab,       setActiveTab]       = useState('overview');
   const [bills,           setBills]           = useState([]);
   const [expenses,        setExpenses]        = useState([]);
   const [budgets,         setBudgets]         = useState([]);
+  const [incomeSources,   setIncomeSources]   = useState([]);
   const [customBillCats,  setCustomBillCats]  = useState([]);
   const [customExpCats,   setCustomExpCats]   = useState([]);
   const [billOverrides,   setBillOverrides]   = useState(null);
@@ -438,6 +632,8 @@ export default function BillsExpensesScreen({ navigation }) {
   const [billForm,      setBillForm]      = useState(BLANK_BILL);
   const [expenseForm,   setExpenseForm]   = useState(blankExpense());
   const [budgetForm,    setBudgetForm]    = useState({ category: 'other', amount: '' });
+  const [incomeForm,    setIncomeForm]    = useState(blankIncome(format(new Date(), 'yyyy-MM-dd')));
+  const [monthEdit,     setMonthEdit]     = useState(null);   // { kind, item, amount }
   const [errors,        setErrors]        = useState({});
   const [saving,        setSaving]        = useState(false);
 
@@ -453,6 +649,7 @@ export default function BillsExpensesScreen({ navigation }) {
   );
 
   const monthKey = useMemo(() => getMonthKey(), []);
+  const [viewMonth, setViewMonth] = useState(monthKey);   // Bills and Income tabs
 
   useEffect(() => {
     if (!householdId) return;
@@ -464,8 +661,9 @@ export default function BillsExpensesScreen({ navigation }) {
     });
   }, [householdId]);
 
-  const allBillCats    = useMemo(() => withCustomCats(BILL_CATS, customBillCats, billOverrides), [customBillCats, billOverrides]);
-  const allExpenseCats = useMemo(() => withCustomCats(EXPENSE_CATS, customExpCats, expOverrides), [customExpCats, expOverrides]);
+  // `language` is a dependency: built-in labels are read in the current language.
+  const allBillCats    = useMemo(() => withCustomCats(BILL_CATS, customBillCats, billOverrides), [customBillCats, billOverrides, language]);
+  const allExpenseCats = useMemo(() => withCustomCats(EXPENSE_CATS, customExpCats, expOverrides), [customExpCats, expOverrides, language]);
 
   useEffect(() => {
     if (!householdId) return;
@@ -486,11 +684,21 @@ export default function BillsExpensesScreen({ navigation }) {
     return subscribeBudgets(householdId, setBudgets);
   }, [householdId]);
 
+  useEffect(() => {
+    if (!householdId) return;
+    return subscribeIncomeSources(householdId, (data) =>
+      setIncomeSources(data.sort((a, b) => (a.name || '').localeCompare(b.name || '')))
+    );
+  }, [householdId]);
+
   // ── Summary stats ──────────────────────────────────────────────────────────
 
-  const monthlyTotal   = useMemo(() => bills.reduce((s, b) => s + Number(b.amount || 0), 0), [bills]);
-  const paidAmount     = useMemo(() => bills.filter(b => b.paidMonths?.includes(monthKey)).reduce((s, b) => s + Number(b.amount || 0), 0), [bills, monthKey]);
-  const paidCount      = useMemo(() => bills.filter(b => b.paidMonths?.includes(monthKey)).length, [bills, monthKey]);
+  const viewBills      = useMemo(() => bills.filter(b => isActiveInMonth(b, viewMonth)), [bills, viewMonth]);
+  const paidBills      = useMemo(() => viewBills.filter(b => b.paidMonths?.includes(viewMonth)), [viewBills, viewMonth]);
+  const monthlyTotal   = useMemo(() => recurringTotal(viewBills, viewMonth), [viewBills, viewMonth]);
+  const paidAmount     = useMemo(() => recurringTotal(paidBills, viewMonth), [paidBills, viewMonth]);
+  const paidCount      = paidBills.length;
+  const estimatedBills = useMemo(() => estimatedTotal(viewBills, viewMonth), [viewBills, viewMonth]);
   const outstanding    = useMemo(() => monthlyTotal - paidAmount, [monthlyTotal, paidAmount]);
 
   const yearPrefix     = useMemo(() => format(new Date(), 'yyyy'), []);
@@ -509,8 +717,17 @@ export default function BillsExpensesScreen({ navigation }) {
 
   // ── Overview / budgets ──────────────────────────────────────────────────────
 
-  const flow      = useMemo(() => cashFlow(expenses, monthKey), [expenses, monthKey]);
-  const trend     = useMemo(() => monthlyTrend(expenses, 6), [expenses]);
+  // Recurring bills and income count in full for every month they're active,
+  // paid or not, so the Overview shows the real monthly commitment.
+  const flowRows  = useMemo(() => {
+    const keys = monthlyTrend([], 6).map(b => b.key);
+    return withRecurring(expenses, bills, incomeSources, keys);
+  }, [expenses, bills, incomeSources]);
+  const flow      = useMemo(() => cashFlow(flowRows, monthKey), [flowRows, monthKey]);
+  // `language`: the month labels are in the person's language.
+  const trend     = useMemo(() => monthlyTrend(flowRows, 6), [flowRows, language]);
+  const hasActivity = expenses.length > 0 || bills.length > 0 || incomeSources.length > 0;
+  const fixedBills = useMemo(() => recurringTotal(bills.filter(isRecurringBill), monthKey), [bills, monthKey]);
   const budgetCatById = useMemo(() => {
     const m = {};
     allExpenseCats.forEach(c => { m[c.key] = c; });
@@ -523,15 +740,35 @@ export default function BillsExpensesScreen({ navigation }) {
     return { budgeted, spent, remaining: budgeted - spent, overCount: budgetRows.filter(r => r.over).length };
   }, [budgetRows]);
 
+  // ── Income ─────────────────────────────────────────────────────────────────
+
+  const income = useMemo(() => incomeForMonth(incomeSources, expenses, viewMonth), [incomeSources, expenses, viewMonth]);
+  const memberProfiles = privateData?.memberProfiles;
+  const ownerOptions = useMemo(() => [
+    { uid: null, label: t('fin.household') },
+    ...Object.entries(memberProfiles || {}).map(([uid, p]) => ({ uid, label: p?.name || p?.email || t('fin.member') })),
+  ], [memberProfiles, t]);
+  const memberOptions = useMemo(() => ownerOptions.filter(o => o.uid).map(o => ({ value: o.label, label: o.label })), [ownerOptions]);
+  const billOptions = useMemo(() => (
+    payableBills(bills, expenseForm.date.substring(0, 7)).map(b => ({ value: b.id, label: b.name }))
+  ), [bills, expenseForm.date]);
+  const ownerLabel = useCallback((uid) => (
+    ownerOptions.find(o => o.uid === (uid || null))?.label || t('fin.formerMember')
+  ), [ownerOptions, t]);
+
   // ── Modal helpers ──────────────────────────────────────────────────────────
 
   const openNew = useCallback(() => {
-    const t = activeTab === 'bills' ? 'bill' : activeTab === 'budgets' ? 'budget' : 'expense';
-    setModalType(t);
+    const kind = activeTab === 'bills' ? 'bill'
+      : activeTab === 'budgets' ? 'budget'
+      : activeTab === 'income' ? 'income'
+      : 'expense';
+    setModalType(kind);
     setEditingId(null);
     setBillForm(BLANK_BILL);
     setExpenseForm(blankExpense());
-    if (t === 'budget') {
+    setIncomeForm(blankIncome(viewMonth === monthKey ? format(new Date(), 'yyyy-MM-dd') : `${viewMonth}-01`));
+    if (kind === 'budget') {
       // Default to the first expense category that has no budget yet.
       const budgeted = new Set(budgets.map(b => b.category));
       const next = allExpenseCats.find(c => !budgeted.has(c.key)) || allExpenseCats[0];
@@ -539,7 +776,7 @@ export default function BillsExpensesScreen({ navigation }) {
     }
     setErrors({});
     setModalVisible(true);
-  }, [activeTab, budgets, allExpenseCats]);
+  }, [activeTab, budgets, allExpenseCats, viewMonth, monthKey]);
 
   const openEditBudget = useCallback((category) => {
     const existing = budgets.find(b => b.category === category);
@@ -556,6 +793,7 @@ export default function BillsExpensesScreen({ navigation }) {
     setBillForm({
       name:          bill.name          || '',
       category:      bill.category      || 'other',
+      billType:      billTypeOf(bill),
       amount:        String(bill.amount || ''),
       dueDayOfMonth: String(bill.dueDayOfMonth || ''),
       notes:         bill.notes         || '',
@@ -564,7 +802,46 @@ export default function BillsExpensesScreen({ navigation }) {
     setModalVisible(true);
   }, []);
 
+  const openEditIncomeSource = useCallback((source) => {
+    setModalType('income');
+    setEditingId(source.id);
+    setIncomeForm({
+      name:      source.name || '',
+      amount:    String(source.amount || ''),
+      ownerUid:  source.ownerUid || null,
+      recurring: true,
+      date:      format(new Date(), 'yyyy-MM-dd'),
+      notes:     source.notes || '',
+    });
+    setErrors({});
+    setModalVisible(true);
+  }, []);
+
+  const openEditIncomeEntry = useCallback((entry) => {
+    setModalType('income');
+    setEditingId(entry.id);
+    setIncomeForm({
+      name:      entry.title || '',
+      amount:    String(entry.amount || ''),
+      ownerUid:  entry.ownerUid || null,
+      recurring: false,
+      date:      entry.date || format(new Date(), 'yyyy-MM-dd'),
+      notes:     entry.notes || '',
+    });
+    setErrors({});
+    setModalVisible(true);
+  }, []);
+
+  const openEditMonth = useCallback((kind, item) => {
+    setModalType('month');
+    setEditingId(item.id);
+    setMonthEdit({ kind, item, amount: String(amountForMonth(item, viewMonth)) });
+    setErrors({});
+    setModalVisible(true);
+  }, [viewMonth]);
+
   const openEditExpense = useCallback((expense) => {
+    if (expense.direction === 'in') { openEditIncomeEntry(expense); return; }
     setModalType('expense');
     setEditingId(expense.id);
     setExpenseForm({
@@ -573,11 +850,12 @@ export default function BillsExpensesScreen({ navigation }) {
       amount:   String(expense.amount || ''),
       date:     expense.date     || format(new Date(), 'yyyy-MM-dd'),
       paidBy:   expense.paidBy   || '',
+      billId:   expense.billId   || '',
       notes:    expense.notes    || '',
     });
     setErrors({});
     setModalVisible(true);
-  }, []);
+  }, [openEditIncomeEntry]);
 
   const closeModal = useCallback(() => {
     setModalVisible(false);
@@ -599,17 +877,20 @@ export default function BillsExpensesScreen({ navigation }) {
       const data = {
         name: billForm.name.trim(),
         category: billForm.category,
+        billType: billForm.billType,
         amount: Number(billForm.amount),
         dueDayOfMonth: day,
         notes: billForm.notes.trim(),
       };
-      if (editingId) await updateBill(householdId, editingId, data);
-      else           await addBill(householdId, data);
+      // A bill turned into a one-time bill belongs to the month being viewed.
+      const wasOnce = billTypeOf(bills.find(b => b.id === editingId) || {}) === 'once';
+      if (editingId) await updateBill(householdId, editingId, data.billType === 'once' && !wasOnce ? { ...data, startMonth: viewMonth } : data);
+      else           await addBill(householdId, { ...data, startMonth: viewMonth });
       closeModal();
     } finally {
       setSaving(false);
     }
-  }, [billForm, editingId, householdId, closeModal]);
+  }, [billForm, bills, editingId, householdId, closeModal, viewMonth]);
 
   const handleSaveExpense = useCallback(async () => {
     const errs = {};
@@ -626,15 +907,63 @@ export default function BillsExpensesScreen({ navigation }) {
         amount:   Number(expenseForm.amount),
         date:     expenseForm.date,
         paidBy:   expenseForm.paidBy.trim(),
+        billId:   expenseForm.billId || null,
         notes:    expenseForm.notes.trim(),
       };
       if (editingId) await updateExpense(householdId, editingId, data);
       else           await addExpense(householdId, data);
+      const bill = bills.find(b => b.id === data.billId);
+      if (bill) await recordBillPayment(householdId, bill, data.date.substring(0, 7), data.amount);
       closeModal();
     } finally {
       setSaving(false);
     }
-  }, [expenseForm, editingId, householdId, closeModal]);
+  }, [expenseForm, bills, editingId, householdId, closeModal]);
+
+  const handleSaveIncome = useCallback(async () => {
+    const errs = {};
+    if (!incomeForm.name.trim()) errs.name = true;
+    if (!incomeForm.amount || isNaN(Number(incomeForm.amount))) errs.amount = true;
+    if (!incomeForm.recurring && !incomeForm.date) errs.date = true;
+    if (Object.keys(errs).length) { setErrors(errs); return; }
+
+    setSaving(true);
+    try {
+      const amount = Number(incomeForm.amount);
+      const shared = { amount, ownerUid: incomeForm.ownerUid, notes: incomeForm.notes.trim() };
+      const name   = incomeForm.name.trim();
+      if (incomeForm.recurring) {
+        const data = { ...shared, name };
+        if (editingId) await updateIncomeSource(householdId, editingId, data);
+        else           await addIncomeSource(householdId, { ...data, startMonth: viewMonth });
+      } else {
+        const data = { ...shared, title: name, date: incomeForm.date };
+        if (editingId) await updateExpense(householdId, editingId, data);
+        else           await addExpense(householdId, { ...data, category: 'other', paidBy: '', direction: 'in' });
+      }
+      closeModal();
+    } finally {
+      setSaving(false);
+    }
+  }, [incomeForm, editingId, householdId, closeModal, viewMonth]);
+
+  const saveMonthAmount = useCallback(async (amount) => {
+    const setAmount = monthEdit.kind === 'bill' ? setBillMonthAmount : setIncomeMonthAmount;
+    setSaving(true);
+    try {
+      await setAmount(householdId, monthEdit.item.id, viewMonth, amount);
+      closeModal();
+    } finally {
+      setSaving(false);
+    }
+  }, [monthEdit, householdId, viewMonth, closeModal]);
+
+  const handleSaveMonth = useCallback(() => {
+    const raw = monthEdit?.amount ?? '';
+    // 0 is valid: it skips the bill or income for this month.
+    if (raw === '' || isNaN(Number(raw)) || Number(raw) < 0) { setErrors({ amount: true }); return; }
+    saveMonthAmount(Number(raw));
+  }, [monthEdit, saveMonthAmount]);
 
   const handleSaveBudget = useCallback(async () => {
     const errs = {};
@@ -655,23 +984,33 @@ export default function BillsExpensesScreen({ navigation }) {
 
   const handleDeleteBill = useCallback(async (bill) => {
     const ok = await showConfirm({
-      title: 'Delete bill',
-      message: `Remove "${bill.name}"? This can't be undone.`,
-      confirmLabel: 'Delete',
+      title: t('fin.deleteBillTitle'),
+      message: t('fin.removeConfirm', { name: bill.name }),
+      confirmLabel: t('common.delete'),
       type: 'danger',
     });
     if (ok) deleteBill(householdId, bill.id);
-  }, [householdId, showConfirm]);
+  }, [householdId, showConfirm, t]);
 
   const handleDeleteExpense = useCallback(async (expense) => {
     const ok = await showConfirm({
-      title: 'Delete expense',
-      message: `Remove "${expense.title}"? This can't be undone.`,
-      confirmLabel: 'Delete',
+      title: expense.direction === 'in' ? t('fin.deleteIncomeTitle') : t('fin.deleteExpenseTitle'),
+      message: t('fin.removeConfirm', { name: expense.title }),
+      confirmLabel: t('common.delete'),
       type: 'danger',
     });
     if (ok) deleteExpense(householdId, expense.id);
-  }, [householdId, showConfirm]);
+  }, [householdId, showConfirm, t]);
+
+  const handleDeleteIncomeSource = useCallback(async (source) => {
+    const ok = await showConfirm({
+      title: t('fin.deleteIncomeTitle'),
+      message: t('fin.removeIncomeConfirm', { name: source.name }),
+      confirmLabel: t('common.delete'),
+      type: 'danger',
+    });
+    if (ok) deleteIncomeSource(householdId, source.id);
+  }, [householdId, showConfirm, t]);
 
   const handleTogglePaid = useCallback((bill, key, isPaid) => {
     const next = isPaid
@@ -683,13 +1022,13 @@ export default function BillsExpensesScreen({ navigation }) {
   const handleDeleteBudget = useCallback(async (category) => {
     const cat = budgetCatById[category];
     const ok = await showConfirm({
-      title: 'Remove budget',
-      message: `Remove the budget for "${cat?.label || category}"?`,
-      confirmLabel: 'Remove',
+      title: t('fin.removeBudgetTitle'),
+      message: t('fin.removeBudgetConfirm', { name: cat?.label || category }),
+      confirmLabel: t('fin.remove'),
       type: 'danger',
     });
     if (ok) deleteBudget(householdId, category);
-  }, [householdId, showConfirm, budgetCatById]);
+  }, [householdId, showConfirm, budgetCatById, t]);
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -723,23 +1062,23 @@ export default function BillsExpensesScreen({ navigation }) {
           {/* Header */}
           <View style={styles.header}>
             <View>
-              <Text style={styles.title}>Finances</Text>
-              <Text style={styles.subtitle}>Cash flow, budgets & bills</Text>
+              <Text style={styles.title}>{t('fin.title')}</Text>
+              <Text style={styles.subtitle}>{t('fin.subtitle')}</Text>
             </View>
             <TouchableOpacity
               style={styles.importBtn}
               onPress={() => navigation.navigate('StatementImport')}
               accessibilityRole="button"
-              accessibilityLabel="Import bank statement"
+              accessibilityLabel={t('fin.importStatement')}
             >
               <Ionicons name="document-attach-outline" size={16} color={colors.accent} />
-              <Text style={styles.importBtnText}>Import</Text>
+              <Text style={styles.importBtnText}>{t('fin.import')}</Text>
             </TouchableOpacity>
           </View>
 
           {/* Tab switcher */}
           <View style={styles.tabRow}>
-            {[['overview', 'Overview'], ['bills', 'Bills'], ['expenses', 'Expenses'], ['budgets', 'Budgets']].map(([key, label]) => (
+            {[['overview', t('fin.tabOverview')], ['bills', t('fin.tabBills')], ['income', t('fin.tabIncome')], ['expenses', t('fin.tabExpenses')], ['budgets', t('fin.tabBudgets')]].map(([key, label]) => (
               <TouchableOpacity
                 key={key}
                 style={[styles.tabBtn, activeTab === key && styles.tabBtnActive]}
@@ -747,7 +1086,12 @@ export default function BillsExpensesScreen({ navigation }) {
                 accessibilityRole="tab"
                 accessibilityState={{ selected: activeTab === key }}
               >
-                <Text style={[styles.tabBtnLabel, activeTab === key && styles.tabBtnLabelActive]} numberOfLines={1}>
+                <Text
+                  style={[styles.tabBtnLabel, activeTab === key && styles.tabBtnLabelActive]}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.8}
+                >
                   {label}
                 </Text>
               </TouchableOpacity>
@@ -757,20 +1101,20 @@ export default function BillsExpensesScreen({ navigation }) {
           {/* Tab content — keyed so it remounts and replays entrance anims on focus */}
           <View key={contentKey}>
           {/* ── Overview tab ──────────────────────────────────────────────── */}
-          {activeTab === 'overview' && expenses.length === 0 && (
+          {activeTab === 'overview' && !hasActivity && (
             <View style={styles.emptyState}>
               <Ionicons name="stats-chart-outline" size={48} color={colors.textTertiary} />
-              <Text style={styles.emptyTitle}>No activity yet</Text>
-              <Text style={styles.emptySub}>Add expenses or import a statement to see your cash flow and trends.</Text>
+              <Text style={styles.emptyTitle}>{t('fin.noActivity')}</Text>
+              <Text style={styles.emptySub}>{t('fin.noActivitySub')}</Text>
             </View>
           )}
 
-          {activeTab === 'overview' && expenses.length > 0 && (
+          {activeTab === 'overview' && hasActivity && (
             <>
               {/* Cash-flow hero */}
               <Rise index={0}>
               <View style={styles.flowCard}>
-                <Text style={styles.flowLabel}>Net this month</Text>
+                <Text style={styles.flowLabel}>{t('fin.netThisMonth')}</Text>
                 <Text style={[styles.flowNet, { color: flow.net >= 0 ? colors.sage : colors.danger }]}>
                   {flow.net >= 0 ? '' : '−'}{fmtCurrency(Math.abs(flow.net))}
                 </Text>
@@ -778,7 +1122,7 @@ export default function BillsExpensesScreen({ navigation }) {
                   <View style={styles.flowStat}>
                     <View style={styles.flowStatHead}>
                       <Ionicons name="arrow-down-circle" size={14} color={colors.sage} />
-                      <Text style={styles.flowStatLabel}>Money in</Text>
+                      <Text style={styles.flowStatLabel}>{t('fin.moneyIn')}</Text>
                     </View>
                     <Text style={[styles.flowStatValue, { color: colors.sage }]}>{fmtCurrency(flow.income)}</Text>
                   </View>
@@ -786,7 +1130,7 @@ export default function BillsExpensesScreen({ navigation }) {
                   <View style={styles.flowStat}>
                     <View style={styles.flowStatHead}>
                       <Ionicons name="arrow-up-circle" size={14} color={colors.amber} />
-                      <Text style={styles.flowStatLabel}>Money out</Text>
+                      <Text style={styles.flowStatLabel}>{t('fin.moneyOut')}</Text>
                     </View>
                     <Text style={[styles.flowStatValue, { color: colors.amber }]}>{fmtCurrency(flow.spending)}</Text>
                   </View>
@@ -794,13 +1138,16 @@ export default function BillsExpensesScreen({ navigation }) {
                   <View style={styles.flowStat}>
                     <View style={styles.flowStatHead}>
                       <Ionicons name="pie-chart" size={13} color={colors.textSecondary} />
-                      <Text style={styles.flowStatLabel}>Saved</Text>
+                      <Text style={styles.flowStatLabel}>{t('fin.savedRate')}</Text>
                     </View>
                     <Text style={styles.flowStatValue}>
                       {flow.income > 0 ? `${Math.round(flow.savingsRate * 100)}%` : '—'}
                     </Text>
                   </View>
                 </View>
+                {fixedBills > 0 && (
+                  <Text style={styles.flowFootnote}>{t('fin.includesRecurring', { amount: fmtCurrency(fixedBills) })}</Text>
+                )}
               </View>
               </Rise>
 
@@ -815,41 +1162,128 @@ export default function BillsExpensesScreen({ navigation }) {
           {activeTab === 'bills' && (
             <>
               {bills.length > 0 && (
+                <MonthStepper value={viewMonth} currentMonth={monthKey} onChange={setViewMonth} colors={colors} styles={styles} />
+              )}
+
+              {viewBills.length > 0 && (
                 <Rise index={0} style={styles.summaryRow}>
                   <View style={styles.summaryCard}>
                     <Text style={styles.summaryValue}>{fmtCurrency(monthlyTotal)}</Text>
-                    <Text style={styles.summaryLabel}>Monthly</Text>
+                    <Text style={styles.summaryLabel}>{t('fin.total')}</Text>
                   </View>
                   <View style={styles.summaryCard}>
                     <Text style={[styles.summaryValue, { color: colors.sage }]}>{fmtCurrency(paidAmount)}</Text>
-                    <Text style={styles.summaryLabel}>Paid {paidCount}/{bills.length}</Text>
+                    <Text style={styles.summaryLabel}>{t('fin.paidCount', { paid: paidCount, total: viewBills.length })}</Text>
                   </View>
                   <View style={styles.summaryCard}>
                     <Text style={[styles.summaryValue, { color: outstanding > 0 ? colors.danger : colors.sage }]}>
                       {fmtCurrency(outstanding)}
                     </Text>
-                    <Text style={styles.summaryLabel}>Outstanding</Text>
+                    <Text style={styles.summaryLabel}>{t('fin.outstanding')}</Text>
                   </View>
                 </Rise>
               )}
 
-              {bills.length === 0 ? (
+              {estimatedBills > 0 && (
+                <Text style={styles.estimateNote}>{t('fin.includesEstimated', { amount: fmtCurrency(estimatedBills) })}</Text>
+              )}
+
+              {viewBills.length === 0 ? (
                 <View style={styles.emptyState}>
                   <Ionicons name="receipt-outline" size={48} color={colors.textTertiary} />
-                  <Text style={styles.emptyTitle}>No bills yet</Text>
-                  <Text style={styles.emptySub}>Add your first recurring bill — rent, electricity, internet…</Text>
+                  <Text style={styles.emptyTitle}>{bills.length ? t('fin.noBillsThisMonth') : t('fin.noBillsYet')}</Text>
+                  <Text style={styles.emptySub}>
+                    {bills.length ? t('fin.noBillsThisMonthSub') : t('fin.noBillsYetSub')}
+                  </Text>
                 </View>
               ) : (
                 <View style={styles.list}>
-                  {bills.map((bill, i) => (
+                  {viewBills.map((bill, i) => (
                     <Rise key={bill.id} index={Math.min(i + 1, 8)}>
                       <BillCard
                         bill={bill}
                         cats={allBillCats}
-                        monthKey={monthKey}
+                        monthKey={viewMonth}
+                        currentMonth={monthKey}
                         onEdit={openEditBill}
+                        onEditMonth={openEditMonth}
                         onDelete={handleDeleteBill}
                         onTogglePaid={handleTogglePaid}
+                        colors={colors}
+                        styles={styles}
+                      />
+                    </Rise>
+                  ))}
+                </View>
+              )}
+            </>
+          )}
+
+          {/* ── Income tab ────────────────────────────────────────────────── */}
+          {activeTab === 'income' && (
+            <>
+              <MonthStepper value={viewMonth} currentMonth={monthKey} onChange={setViewMonth} colors={colors} styles={styles} />
+
+              {income.total > 0 && (
+                <Rise index={0} style={styles.summaryRow}>
+                  <View style={styles.summaryCard}>
+                    <Text style={[styles.summaryValue, { color: colors.sage }]}>{fmtCurrency(income.total)}</Text>
+                    <Text style={styles.summaryLabel}>{t('fin.total')}</Text>
+                  </View>
+                  <View style={styles.summaryCard}>
+                    <Text style={styles.summaryValue}>{fmtCurrency(income.recurringTotal)}</Text>
+                    <Text style={styles.summaryLabel}>{t('fin.recurring')}</Text>
+                  </View>
+                  <View style={styles.summaryCard}>
+                    <Text style={styles.summaryValue}>{fmtCurrency(income.oneOffTotal)}</Text>
+                    <Text style={styles.summaryLabel}>{t('fin.oneOff')}</Text>
+                  </View>
+                </Rise>
+              )}
+
+              {income.byOwner.length > 1 && (
+                <Rise index={1}>
+                  <View style={styles.ownerCard}>
+                    {income.byOwner.map(o => (
+                      <View key={o.ownerUid || 'household'} style={styles.ownerRow}>
+                        <Text style={styles.ownerName} numberOfLines={1}>{ownerLabel(o.ownerUid)}</Text>
+                        <Text style={styles.ownerAmount}>{fmtCurrency(o.amount)}</Text>
+                      </View>
+                    ))}
+                  </View>
+                </Rise>
+              )}
+
+              {income.recurring.length === 0 && income.oneOff.length === 0 ? (
+                <View style={styles.emptyState}>
+                  <Ionicons name="wallet-outline" size={48} color={colors.textTertiary} />
+                  <Text style={styles.emptyTitle}>{t('fin.noIncome')}</Text>
+                  <Text style={styles.emptySub}>{t('fin.noIncomeSub')}</Text>
+                </View>
+              ) : (
+                <View style={styles.list}>
+                  {income.recurring.map((source, i) => (
+                    <Rise key={source.id} index={Math.min(i + 2, 8)}>
+                      <IncomeCard
+                        source={source}
+                        monthKey={viewMonth}
+                        ownerLabel={ownerLabel(source.ownerUid)}
+                        onEdit={openEditIncomeSource}
+                        onEditMonth={openEditMonth}
+                        onDelete={handleDeleteIncomeSource}
+                        colors={colors}
+                        styles={styles}
+                      />
+                    </Rise>
+                  ))}
+                  {income.oneOff.map((entry, i) => (
+                    <Rise key={entry.id} index={Math.min(i + 2, 8)}>
+                      <ExpenseCard
+                        expense={entry}
+                        cats={allExpenseCats}
+                        ownerLabel={ownerLabel(entry.ownerUid)}
+                        onEdit={openEditIncomeEntry}
+                        onDelete={handleDeleteExpense}
                         colors={colors}
                         styles={styles}
                       />
@@ -867,11 +1301,11 @@ export default function BillsExpensesScreen({ navigation }) {
                 <Rise index={0} style={[styles.summaryRow, { gap: spacing.md }]}>
                   <View style={[styles.summaryCard, { flex: 1 }]}>
                     <Text style={[styles.summaryValue, { color: colors.amber }]}>{fmtCurrency(thisMonthTotal)}</Text>
-                    <Text style={styles.summaryLabel}>This month</Text>
+                    <Text style={styles.summaryLabel}>{t('fin.thisMonth')}</Text>
                   </View>
                   <View style={[styles.summaryCard, { flex: 1 }]}>
                     <Text style={styles.summaryValue}>{fmtCurrency(thisYearTotal)}</Text>
-                    <Text style={styles.summaryLabel}>This year</Text>
+                    <Text style={styles.summaryLabel}>{t('fin.thisYear')}</Text>
                   </View>
                 </Rise>
               )}
@@ -879,8 +1313,8 @@ export default function BillsExpensesScreen({ navigation }) {
               {groupedExpenses.length === 0 ? (
                 <View style={styles.emptyState}>
                   <Ionicons name="cash-outline" size={48} color={colors.textTertiary} />
-                  <Text style={styles.emptyTitle}>No expenses yet</Text>
-                  <Text style={styles.emptySub}>Track household spending — repairs, cleaning, appliances…</Text>
+                  <Text style={styles.emptyTitle}>{t('fin.noExpenses')}</Text>
+                  <Text style={styles.emptySub}>{t('fin.noExpensesSub')}</Text>
                 </View>
               ) : (
                 <View style={styles.list}>
@@ -918,18 +1352,18 @@ export default function BillsExpensesScreen({ navigation }) {
                 <Rise index={0} style={styles.summaryRow}>
                   <View style={styles.summaryCard}>
                     <Text style={styles.summaryValue}>{fmtCurrency(budgetTotals.budgeted)}</Text>
-                    <Text style={styles.summaryLabel}>Budgeted</Text>
+                    <Text style={styles.summaryLabel}>{t('fin.budgeted')}</Text>
                   </View>
                   <View style={styles.summaryCard}>
                     <Text style={[styles.summaryValue, { color: colors.amber }]}>{fmtCurrency(budgetTotals.spent)}</Text>
-                    <Text style={styles.summaryLabel}>Spent</Text>
+                    <Text style={styles.summaryLabel}>{t('fin.spent')}</Text>
                   </View>
                   <View style={styles.summaryCard}>
                     <Text style={[styles.summaryValue, { color: budgetTotals.remaining < 0 ? colors.danger : colors.sage }]}>
                       {fmtCurrency(budgetTotals.remaining)}
                     </Text>
                     <Text style={styles.summaryLabel}>
-                      {budgetTotals.overCount > 0 ? `${budgetTotals.overCount} over` : 'Left'}
+                      {budgetTotals.overCount > 0 ? t('fin.overCount', { count: budgetTotals.overCount }) : t('fin.left')}
                     </Text>
                   </View>
                 </Rise>
@@ -938,8 +1372,8 @@ export default function BillsExpensesScreen({ navigation }) {
               {budgetRows.length === 0 ? (
                 <View style={styles.emptyState}>
                   <Ionicons name="wallet-outline" size={48} color={colors.textTertiary} />
-                  <Text style={styles.emptyTitle}>No budgets yet</Text>
-                  <Text style={styles.emptySub}>Set a monthly limit per category and track spending against it.</Text>
+                  <Text style={styles.emptyTitle}>{t('fin.noBudgets')}</Text>
+                  <Text style={styles.emptySub}>{t('fin.noBudgetsSub')}</Text>
                 </View>
               ) : (
                 <View style={styles.list}>
@@ -967,7 +1401,7 @@ export default function BillsExpensesScreen({ navigation }) {
         {/* FAB */}
         <FloatingActionButton
           onPress={openNew}
-          accessibilityLabel={`Add ${activeTab === 'bills' ? 'bill' : activeTab === 'budgets' ? 'budget' : 'expense'}`}
+          accessibilityLabel={t(activeTab === 'bills' ? 'fin.addBillA11y' : activeTab === 'budgets' ? 'fin.addBudgetA11y' : activeTab === 'income' ? 'fin.addIncomeA11y' : 'fin.addExpenseA11y')}
           hideAnim={fab.hideAnim}
           interactive={fab.interactive}
         />
@@ -996,13 +1430,17 @@ export default function BillsExpensesScreen({ navigation }) {
             {/* Sheet title */}
             <View style={styles.sheetHeader}>
               <Text style={styles.sheetTitle}>
-                {modalType === 'bill'
-                  ? (editingId ? 'Edit Bill' : 'Add Bill')
+                {modalType === 'month'
+                  ? `${monthEdit?.item.name} · ${fmtMonthGroup(viewMonth)}`
+                  : modalType === 'income'
+                  ? (editingId ? t('fin.editIncome') : t('fin.addIncome'))
+                  : modalType === 'bill'
+                  ? (editingId ? t('fin.editBill') : t('fin.addBill'))
                   : modalType === 'budget'
-                    ? (editingId ? 'Edit Budget' : 'Add Budget')
-                    : (editingId ? 'Edit Expense' : 'Add Expense')}
+                    ? (editingId ? t('fin.editBudget') : t('fin.addBudget'))
+                    : (editingId ? t('fin.editExpense') : t('fin.addExpense'))}
               </Text>
-              <TouchableOpacity onPress={closeModal} accessibilityRole="button" accessibilityLabel="Close">
+              <TouchableOpacity onPress={closeModal} accessibilityRole="button" accessibilityLabel={t('common.close')}>
                 <Ionicons name="close" size={22} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
@@ -1012,9 +1450,122 @@ export default function BillsExpensesScreen({ navigation }) {
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
             >
-              {modalType === 'budget' ? (
+              {modalType === 'month' ? (
                 <>
-                  <Text style={styles.fieldLabel}>Category</Text>
+                  <Text style={styles.fieldLabel}>{t('fin.amountForMonth', { month: fmtMonthGroup(viewMonth) })}</Text>
+                  <View style={[styles.inputPrefix, errors.amount && styles.inputError]}>
+                    <Text style={styles.prefixText}>{currencySymbol()}</Text>
+                    <TextInput
+                      style={styles.inputInner}
+                      placeholder="0.00"
+                      placeholderTextColor={colors.textTertiary}
+                      value={monthEdit?.amount ?? ''}
+                      onChangeText={v => { setMonthEdit(m => ({ ...m, amount: v })); setErrors(e => ({ ...e, amount: false })); }}
+                      keyboardType="decimal-pad"
+                    />
+                  </View>
+                  <Text style={styles.helperText}>
+                    {monthEdit && billTypeOf(monthEdit.item) === 'variable'
+                      ? t('fin.monthHintVariable')
+                      : t('fin.monthHintFixed', { amount: fmtCurrency(monthEdit?.item.amount) })}
+                  </Text>
+                  {!!monthEdit && hasMonthOverride(monthEdit.item, viewMonth) && (
+                    <TouchableOpacity
+                      style={styles.resetBtn}
+                      onPress={() => saveMonthAmount(null)}
+                      disabled={saving}
+                      accessibilityRole="button"
+                    >
+                      <Text style={[styles.resetBtnLabel, { color: colors.accent }]}>
+                        {billTypeOf(monthEdit.item) === 'variable' ? t('fin.useEstimate') : t('fin.useUsual')}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                </>
+              ) : modalType === 'income' ? (
+                <>
+                  {!editingId && (
+                    <View style={styles.segmentRow}>
+                      {[[true, t('fin.everyMonth')], [false, t('fin.oneTime')]].map(([value, label]) => (
+                        <TouchableOpacity
+                          key={label}
+                          style={[styles.segmentBtn, incomeForm.recurring === value && styles.tabBtnActive]}
+                          onPress={() => setIncomeForm(f => ({ ...f, recurring: value }))}
+                          accessibilityRole="button"
+                          accessibilityState={{ selected: incomeForm.recurring === value }}
+                        >
+                          <Text style={[styles.tabBtnLabel, incomeForm.recurring === value && styles.tabBtnLabelActive]}>{label}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  )}
+
+                  <Text style={styles.fieldLabel}>{t('fin.name')}</Text>
+                  <TextInput
+                    style={[styles.input, errors.name && styles.inputError]}
+                    placeholder={incomeForm.recurring ? t('fin.salaryPlaceholder') : t('fin.bonusPlaceholder')}
+                    placeholderTextColor={colors.textTertiary}
+                    value={incomeForm.name}
+                    onChangeText={v => { setIncomeForm(f => ({ ...f, name: v })); setErrors(e => ({ ...e, name: false })); }}
+                  />
+
+                  <Text style={styles.fieldLabel}>{incomeForm.recurring ? t('fin.monthlyAmount') : t('fin.amount')}</Text>
+                  <View style={[styles.inputPrefix, errors.amount && styles.inputError]}>
+                    <Text style={styles.prefixText}>{currencySymbol()}</Text>
+                    <TextInput
+                      style={styles.inputInner}
+                      placeholder="0.00"
+                      placeholderTextColor={colors.textTertiary}
+                      value={incomeForm.amount}
+                      onChangeText={v => { setIncomeForm(f => ({ ...f, amount: v })); setErrors(e => ({ ...e, amount: false })); }}
+                      keyboardType="decimal-pad"
+                    />
+                  </View>
+
+                  {!incomeForm.recurring && (
+                    <>
+                      <Text style={styles.fieldLabel}>{t('fin.date')}</Text>
+                      <DatePickerInput
+                        value={incomeForm.date}
+                        onChange={v => { setIncomeForm(f => ({ ...f, date: v })); setErrors(e => ({ ...e, date: false })); }}
+                        hasError={!!errors.date}
+                      />
+                    </>
+                  )}
+
+                  <Text style={styles.fieldLabel}>{t('fin.whoseIncome')}</Text>
+                  <View style={styles.ownerChips}>
+                    {ownerOptions.map(o => {
+                      const selected = incomeForm.ownerUid === o.uid;
+                      return (
+                        <TouchableOpacity
+                          key={o.uid || 'household'}
+                          style={[styles.ownerChip, selected && { backgroundColor: colors.accentSoft, borderColor: colors.accent }]}
+                          onPress={() => setIncomeForm(f => ({ ...f, ownerUid: o.uid }))}
+                          accessibilityRole="button"
+                          accessibilityState={{ selected }}
+                        >
+                          <Text style={[styles.ownerChipLabel, selected && { color: colors.accent }]}>{o.label}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+
+                  <Text style={styles.fieldLabel}>{t('fin.notes')}</Text>
+                  <TextInput
+                    style={[styles.input, styles.inputMultiline]}
+                    placeholder={t('fin.optional')}
+                    placeholderTextColor={colors.textTertiary}
+                    value={incomeForm.notes}
+                    onChangeText={v => setIncomeForm(f => ({ ...f, notes: v }))}
+                    multiline
+                    numberOfLines={2}
+                    textAlignVertical="top"
+                  />
+                </>
+              ) : modalType === 'budget' ? (
+                <>
+                  <Text style={styles.fieldLabel}>{t('fin.category')}</Text>
                   {editingId ? (
                     <View style={styles.budgetCatStatic}>
                       <Text style={styles.budgetCatStaticText}>
@@ -1035,9 +1586,9 @@ export default function BillsExpensesScreen({ navigation }) {
                     </ScrollView>
                   )}
 
-                  <Text style={styles.fieldLabel}>Monthly limit *</Text>
+                  <Text style={styles.fieldLabel}>{t('fin.monthlyLimit')}</Text>
                   <View style={[styles.inputPrefix, errors.amount && styles.inputError]}>
-                    <Text style={styles.prefixText}>$</Text>
+                    <Text style={styles.prefixText}>{currencySymbol()}</Text>
                     <TextInput
                       style={styles.inputInner}
                       placeholder="0.00"
@@ -1047,20 +1598,35 @@ export default function BillsExpensesScreen({ navigation }) {
                       keyboardType="decimal-pad"
                     />
                   </View>
-                  <Text style={styles.helperText}>Applies every month. Track it on the Budgets tab.</Text>
+                  <Text style={styles.helperText}>{t('fin.budgetHint')}</Text>
                 </>
               ) : modalType === 'bill' ? (
                 <>
-                  <Text style={styles.fieldLabel}>Bill name *</Text>
+                  <View style={styles.segmentRow}>
+                    {BILL_TYPES.map(([value, label]) => (
+                      <TouchableOpacity
+                        key={value}
+                        style={[styles.segmentBtn, billForm.billType === value && styles.tabBtnActive]}
+                        onPress={() => setBillForm(f => ({ ...f, billType: value }))}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: billForm.billType === value }}
+                      >
+                        <Text style={[styles.tabBtnLabel, billForm.billType === value && styles.tabBtnLabelActive]}>{t(label)}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                  <Text style={styles.helperText}>{t(BILL_TYPE_HINT[billForm.billType])}</Text>
+
+                  <Text style={styles.fieldLabel}>{t('fin.billName')}</Text>
                   <TextInput
                     style={[styles.input, errors.name && styles.inputError]}
-                    placeholder="e.g. Electricity"
+                    placeholder={t('fin.billNamePlaceholder')}
                     placeholderTextColor={colors.textTertiary}
                     value={billForm.name}
                     onChangeText={v => { setBillForm(f => ({ ...f, name: v })); setErrors(e => ({ ...e, name: false })); }}
                   />
 
-                  <Text style={styles.fieldLabel}>Category</Text>
+                  <Text style={styles.fieldLabel}>{t('fin.category')}</Text>
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipsWrap} contentContainerStyle={styles.chipsWrapContent}>
                     {allBillCats.map(cat => (
                       <CatChip
@@ -1073,9 +1639,9 @@ export default function BillsExpensesScreen({ navigation }) {
                     ))}
                   </ScrollView>
 
-                  <Text style={styles.fieldLabel}>Monthly amount *</Text>
+                  <Text style={styles.fieldLabel}>{t(BILL_AMOUNT_LABEL[billForm.billType])}</Text>
                   <View style={[styles.inputPrefix, errors.amount && styles.inputError]}>
-                    <Text style={styles.prefixText}>$</Text>
+                    <Text style={styles.prefixText}>{currencySymbol()}</Text>
                     <TextInput
                       style={styles.inputInner}
                       placeholder="0.00"
@@ -1086,10 +1652,10 @@ export default function BillsExpensesScreen({ navigation }) {
                     />
                   </View>
 
-                  <Text style={styles.fieldLabel}>Due day of month * (1–31)</Text>
+                  <Text style={styles.fieldLabel}>{t('fin.dueDayField')}</Text>
                   <TextInput
                     style={[styles.input, errors.dueDayOfMonth && styles.inputError]}
-                    placeholder="e.g. 15"
+                    placeholder={t('fin.dueDayPlaceholder')}
                     placeholderTextColor={colors.textTertiary}
                     value={billForm.dueDayOfMonth}
                     onChangeText={v => { setBillForm(f => ({ ...f, dueDayOfMonth: v })); setErrors(e => ({ ...e, dueDayOfMonth: false })); }}
@@ -1097,10 +1663,10 @@ export default function BillsExpensesScreen({ navigation }) {
                     maxLength={2}
                   />
 
-                  <Text style={styles.fieldLabel}>Notes</Text>
+                  <Text style={styles.fieldLabel}>{t('fin.notes')}</Text>
                   <TextInput
                     style={[styles.input, styles.inputMultiline]}
-                    placeholder="Optional"
+                    placeholder={t('fin.optional')}
                     placeholderTextColor={colors.textTertiary}
                     value={billForm.notes}
                     onChangeText={v => setBillForm(f => ({ ...f, notes: v }))}
@@ -1111,16 +1677,16 @@ export default function BillsExpensesScreen({ navigation }) {
                 </>
               ) : (
                 <>
-                  <Text style={styles.fieldLabel}>Title *</Text>
+                  <Text style={styles.fieldLabel}>{t('fin.titleField')}</Text>
                   <TextInput
                     style={[styles.input, errors.title && styles.inputError]}
-                    placeholder="e.g. Plumber repair"
+                    placeholder={t('fin.expenseTitlePlaceholder')}
                     placeholderTextColor={colors.textTertiary}
                     value={expenseForm.title}
                     onChangeText={v => { setExpenseForm(f => ({ ...f, title: v })); setErrors(e => ({ ...e, title: false })); }}
                   />
 
-                  <Text style={styles.fieldLabel}>Category</Text>
+                  <Text style={styles.fieldLabel}>{t('fin.category')}</Text>
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipsWrap} contentContainerStyle={styles.chipsWrapContent}>
                     {allExpenseCats.map(cat => (
                       <CatChip
@@ -1133,9 +1699,9 @@ export default function BillsExpensesScreen({ navigation }) {
                     ))}
                   </ScrollView>
 
-                  <Text style={styles.fieldLabel}>Amount *</Text>
+                  <Text style={styles.fieldLabel}>{t('fin.amount')}</Text>
                   <View style={[styles.inputPrefix, errors.amount && styles.inputError]}>
-                    <Text style={styles.prefixText}>$</Text>
+                    <Text style={styles.prefixText}>{currencySymbol()}</Text>
                     <TextInput
                       style={styles.inputInner}
                       placeholder="0.00"
@@ -1146,26 +1712,48 @@ export default function BillsExpensesScreen({ navigation }) {
                     />
                   </View>
 
-                  <Text style={styles.fieldLabel}>Date *</Text>
+                  <Text style={styles.fieldLabel}>{t('fin.date')}</Text>
                   <DatePickerInput
                     value={expenseForm.date}
                     onChange={v => { setExpenseForm(f => ({ ...f, date: v })); setErrors(e => ({ ...e, date: false })); }}
                     hasError={!!errors.date}
                   />
 
-                  <Text style={styles.fieldLabel}>Paid by</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder={displayName || 'Name'}
-                    placeholderTextColor={colors.textTertiary}
+                  <Text style={styles.fieldLabel}>{t('fin.paidBy')}</Text>
+                  <Dropdown
+                    label={t('fin.paidBy')}
+                    placeholder={t('fin.selectMember')}
+                    emptyText={t('fin.noMembers')}
                     value={expenseForm.paidBy}
-                    onChangeText={v => setExpenseForm(f => ({ ...f, paidBy: v }))}
+                    fallback={expenseForm.paidBy}
+                    options={memberOptions}
+                    onChange={v => setExpenseForm(f => ({ ...f, paidBy: v }))}
+                    colors={colors}
+                    styles={styles}
                   />
 
-                  <Text style={styles.fieldLabel}>Notes</Text>
+                  <Text style={styles.fieldLabel}>{t('fin.billPayment')}</Text>
+                  <Dropdown
+                    label={t('fin.billPayment')}
+                    placeholder={t('fin.notBillPayment')}
+                    emptyText={t('fin.noBillsOption')}
+                    value={expenseForm.billId}
+                    fallback={t('fin.deletedBill')}
+                    options={billOptions}
+                    onChange={v => setExpenseForm(f => ({ ...f, billId: v }))}
+                    colors={colors}
+                    styles={styles}
+                  />
+                  {!!expenseForm.billId && (
+                    <Text style={styles.helperText}>
+                      {t('fin.billPaymentHint')}
+                    </Text>
+                  )}
+
+                  <Text style={styles.fieldLabel}>{t('fin.notes')}</Text>
                   <TextInput
                     style={[styles.input, styles.inputMultiline]}
-                    placeholder="Optional"
+                    placeholder={t('fin.optional')}
                     placeholderTextColor={colors.textTertiary}
                     value={expenseForm.notes}
                     onChangeText={v => setExpenseForm(f => ({ ...f, notes: v }))}
@@ -1178,12 +1766,19 @@ export default function BillsExpensesScreen({ navigation }) {
 
               <TouchableOpacity
                 style={[styles.saveBtn, { backgroundColor: colors.accent }, saving && { opacity: 0.6 }]}
-                onPress={modalType === 'bill' ? handleSaveBill : modalType === 'budget' ? handleSaveBudget : handleSaveExpense}
+                onPress={
+                  modalType === 'month' ? handleSaveMonth
+                    : modalType === 'income' ? handleSaveIncome
+                    : modalType === 'bill' ? handleSaveBill
+                    : modalType === 'budget' ? handleSaveBudget
+                    : handleSaveExpense
+                }
                 disabled={saving}
                 accessibilityRole="button"
               >
                 <Text style={styles.saveBtnLabel}>
-                  {saving ? 'Saving…' : editingId ? 'Save changes' : 'Add'}
+                  {saving ? t('common.saving') : editingId ? t('fin.saveChanges') : t('common.add')}
+
                 </Text>
               </TouchableOpacity>
             </ScrollView>
@@ -1237,7 +1832,7 @@ const makeStyles = (colors) => StyleSheet.create({
     backgroundColor: colors.surface,
     shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 8, elevation: 3,
   },
-  tabBtnLabel:       { ...type.bodyMed, color: colors.textTertiary, fontSize: 14 },
+  tabBtnLabel:       { ...type.bodyMed, color: colors.textTertiary, fontSize: 13 },
   tabBtnLabelActive: { color: colors.textPrimary },
 
   summaryRow: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.xxl },
@@ -1264,6 +1859,38 @@ const makeStyles = (colors) => StyleSheet.create({
   flowStatLabel: { ...type.caption, color: colors.textTertiary },
   flowStatValue: { ...type.bodyMed, color: colors.textPrimary, fontVariant: ['tabular-nums'] },
   flowDivider:   { width: 1, backgroundColor: colors.border, marginVertical: 2 },
+  flowFootnote:  { ...type.caption, color: colors.textTertiary, marginTop: spacing.md, textAlign: 'center' },
+
+  // ── Month stepper ─────────────────────────────────────────────────────────
+  monthStepper: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    marginBottom: spacing.lg,
+  },
+  monthStepperLabel: { ...type.bodyMed, color: colors.textPrimary, textAlign: 'center' },
+  monthStepperHint:  { ...type.caption, color: colors.accent, textAlign: 'center' },
+
+  // ── Income ────────────────────────────────────────────────────────────────
+  ownerCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.xl, borderWidth: 1, borderColor: colors.border,
+    padding: spacing.lg, gap: spacing.sm, marginBottom: spacing.lg,
+  },
+  ownerRow:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.md },
+  ownerName:   { ...type.body, color: colors.textSecondary, flex: 1 },
+  ownerAmount: { ...type.bodyMed, color: colors.textPrimary, fontVariant: ['tabular-nums'] },
+  ownerChips:  { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: 2 },
+  ownerChip: {
+    paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
+    borderRadius: radius.full, borderWidth: 1, borderColor: colors.border,
+  },
+  ownerChipLabel: { ...type.bodySm, color: colors.textSecondary, fontWeight: '600' },
+  segmentRow: {
+    flexDirection: 'row', backgroundColor: colors.muted,
+    borderRadius: radius.lg, padding: 3,
+  },
+  segmentBtn: { flex: 1, paddingVertical: 9, alignItems: 'center', borderRadius: radius.md },
+  resetBtn:      { alignItems: 'center', paddingVertical: spacing.md, marginTop: spacing.sm },
+  resetBtnLabel: { ...type.bodySm, fontWeight: '700' },
 
   // ── Overview: trend chart ─────────────────────────────────────────────────
   cardHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.md },
@@ -1301,6 +1928,7 @@ const makeStyles = (colors) => StyleSheet.create({
   },
   budgetCatStaticText: { ...type.body, color: colors.textPrimary },
   helperText: { ...type.caption, color: colors.textTertiary, marginTop: spacing.sm },
+  estimateNote: { ...type.caption, color: colors.amber, textAlign: 'center', marginTop: -spacing.lg, marginBottom: spacing.lg },
 
   emptyState: { alignItems: 'center', gap: spacing.md, marginTop: 60 },
   emptyTitle: { ...type.h4, color: colors.textSecondary },
@@ -1454,6 +2082,17 @@ const makeStyles = (colors) => StyleSheet.create({
     flex: 1, height: 50,
     ...type.body, color: colors.textPrimary,
     paddingRight: spacing.lg,
+  },
+  dropdownBtn:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm },
+  dropdownValue: { ...type.body, color: colors.textPrimary, flexShrink: 1 },
+  dropdownEmpty: { ...type.bodySm, color: colors.textTertiary, padding: spacing.md },
+  dropdownList: {
+    marginTop: spacing.xs, backgroundColor: colors.surfaceElevated,
+    borderRadius: radius.md, borderWidth: 1, borderColor: colors.border,
+  },
+  dropdownOption: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm,
+    minHeight: 44, paddingHorizontal: spacing.lg,
   },
   chipsWrap: { marginTop: 2 },
   chipsWrapContent: { flexDirection: 'row', gap: spacing.sm },

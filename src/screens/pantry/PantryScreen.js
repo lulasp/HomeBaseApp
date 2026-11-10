@@ -19,7 +19,9 @@ import { subscribePantryItems, addPantryItem, updatePantryItem, deletePantryItem
 import DatePickerInput from '../../components/DatePickerInput';
 import DragScrollView from '../../components/DragScrollView';
 import { spacing, radius, type } from '../../theme/colors';
-import { PANTRY_CATEGORIES, NON_FOOD_CATEGORIES, UNITS, withOverrides } from '../../utils/categories';
+import { PANTRY_CATEGORIES, NON_FOOD_CATEGORIES, UNITS, withOverrides, categoryName, unitName } from '../../utils/categories';
+import { t } from '../../i18n';
+import { useLanguage } from '../../context/LanguageContext';
 
 const applyOrder = (all, order) => {
   if (!order.length) return all;
@@ -30,21 +32,22 @@ const applyOrder = (all, order) => {
 const getExpiryStatus = (expiryDate, colors) => {
   if (!expiryDate) return null;
   const days = differenceInDays(parseISO(expiryDate), new Date());
-  if (days < 0)  return { label: 'Expired',      bg: colors.dangerSoft,   text: colors.danger,  icon: 'warning',                  border: colors.danger  };
-  if (days <= 3) return { label: `${days}d left`, bg: colors.dangerSoft,   text: colors.danger,  icon: 'time-outline',             border: colors.danger  };
-  if (days <= 7) return { label: `${days}d left`, bg: colors.amberSoft,    text: colors.amber,   icon: 'time-outline',             border: colors.amber   };
-  return              { label: `${days}d left`,   bg: colors.successSoft,  text: colors.success, icon: 'checkmark-circle-outline', border: colors.success };
+  if (days < 0)  return { label: t('pantry.expired'),      bg: colors.dangerSoft,   text: colors.danger,  icon: 'warning',                  border: colors.danger  };
+  if (days <= 3) return { label: t('pantry.daysLeft', { days }), bg: colors.dangerSoft,   text: colors.danger,  icon: 'time-outline',             border: colors.danger  };
+  if (days <= 7) return { label: t('pantry.daysLeft', { days }), bg: colors.amberSoft,    text: colors.amber,   icon: 'time-outline',             border: colors.amber   };
+  return              { label: t('pantry.daysLeft', { days }),   bg: colors.successSoft,  text: colors.success, icon: 'checkmark-circle-outline', border: colors.success };
 };
 
 const PantryItemRow = memo(({ item, onEdit, onDelete }) => {
   const { colors } = useTheme();
+  useLanguage();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const expiry = getExpiryStatus(item.expiryDate, colors);
   return (
     <View style={[styles.pantryItemRow, expiry && { borderLeftColor: expiry.border }]}>
       <View style={styles.itemDetails}>
         <Text style={styles.itemName}>{item.name}</Text>
-        <Text style={styles.itemQuantityUnit}>{item.quantity} {item.unit}</Text>
+        <Text style={styles.itemQuantityUnit}>{item.quantity} {unitName(item.unit)}</Text>
         {expiry && (
           <View style={[styles.expiryTag, { backgroundColor: expiry.bg }]}>
             <Ionicons name={expiry.icon} size={10} color={expiry.text} />
@@ -57,7 +60,7 @@ const PantryItemRow = memo(({ item, onEdit, onDelete }) => {
           onPress={onEdit}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           accessibilityRole="button"
-          accessibilityLabel={`Edit ${item.name}`}
+          accessibilityLabel={t('grocery.editItem', { name: item.name })}
         >
           <Ionicons name="pencil-outline" size={17} color={colors.textTertiary} />
         </TouchableOpacity>
@@ -65,7 +68,7 @@ const PantryItemRow = memo(({ item, onEdit, onDelete }) => {
           onPress={onDelete}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           accessibilityRole="button"
-          accessibilityLabel={`Remove ${item.name}`}
+          accessibilityLabel={t('grocery.removeItemA11y', { name: item.name })}
         >
           <Ionicons name="trash-outline" size={17} color={colors.textTertiary} />
         </TouchableOpacity>
@@ -77,6 +80,7 @@ const PantryItemRow = memo(({ item, onEdit, onDelete }) => {
 export default function PantryScreen() {
   const { householdId, user } = useAuth();
   const { colors } = useTheme();
+  useLanguage();
   const { animationsEnabled } = useHousehold();
   const navScrollProps = useNavScrollProps();
   const { showAlert, showConfirm } = useAlert();
@@ -158,11 +162,11 @@ export default function PantryScreen() {
 
   const validate = () => {
     const e = {};
-    if (!formName.trim()) e.name = 'Required';
-    if (!formQuantity.trim()) e.quantity = 'Required';
+    if (!formName.trim()) e.name = t('common.required');
+    if (!formQuantity.trim()) e.quantity = t('common.required');
     const isNonFood = visibleNonFoodCategories.some((c) => c.label === formCategory);
     if (!isNonFood && formExpiry.trim() && !/^\d{4}-\d{2}-\d{2}$/.test(formExpiry.trim()))
-      e.expiry = 'Use YYYY-MM-DD format';
+      e.expiry = t('grocery.useDateFormat');
     setErrors(e);
     return Object.keys(e).length === 0;
   };
@@ -202,10 +206,10 @@ export default function PantryScreen() {
     };
     if (editingItem) {
       await updatePantryItem(householdId, editingItem.id, data);
-      notify('Pantry updated', `${data.name} has been updated.`, { type: 'success' });
+      notify(t('pantry.updated'), t('pantry.updatedMessage', { name: data.name }), { type: 'success' });
     } else {
       await addPantryItem(householdId, { ...data, addedBy: user.uid });
-      notify('Added to pantry', `${data.name} added.`, { type: 'success' });
+      notify(t('grocery.addedToPantry'), t('grocery.addedMessage', { name: data.name }), { type: 'success' });
     }
     closeModal();
   };
@@ -254,11 +258,11 @@ export default function PantryScreen() {
     const nonFoodGroups = makeGroups(visibleNonFoodCategories);
     const result = [];
     if (foodGroups.length > 0) {
-      result.push({ type: 'section-header', id: 'food-header', title: 'Food' });
+      result.push({ type: 'section-header', id: 'food-header', title: t('grocery.food') });
       result.push(...foodGroups);
     }
     if (nonFoodGroups.length > 0) {
-      result.push({ type: 'section-header', id: 'non-food-header', title: 'Non-Food & Household' });
+      result.push({ type: 'section-header', id: 'non-food-header', title: t('grocery.nonFood') });
       result.push(...nonFoodGroups);
     }
     return result;
@@ -279,8 +283,8 @@ export default function PantryScreen() {
         }]}>
           <View style={styles.headerTopRow}>
             <View>
-              <Text style={styles.screenTitle}>Pantry</Text>
-              <Text style={styles.screenSubtitle}>{items.length} items stored</Text>
+              <Text style={styles.screenTitle}>{t('pantry.title')}</Text>
+              <Text style={styles.screenSubtitle}>{t('pantry.itemsStored', { count: items.length })}</Text>
             </View>
             {expiringSoonCount > 0 && (
               <View style={styles.expiryWarningBadge}>
@@ -294,11 +298,11 @@ export default function PantryScreen() {
             <Ionicons name="search-outline" size={17} color={colors.textTertiary} />
             <TextInput
               style={styles.searchInput}
-              placeholder="Search pantry…"
+              placeholder={t('pantry.searchPlaceholder')}
               value={searchQuery}
               onChangeText={setSearchQuery}
               placeholderTextColor={colors.textTertiary}
-              accessibilityLabel="Search pantry"
+              accessibilityLabel={t('pantry.searchA11y')}
             />
             {searchQuery.length > 0 && (
               <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
@@ -323,7 +327,7 @@ export default function PantryScreen() {
               >
                 {cat.icon && <Text style={styles.categoryFilterPillIcon}>{cat.icon}</Text>}
                 <Text style={[styles.categoryFilterPillLabel, selectedCategory === cat.label && styles.categoryFilterPillLabelActive]}>
-                  {cat.label}
+                  {cat.label === 'All' ? t('grocery.filterAll') : categoryName(cat.label)}
                 </Text>
               </TouchableOpacity>
             ))}
@@ -342,8 +346,8 @@ export default function PantryScreen() {
               <View style={styles.emptyStateIcon}>
                 <Ionicons name="nutrition-outline" size={36} color={colors.textTertiary} />
               </View>
-              <Text style={styles.emptyStateTitle}>Pantry is empty</Text>
-              <Text style={styles.emptyStateSubtitle}>Track what you have at home</Text>
+              <Text style={styles.emptyStateTitle}>{t('pantry.emptyTitle')}</Text>
+              <Text style={styles.emptyStateSubtitle}>{t('pantry.emptySub')}</Text>
             </View>
           }
           renderItem={({ item: row }) => {
@@ -360,7 +364,7 @@ export default function PantryScreen() {
               <View style={styles.categoryGroup}>
                 <View style={styles.categoryGroupHeader}>
                   <Text style={styles.categoryGroupIcon}>{row.icon}</Text>
-                  <Text style={styles.categoryGroupLabel}>{row.label}</Text>
+                  <Text style={styles.categoryGroupLabel}>{categoryName(row.label)}</Text>
                   <View style={styles.categoryGroupBadge}>
                     <Text style={styles.categoryGroupBadgeText}>{row.items.length}</Text>
                   </View>
@@ -372,17 +376,17 @@ export default function PantryScreen() {
                     onEdit={() => openEditModal(item)}
                     onDelete={async () => {
                       const confirmed = await showConfirm({
-                        title: 'Remove item',
-                        message: `Remove "${item.name}"?`,
+                        title: t('grocery.removeItem'),
+                        message: t('grocery.removeItemConfirm', { name: item.name }),
                         type: 'danger',
-                        confirmLabel: 'Remove',
+                        confirmLabel: t('grocery.remove'),
                       });
                       if (!confirmed) return;
                       try {
                         await deletePantryItem(householdId, item.id);
-                        notify('Removed', `${item.name} removed from pantry.`, { type: 'info' });
+                        notify(t('grocery.removed'), t('pantry.removedFromPantry', { name: item.name }), { type: 'info' });
                       } catch (e) {
-                        showAlert({ title: 'Error', message: e.message, type: 'error' });
+                        showAlert({ title: t('common.error'), message: e.message, type: 'error' });
                       }
                     }}
                   />
@@ -394,7 +398,7 @@ export default function PantryScreen() {
 
         <FloatingActionButton
           onPress={openAddModal}
-          accessibilityLabel="Add pantry item"
+          accessibilityLabel={t('pantry.addA11y')}
           enterAnim={fabAnim}
           hideAnim={fab.hideAnim}
           interactive={fab.interactive}
@@ -407,12 +411,12 @@ export default function PantryScreen() {
           <ScrollView style={styles.bottomSheetScroll} keyboardShouldPersistTaps="handled">
             <View style={styles.bottomSheetInner}>
               <View style={styles.sheetDragHandle} />
-              <Text style={styles.sheetTitle}>{editingItem ? 'Edit Item' : 'Add to Pantry'}</Text>
+              <Text style={styles.sheetTitle}>{editingItem ? t('grocery.editItemTitle') : t('pantry.addToPantry')}</Text>
 
-              <Text style={styles.inputLabel}>Item Name *</Text>
+              <Text style={styles.inputLabel}>{t('grocery.itemName')}</Text>
               <TextInput
                 style={[styles.textInput, !!errors.name && styles.inputError]}
-                placeholder="e.g. Olive Oil"
+                placeholder={t('grocery.itemNamePlaceholder')}
                 value={formName}
                 onChangeText={(text) => { setFormName(text); if (errors.name) setErrors((e) => ({ ...e, name: null })); }}
                 placeholderTextColor={colors.textTertiary}
@@ -422,7 +426,7 @@ export default function PantryScreen() {
 
               <View style={styles.quantityRow}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.inputLabel}>Quantity *</Text>
+                  <Text style={styles.inputLabel}>{t('grocery.quantity')}</Text>
                   <TextInput
                     style={[styles.textInput, !!errors.quantity && styles.inputError]}
                     placeholder="1"
@@ -434,7 +438,7 @@ export default function PantryScreen() {
                   {!!errors.quantity && <Text style={styles.errorText}>{errors.quantity}</Text>}
                 </View>
                 <View style={{ flex: 1.4 }}>
-                  <Text style={styles.inputLabel}>Unit</Text>
+                  <Text style={styles.inputLabel}>{t('grocery.unit')}</Text>
                   <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                     {[...enabledUnits, ...customUnits].map((unit) => (
                       <TouchableOpacity
@@ -442,14 +446,14 @@ export default function PantryScreen() {
                         style={[styles.unitChip, formUnit === unit && styles.unitChipActive]}
                         onPress={() => setFormUnit(unit)}
                       >
-                        <Text style={[styles.unitChipLabel, formUnit === unit && styles.unitChipLabelActive]}>{unit}</Text>
+                        <Text style={[styles.unitChipLabel, formUnit === unit && styles.unitChipLabelActive]}>{unitName(unit)}</Text>
                       </TouchableOpacity>
                     ))}
                   </ScrollView>
                 </View>
               </View>
 
-              <Text style={styles.inputLabel}>Category</Text>
+              <Text style={styles.inputLabel}>{t('grocery.category')}</Text>
               <DragScrollView style={{ marginBottom: 4 }}>
                 {visibleFoodCategories.map((cat) => (
                   <TouchableOpacity
@@ -459,7 +463,7 @@ export default function PantryScreen() {
                   >
                     <Text style={styles.categoryChipIcon}>{cat.icon}</Text>
                     <Text style={[styles.categoryChipLabel, formCategory === cat.label && styles.categoryChipLabelActive]}>
-                      {cat.label}
+                      {categoryName(cat.label)}
                     </Text>
                   </TouchableOpacity>
                 ))}
@@ -474,7 +478,7 @@ export default function PantryScreen() {
                   >
                     <Text style={styles.categoryChipIcon}>{cat.icon}</Text>
                     <Text style={[styles.categoryChipLabel, formCategory === cat.label && styles.categoryChipLabelActive]}>
-                      {cat.label}
+                      {categoryName(cat.label)}
                     </Text>
                   </TouchableOpacity>
                 ))}
@@ -482,7 +486,7 @@ export default function PantryScreen() {
 
               {!visibleNonFoodCategories.some((c) => c.label === formCategory) && (
                 <>
-                  <Text style={styles.inputLabel}>Expiry Date</Text>
+                  <Text style={styles.inputLabel}>{t('grocery.expiryDate')}</Text>
                   <DatePickerInput
                     value={formExpiry}
                     onChange={(val) => { setFormExpiry(val); if (errors.expiry) setErrors((e) => ({ ...e, expiry: null })); }}
@@ -494,10 +498,10 @@ export default function PantryScreen() {
 
               <View style={styles.sheetActionRow}>
                 <TouchableOpacity style={styles.cancelButton} onPress={closeModal}>
-                  <Text style={styles.cancelButtonLabel}>Cancel</Text>
+                  <Text style={styles.cancelButtonLabel}>{t('common.cancel')}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.confirmButton} onPress={handleSave}>
-                  <Text style={styles.confirmButtonLabel}>{editingItem ? 'Save Changes' : 'Add Item'}</Text>
+                  <Text style={styles.confirmButtonLabel}>{editingItem ? t('grocery.saveChanges') : t('pantry.addItem')}</Text>
                 </TouchableOpacity>
               </View>
             </View>

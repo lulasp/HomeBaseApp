@@ -14,10 +14,14 @@ import { useNotification } from '../../context/NotificationContext';
 import { spacing, radius, type } from '../../theme/colors';
 import { useIsDesktop, SIDEBAR_WIDTH } from '../../navigation/TabBar';
 import { Rise, useEntranceReplay } from '../../components/Motion';
+import { t } from '../../i18n';
+import { useLanguage } from '../../context/LanguageContext';
+import { dayName } from '../../utils/format';
 
 // ── Ingredient row with pantry autocomplete ────────────────────────────────────
 const IngredientInput = memo(({ ingredient, index, pantryItems, colors, onUpdate, onRemove, showRemove }) => {
   const [focused, setFocused] = useState(false);
+  useLanguage();
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
   const suggestions = useMemo(() => {
@@ -43,7 +47,7 @@ const IngredientInput = memo(({ ingredient, index, pantryItems, colors, onUpdate
         <View style={styles.ingredientNameRow}>
           <TextInput
             style={[styles.textInput, styles.flexInput]}
-            placeholder="Ingredient name"
+            placeholder={t('recipe.ingredientName')}
             value={ingredient.name}
             onChangeText={(v) => {
               onUpdate(index, { name: v, pantryItemId: null });
@@ -51,16 +55,16 @@ const IngredientInput = memo(({ ingredient, index, pantryItems, colors, onUpdate
             onFocus={() => setFocused(true)}
             onBlur={() => setTimeout(() => setFocused(false), 200)}
             placeholderTextColor={colors.textTertiary}
-            accessibilityLabel="Ingredient name"
+            accessibilityLabel={t('recipe.ingredientName')}
           />
           {ingredient.pantryItemId && (
             <TouchableOpacity
               style={styles.pantryBadge}
               onPress={clearPantryLink}
-              accessibilityLabel="Linked to pantry — tap to unlink"
+              accessibilityLabel={t('recipe.linkedToPantry')}
             >
               <Ionicons name="nutrition" size={12} color={colors.accent} />
-              <Text style={styles.pantryBadgeText}>Pantry</Text>
+              <Text style={styles.pantryBadgeText}>{t('recipe.pantry')}</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -86,20 +90,20 @@ const IngredientInput = memo(({ ingredient, index, pantryItems, colors, onUpdate
       <View style={styles.ingredientMetaRow}>
         <TextInput
           style={[styles.textInput, styles.flexInput]}
-          placeholder="Amount"
+          placeholder={t('recipe.amount')}
           value={ingredient.amount}
           onChangeText={(v) => onUpdate(index, 'amount', v)}
           keyboardType="decimal-pad"
           placeholderTextColor={colors.textTertiary}
-          accessibilityLabel="Amount"
+          accessibilityLabel={t('recipe.amount')}
         />
         <TextInput
           style={[styles.textInput, styles.flexInput]}
-          placeholder="Unit"
+          placeholder={t('recipe.unit')}
           value={ingredient.unit}
           onChangeText={(v) => onUpdate(index, 'unit', v)}
           placeholderTextColor={colors.textTertiary}
-          accessibilityLabel="Unit"
+          accessibilityLabel={t('recipe.unit')}
           editable={!ingredient.pantryItemId}
         />
         {showRemove && (
@@ -107,7 +111,7 @@ const IngredientInput = memo(({ ingredient, index, pantryItems, colors, onUpdate
             onPress={onRemove}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             accessibilityRole="button"
-            accessibilityLabel="Remove ingredient"
+            accessibilityLabel={t('recipe.removeIngredient')}
           >
             <Ionicons name="remove-circle" size={22} color={colors.danger} />
           </TouchableOpacity>
@@ -130,6 +134,7 @@ export default function AddRecipeScreen({ navigation, route, onClose }) {
   const { householdId, user } = useAuth();
   const { colors } = useTheme();
   const { showAlert } = useAlert();
+  useLanguage();
   const { notify } = useNotification();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const contentKey = useEntranceReplay();
@@ -184,16 +189,16 @@ export default function AddRecipeScreen({ navigation, route, onClose }) {
 
   const validate = () => {
     const e = {};
-    if (!title.trim()) e.title = 'Required';
-    if (!servings.trim()) e.servings = 'Required';
-    if (!prepTime.trim()) e.prepTime = 'Required';
-    if (!cookTime.trim()) e.cookTime = 'Required';
-    if (!calories.trim()) e.calories = 'Required';
-    if (!summary.trim()) e.summary = 'Required';
+    if (!title.trim()) e.title = t('common.required');
+    if (!servings.trim()) e.servings = t('common.required');
+    if (!prepTime.trim()) e.prepTime = t('common.required');
+    if (!cookTime.trim()) e.cookTime = t('common.required');
+    if (!calories.trim()) e.calories = t('common.required');
+    if (!summary.trim()) e.summary = t('common.required');
     if (!ingredients.some((i) => i.name.trim() && i.amount.trim()))
-      e.ingredients = 'Add at least one ingredient with name and amount';
+      e.ingredients = t('recipe.needIngredient');
     if (!instructions.some((s) => s.trim()))
-      e.instructions = 'Add at least one instruction step';
+      e.instructions = t('recipe.needStep');
     setErrors(e);
     return Object.keys(e).length === 0;
   };
@@ -217,7 +222,7 @@ export default function AddRecipeScreen({ navigation, route, onClose }) {
     try {
       if (isEditing) {
         await updateRecipe(householdId, existing.id, data);
-        notify('Recipe updated', `"${data.title}" has been saved.`, { type: 'success' });
+        notify(t('recipe.updated'), t('recipe.updatedMessage', { name: data.title }), { type: 'success' });
         dismiss();
       } else {
         const docRef = await saveRecipe(householdId, data);
@@ -225,15 +230,15 @@ export default function AddRecipeScreen({ navigation, route, onClose }) {
           await setMealSlot(householdId, mealWeekKey, mealSlot.day, mealSlot.mealType, {
             name: data.title, recipeId: docRef.id, calories: data.calories || 0,
           });
-          notify('Meal added', `"${data.title}" added to ${mealSlot.day} ${mealSlot.mealType}.`, { type: 'success' });
+          notify(t('recipe.mealAdded'), t('recipe.mealAddedMessage', { name: data.title, day: dayName(mealSlot.day), meal: t(`home.meals.${mealSlot.mealType}`) }), { type: 'success' });
           dismiss();
         } else {
-          notify('Recipe added', `"${data.title}" added to your recipes.`, { type: 'success' });
+          notify(t('recipe.added'), t('recipes.addedToRecipes', { name: data.title }), { type: 'success' });
           dismiss();
         }
       }
     } catch (e) {
-      showAlert({ title: 'Error', message: e.message, type: 'error' });
+      showAlert({ title: t('common.error'), message: e.message, type: 'error' });
     } finally {
       setIsSaving(false);
     }
@@ -252,12 +257,12 @@ export default function AddRecipeScreen({ navigation, route, onClose }) {
           onPress={() => dismiss()}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           accessibilityRole="button"
-          accessibilityLabel="Close"
+          accessibilityLabel={t('common.close')}
         >
           <Ionicons name="close" size={24} color={colors.textPrimary} />
         </TouchableOpacity>
         <Text style={styles.navigationTitle}>
-          {isEditing ? 'Edit Recipe' : fromMealPlan ? 'New Recipe for Meal Plan' : 'New Recipe'}
+          {isEditing ? t('recipe.editRecipe') : fromMealPlan ? t('recipe.newForMealPlan') : t('recipe.newRecipe')}
         </Text>
         <TouchableOpacity
           style={[styles.saveButton, isSaving && styles.saveButtonDisabled]}
@@ -265,7 +270,7 @@ export default function AddRecipeScreen({ navigation, route, onClose }) {
           disabled={isSaving}
           accessibilityRole="button"
         >
-          <Text style={styles.saveButtonLabel}>{isSaving ? 'Saving…' : 'Save'}</Text>
+          <Text style={styles.saveButtonLabel}>{isSaving ? t('common.saving') : t('common.save')}</Text>
         </TouchableOpacity>
       </View>
 
@@ -280,22 +285,22 @@ export default function AddRecipeScreen({ navigation, route, onClose }) {
 
         {/* ── Details ── */}
         <Rise index={0} style={styles.formSection}>
-          <Text style={styles.sectionTitle}>Details</Text>
+          <Text style={styles.sectionTitle}>{t('recipe.details')}</Text>
           <View>
             <TextInput
               style={[styles.textInput, !!errors.title && styles.inputError]}
-              placeholder="Recipe title *"
+              placeholder={t('recipe.titlePlaceholder')}
               value={title}
               onChangeText={(t) => { setTitle(t); if (errors.title) setErrors((e) => ({ ...e, title: null })); }}
               placeholderTextColor={colors.textTertiary}
-              accessibilityLabel="Recipe title"
+              accessibilityLabel={t('recipe.titleA11y')}
             />
             {!!errors.title && <Text style={styles.errorText}>{errors.title}</Text>}
           </View>
           <View>
             <TextInput
               style={[styles.textInput, styles.textAreaInput, !!errors.summary && styles.inputError]}
-              placeholder="Brief description *"
+              placeholder={t('recipe.descriptionPlaceholder')}
               value={summary}
               onChangeText={(t) => { setSummary(t); if (errors.summary) setErrors((e) => ({ ...e, summary: null })); }}
               multiline
@@ -307,10 +312,10 @@ export default function AddRecipeScreen({ navigation, route, onClose }) {
           </View>
           <View style={styles.statsFieldGrid}>
             {[
-              ['Prep (min)', prepTime, setPrepTime, 'prepTime'],
-              ['Cook (min)', cookTime, setCookTime, 'cookTime'],
-              ['Servings',   servings, setServings,  'servings'],
-              ['Calories',   calories, setCalories,  'calories'],
+              [t('recipe.prepMin'), prepTime, setPrepTime, 'prepTime'],
+              [t('recipe.cookMin'), cookTime, setCookTime, 'cookTime'],
+              [t('recipe.servings'), servings, setServings,  'servings'],
+              [t('recipe.calories'), calories, setCalories,  'calories'],
             ].map(([label, value, setter, key]) => (
               <View key={label} style={styles.statsField}>
                 <Text style={styles.inputLabel}>{label} *</Text>
@@ -332,12 +337,12 @@ export default function AddRecipeScreen({ navigation, route, onClose }) {
         {/* ── Ingredients ── */}
         <Rise index={1} style={styles.formSection}>
           <View style={styles.sectionHeaderRow}>
-            <Text style={styles.sectionTitle}>Ingredients</Text>
+            <Text style={styles.sectionTitle}>{t('recipe.ingredients')}</Text>
             <TouchableOpacity
               style={styles.addRowButton}
               onPress={addIngredient}
               accessibilityRole="button"
-              accessibilityLabel="Add ingredient"
+              accessibilityLabel={t('recipe.addIngredient')}
             >
               <Ionicons name="add-circle" size={24} color={colors.accent} />
             </TouchableOpacity>
@@ -360,12 +365,12 @@ export default function AddRecipeScreen({ navigation, route, onClose }) {
         {/* ── Instructions ── */}
         <Rise index={2} style={styles.formSection}>
           <View style={styles.sectionHeaderRow}>
-            <Text style={styles.sectionTitle}>Instructions</Text>
+            <Text style={styles.sectionTitle}>{t('recipe.instructions')}</Text>
             <TouchableOpacity
               style={styles.addRowButton}
               onPress={addStep}
               accessibilityRole="button"
-              accessibilityLabel="Add step"
+              accessibilityLabel={t('recipe.addStep')}
             >
               <Ionicons name="add-circle" size={24} color={colors.accent} />
             </TouchableOpacity>
@@ -378,20 +383,20 @@ export default function AddRecipeScreen({ navigation, route, onClose }) {
               </View>
               <TextInput
                 style={[styles.textInput, styles.instructionStepInput]}
-                placeholder={`Step ${index + 1}…`}
+                placeholder={t('recipe.stepPlaceholder', { number: index + 1 })}
                 value={step}
                 onChangeText={(v) => updateStep(index, v)}
                 multiline
                 textAlignVertical="top"
                 placeholderTextColor={colors.textTertiary}
-                accessibilityLabel={`Step ${index + 1}`}
+                accessibilityLabel={t('recipe.step', { number: index + 1 })}
               />
               {instructions.length > 1 && (
                 <TouchableOpacity
                   onPress={() => removeStep(index)}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                   accessibilityRole="button"
-                  accessibilityLabel="Remove step"
+                  accessibilityLabel={t('recipe.removeStep')}
                 >
                   <Ionicons name="remove-circle" size={22} color={colors.danger} />
                 </TouchableOpacity>

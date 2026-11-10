@@ -1,5 +1,5 @@
 import {
-  sendChatMessage, suggestRecipes, parseBankStatement, parseStatementText, parseReceipt,
+  sendChatMessage, suggestRecipes, parseBankStatement, parseStatementText, parseReceipt, systemPromptFor,
 } from '../services/openrouter';
 import { DEFAULT_AI_MODEL } from '../utils/aiModels';
 
@@ -247,5 +247,31 @@ describe('error handling', () => {
   it('surfaces a network error', async () => {
     global.fetch = jest.fn().mockRejectedValue(new Error('offline'));
     await expect(sendChatMessage(KEY, [], 'hi')).rejects.toThrow(/Network error/i);
+  });
+});
+
+describe('reply language', () => {
+  it('leaves the system prompt alone for English', () => {
+    expect(systemPromptFor('en')).not.toMatch(/Portuguese/);
+    expect(systemPromptFor(undefined)).toBe(systemPromptFor('en'));
+  });
+
+  it('asks for European Portuguese when the app is in Portuguese', () => {
+    expect(systemPromptFor('pt')).toMatch(/European Portuguese/);
+    expect(systemPromptFor('pt')).toMatch(/never Brazilian/);
+  });
+
+  it('sendChatMessage sends the language-specific system prompt', async () => {
+    mockFetchOnce({ json: textReply('olá') });
+    await sendChatMessage(KEY, [], 'hello', DEFAULT_AI_MODEL, 'pt');
+    const body = JSON.parse(global.fetch.mock.calls[0][1].body);
+    expect(body.messages[0]).toEqual({ role: 'system', content: systemPromptFor('pt') });
+  });
+
+  it('suggestRecipes sends the language-specific system prompt', async () => {
+    mockFetchOnce({ json: textReply(JSON.stringify({ recipes: [] })) });
+    await suggestRecipes(KEY, [{ name: 'egg' }], DEFAULT_AI_MODEL, 'pt');
+    const body = JSON.parse(global.fetch.mock.calls[0][1].body);
+    expect(body.messages[0].content).toBe(systemPromptFor('pt'));
   });
 });

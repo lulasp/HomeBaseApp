@@ -1,27 +1,39 @@
 // Built-in finance categories, shared by the Finances screen and the
 // statement importer. Custom categories live per-household in Firestore
 // (billCustomCategories / expenseCustomCategories) and are merged in at runtime.
+//
+// Built-in labels are getters, so they read in the app's current language each
+// time they're used. Custom and edited labels are the household's own text.
+
+import { t } from '../i18n';
+
+const builtIn = (key, icon, colorKey) => ({
+  key,
+  get label() { return t(`fin.cats.${key}`); },
+  icon,
+  colorKey,
+});
 
 export const BILL_CATS = [
-  { key: 'rent',          label: 'Rent',        icon: 'home',             colorKey: 'accent'        },
-  { key: 'electricity',   label: 'Electricity', icon: 'flash',            colorKey: 'amber'         },
-  { key: 'water',         label: 'Water',       icon: 'water',            colorKey: 'accent'        },
-  { key: 'gas',           label: 'Gas',         icon: 'flame',            colorKey: 'amber'         },
-  { key: 'internet',      label: 'Internet',    icon: 'wifi',             colorKey: 'sage'          },
-  { key: 'phone',         label: 'Phone',       icon: 'phone-portrait',   colorKey: 'accent'        },
-  { key: 'insurance',     label: 'Insurance',   icon: 'shield-checkmark', colorKey: 'sage'          },
-  { key: 'subscriptions', label: 'Subs',        icon: 'repeat',           colorKey: 'accent'        },
-  { key: 'other',         label: 'Other',       icon: 'receipt',          colorKey: 'textSecondary' },
+  builtIn('rent', 'home', 'accent'),
+  builtIn('electricity', 'flash', 'amber'),
+  builtIn('water', 'water', 'accent'),
+  builtIn('gas', 'flame', 'amber'),
+  builtIn('internet', 'wifi', 'sage'),
+  builtIn('phone', 'phone-portrait', 'accent'),
+  builtIn('insurance', 'shield-checkmark', 'sage'),
+  builtIn('subscriptions', 'repeat', 'accent'),
+  builtIn('other', 'receipt', 'textSecondary'),
 ];
 
 export const EXPENSE_CATS = [
-  { key: 'groceries',  label: 'Groceries',  icon: 'cart',     colorKey: 'sage'          },
-  { key: 'repairs',    label: 'Repairs',    icon: 'build',    colorKey: 'amber'         },
-  { key: 'cleaning',   label: 'Cleaning',   icon: 'sparkles', colorKey: 'accent'        },
-  { key: 'furniture',  label: 'Furniture',  icon: 'bed',      colorKey: 'accent'        },
-  { key: 'appliances', label: 'Appliances', icon: 'tv',       colorKey: 'accent'        },
-  { key: 'utilities',  label: 'Utilities',  icon: 'bulb',     colorKey: 'amber'         },
-  { key: 'other',      label: 'Other',      icon: 'cash',     colorKey: 'textSecondary' },
+  builtIn('groceries', 'cart', 'sage'),
+  builtIn('repairs', 'build', 'amber'),
+  builtIn('cleaning', 'sparkles', 'accent'),
+  builtIn('furniture', 'bed', 'accent'),
+  builtIn('appliances', 'tv', 'accent'),
+  builtIn('utilities', 'bulb', 'amber'),
+  builtIn('other', 'cash', 'textSecondary'),
 ];
 
 // Merge built-in cats with a household's custom cats, applying any edits to the

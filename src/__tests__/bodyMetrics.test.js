@@ -212,3 +212,16 @@ describe('parseMetric', () => {
 it('weightLogId combines uid and date', () => {
   expect(weightLogId('u1', '2026-10-19')).toBe('u1_2026-10-19');
 });
+
+describe('body metric labels in Portuguese', () => {
+  const { setCurrentLanguage } = require('../i18n');
+  const { ACTIVITY_LEVELS, GOALS } = require('../utils/bodyMetrics');
+  afterEach(() => setCurrentLanguage('en'));
+
+  it('translates BMI categories, activity levels and goals', () => {
+    setCurrentLanguage('pt');
+    expect(bmiCategory(22).label).toBe('Saudável');
+    expect(ACTIVITY_LEVELS.find((a) => a.key === 'sedentary')).toMatchObject({ label: 'Sedentário', hint: 'Pouco ou nenhum exercício' });
+    expect(GOALS.map((g) => g.label)).toEqual(['Perder', 'Manter', 'Ganhar']);
+  });
+});

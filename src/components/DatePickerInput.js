@@ -5,6 +5,10 @@ import { Ionicons } from '@expo/vector-icons';
 import { format, parseISO, isValid } from 'date-fns';
 import { useTheme } from '../context/ThemeContext';
 import { spacing, radius, type } from '../theme/colors';
+import { t } from '../i18n';
+import { useLanguage } from '../context/LanguageContext';
+import { formatDate } from '../utils/format';
+import useFormat from '../hooks/useFormat';
 
 // On web, render a native <input type="date"> via a thin inline component.
 // This avoids any dependency on the native module on web.
@@ -55,14 +59,16 @@ function WebDateInput({ value, onChange, hasError, colors }) {
 }
 
 export default function DatePickerInput({
-  value, onChange, hasError, placeholder = 'Optional', accessibilityLabel = 'Select expiry date',
+  value, onChange, hasError, placeholder = t('components.optional'), accessibilityLabel = t('components.selectDate'),
 }) {
   const { colors, theme } = useTheme();
+  useLanguage();
+  useFormat();
   const [showPicker, setShowPicker] = useState(false);
 
   const parsedDate = value ? parseISO(value) : null;
   const dateIsValid = parsedDate && isValid(parsedDate);
-  const displayText = dateIsValid ? format(parsedDate, 'MMM d, yyyy') : '';
+  const displayText = dateIsValid ? formatDate(parsedDate) : '';
   const pickerDate = dateIsValid ? parsedDate : new Date();
 
   const handleClear = () => {
@@ -149,10 +155,10 @@ export default function DatePickerInput({
         <View style={styles.iosSpinnerWrapper}>
           <View style={styles.iosSpinnerHeader}>
             <TouchableOpacity onPress={handleClear}>
-              <Text style={[styles.iosAction, { color: colors.danger }]}>Clear</Text>
+              <Text style={[styles.iosAction, { color: colors.danger }]}>{t('components.clear')}</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={() => setShowPicker(false)}>
-              <Text style={[styles.iosAction, { color: colors.accent }]}>Done</Text>
+              <Text style={[styles.iosAction, { color: colors.accent }]}>{t('components.done')}</Text>
             </TouchableOpacity>
           </View>
           <DateTimePicker

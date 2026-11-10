@@ -16,6 +16,10 @@ import { useTheme } from '../../context/ThemeContext';
 import { useNavScrollProps } from '../../context/NavScrollContext';
 import { useNotification } from '../../context/NotificationContext';
 import { useAlert } from '../../context/AlertContext';
+import { useLanguage } from '../../context/LanguageContext';
+// Module-level t: always the current language, so callbacks never hold a stale
+// one. Components below call useLanguage() so they re-render on a switch.
+import { t } from '../../i18n';
 import {
   getHouseholdWithPrivate, subscribePantryItems, subscribeGroceryItems,
   subscribeBills, subscribeMealPlan, subscribeLightShortcuts,
@@ -38,14 +42,14 @@ import {
   MAX_TODOS_PER_DAY, WEEK_NAV_RANGE, weekKeyFor, shiftWeekKey, weekRangeLabel,
   carryOverCandidates, planCarryOver, planMaterialization, formatRecurrenceDays,
 } from '../../utils/weeklyTodos';
-const DAYS_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+import { formatDate, formatMoney, dayName } from '../../utils/format';
+import useFormat from '../../hooks/useFormat';
 
 function greeting() {
   const h = new Date().getHours();
-  if (h < 12) return 'Good morning';
-  if (h < 17) return 'Good afternoon';
-  return 'Good evening';
+  if (h < 12) return t('home.goodMorning');
+  if (h < 17) return t('home.goodAfternoon');
+  return t('home.goodEvening');
 }
 
 function greetingIcon() {
@@ -74,15 +78,15 @@ function weatherIcon(code) {
 }
 
 function weatherDesc(code) {
-  if (code === 0) return 'Clear sky';
-  if (code <= 2) return 'Partly cloudy';
-  if (code === 3) return 'Overcast';
-  if (code <= 48) return 'Foggy';
-  if (code <= 55) return 'Drizzle';
-  if (code <= 67) return 'Rainy';
-  if (code <= 77) return 'Snowy';
-  if (code <= 82) return 'Showers';
-  return 'Thunderstorm';
+  if (code === 0) return t('home.weather.clear');
+  if (code <= 2) return t('home.weather.partlyCloudy');
+  if (code === 3) return t('home.weather.overcast');
+  if (code <= 48) return t('home.weather.foggy');
+  if (code <= 55) return t('home.weather.drizzle');
+  if (code <= 67) return t('home.weather.rainy');
+  if (code <= 77) return t('home.weather.snowy');
+  if (code <= 82) return t('home.weather.showers');
+  return t('home.weather.thunderstorm');
 }
 
 async function fetchWeather() {
@@ -244,6 +248,8 @@ function StatPill({ value, label, icon, color, soft, onPress }) {
 function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, todayDate, colors }) {
   const { notify } = useNotification();
   const { showConfirm } = useAlert();
+  useLanguage();
+  useFormat();
   const { privateData } = useHousehold();
   const { user } = useAuth();
   const uid = user?.uid;
@@ -272,7 +278,7 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
   const todos = isCurrentWeek ? currentTodos : otherTodos;
 
   const onListenError = useCallback((err) => {
-    notify('Tasks are out of sync', err?.message || 'Could not load this week.', { type: 'error' });
+    notify(t('home.outOfSync'), err?.message || t('home.couldNotLoadWeek'), { type: 'error' });
   }, [notify]);
 
   // The current week stays subscribed even while browsing others — reminders,
@@ -328,8 +334,8 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
       materializeTodoRecurrences(householdId, currentWeekKey, creates, markRuleIds)
         .then(() => {
           if (skipped.length) {
-            const days = [...new Set(skipped.map((x) => x.day))].join(', ');
-            notify('Some repeating tasks were skipped', `${days} already has ${MAX_TODOS_PER_DAY} tasks.`, { type: 'warning' });
+            const days = [...new Set(skipped.map((x) => dayName(x.day)))].join(', ');
+            notify(t('home.repeatSkipped'), t('home.dayAlreadyFull', { day: days, max: MAX_TODOS_PER_DAY }), { type: 'warning' });
           }
         })
         .catch((err) => {
@@ -401,8 +407,8 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
       const granted = await ensureNotificationPermission();
       if (!granted) {
         notify(
-          'Notifications are off',
-          'Enable notifications for HomeBase in Settings to get reminders.',
+          t('home.notificationsOff'),
+          t('home.notificationsOffMessage'),
           { type: 'warning' },
         );
       }
@@ -415,7 +421,7 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
     if (!text) { cancelEdit(); return; }          // empty text reverts rather than blanking the task
     const movedTo = editDay !== todo.day ? editDay : null;
     if (movedTo && (countsByDay[movedTo]?.total || 0) >= MAX_TODOS_PER_DAY) {
-      notify('Day is full', `${movedTo} already has ${MAX_TODOS_PER_DAY} tasks.`, { type: 'warning' });
+      notify(t('home.dayFull'), t('home.dayAlreadyFull', { day: dayName(movedTo), max: MAX_TODOS_PER_DAY }), { type: 'warning' });
       return;
     }
     const remindChanged = (editRemindTime || null) !== (todo.remindTime || null);
@@ -429,19 +435,19 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
         patch.remindFor = editRemindTime ? uid : null;
       }
       await updateWeeklyTodo(householdId, todo.id, patch);
-      if (movedTo) notify('Task moved', `Moved to ${movedTo}.`, { type: 'info' });
+      if (movedTo) notify(t('home.taskMoved'), t('home.movedTo', { day: dayName(movedTo) }), { type: 'info' });
     } catch (err) {
       console.error(err);
-      notify('Could not save task', err?.message || 'Please try again.', { type: 'error' });
+      notify(t('home.couldNotSaveTask'), err?.message || t('home.tryAgain'), { type: 'error' });
     }
   }, [editText, editDay, editRemindTime, countsByDay, householdId, uid, notify, cancelEdit]);
 
   const handleDelete = useCallback(async (todo) => {
     const confirmed = await showConfirm({
-      title: 'Delete task',
-      message: `Delete "${todo.text}"?`,
+      title: t('home.deleteTask'),
+      message: t('home.deleteTaskConfirm', { text: todo.text }),
       type: 'danger',
-      confirmLabel: 'Delete',
+      confirmLabel: t('common.delete'),
     });
     if (!confirmed) return;
     if (editingId === todo.id) cancelEdit();
@@ -449,7 +455,7 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
       await deleteWeeklyTodo(householdId, todo.id);
     } catch (err) {
       console.error(err);
-      notify('Could not delete task', err?.message || 'Please try again.', { type: 'error' });
+      notify(t('home.couldNotDeleteTask'), err?.message || t('home.tryAgain'), { type: 'error' });
     }
   }, [householdId, showConfirm, notify, editingId, cancelEdit]);
 
@@ -457,7 +463,7 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
     const text = inputText.trim();
     if (!text) return;
     if (dayTodos.length >= MAX_TODOS_PER_DAY) {
-      notify('Daily limit reached', `You can add up to ${MAX_TODOS_PER_DAY} tasks per day.`, { type: 'warning' });
+      notify(t('home.dailyLimit'), t('home.dailyLimitMessage', { max: MAX_TODOS_PER_DAY }), { type: 'warning' });
       return;
     }
     setInputText('');
@@ -466,7 +472,7 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
     } catch (err) {
       console.error(err);
       setInputText(text);        // keep the text so it isn't lost
-      notify('Could not save task', err?.message || 'Please try again.', { type: 'error' });
+      notify(t('home.couldNotSaveTask'), err?.message || t('home.tryAgain'), { type: 'error' });
     }
   }, [inputText, dayTodos.length, householdId, viewWeekKey, selectedDay, notify]);
 
@@ -491,16 +497,16 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
       setPrevWeekTodos(fresh.filter((t) => !move.some((m) => m.id === t.id)));
       if (skipped.length) {
         notify(
-          `${skipped.length} task${skipped.length === 1 ? '' : 's'} didn't fit`,
-          `Those days already have ${MAX_TODOS_PER_DAY} tasks.`,
+          t('home.didntFit', { count: skipped.length }),
+          t('home.daysFullMessage', { max: MAX_TODOS_PER_DAY }),
           { type: 'warning' },
         );
       } else if (move.length) {
-        notify('Brought forward', `${move.length} task${move.length === 1 ? '' : 's'} moved to this week.`, { type: 'info' });
+        notify(t('home.broughtForward'), t('home.movedToThisWeek', { count: move.length }), { type: 'info' });
       }
     } catch (err) {
       console.error(err);
-      notify('Could not bring tasks forward', err?.message || 'Please try again.', { type: 'error' });
+      notify(t('home.couldNotBringForward'), err?.message || t('home.tryAgain'), { type: 'error' });
     } finally {
       setCarrying(false);
     }
@@ -509,7 +515,7 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
   const handleDismissCarryOver = useCallback(() => {
     dismissTodoCarryOver(householdId, currentWeekKey).catch((err) => {
       console.error(err);
-      notify('Could not dismiss', err?.message || 'Please try again.', { type: 'error' });
+      notify(t('home.couldNotDismiss'), err?.message || t('home.tryAgain'), { type: 'error' });
     });
   }, [householdId, currentWeekKey, notify]);
 
@@ -540,10 +546,10 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
       } else {
         await createTodoRecurrence(householdId, todo, days, todayDate);
       }
-      notify('Repeating', `${todo.text} · ${formatRecurrenceDays(days)}`, { type: 'info' });
+      notify(t('home.repeating'), `${todo.text} · ${formatRecurrenceDays(days)}`, { type: 'info' });
     } catch (err) {
       console.error(err);
-      notify('Could not save', err?.message || 'Please try again.', { type: 'error' });
+      notify(t('home.couldNotSave'), err?.message || t('home.tryAgain'), { type: 'error' });
     }
   }, [repeatDays, rulesById, householdId, todayDate, notify]);
 
@@ -551,10 +557,10 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
     const rule = rulesById.get(todo.recurrenceId);
     if (!rule) return;
     const confirmed = await showConfirm({
-      title: 'Stop repeating',
-      message: `"${rule.text}" won't be added to future weeks. Tasks already created stay.`,
+      title: t('home.stopRepeatingTitle'),
+      message: t('home.stopRepeatingMessage', { text: rule.text }),
       type: 'danger',
-      confirmLabel: 'Stop',
+      confirmLabel: t('home.stop'),
     });
     if (!confirmed) return;
     setRepeatId(null);
@@ -562,7 +568,7 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
       await deleteTodoRecurrence(householdId, rule.id);
     } catch (err) {
       console.error(err);
-      notify('Could not stop repeating', err?.message || 'Please try again.', { type: 'error' });
+      notify(t('home.couldNotStopRepeating'), err?.message || t('home.tryAgain'), { type: 'error' });
     }
   }, [rulesById, showConfirm, householdId, notify]);
 
@@ -575,7 +581,7 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
             disabled={weekOffset <= -WEEK_NAV_RANGE}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 4 }}
             accessibilityRole="button"
-            accessibilityLabel="Previous week"
+            accessibilityLabel={t('home.previousWeek')}
           >
             <Ionicons
               name="chevron-back"
@@ -585,7 +591,7 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
           </TouchableOpacity>
           <WidgetLabel
             icon="calendar-outline"
-            label={isCurrentWeek ? 'THIS WEEK' : weekRangeLabel(viewWeekKey).toUpperCase()}
+            label={isCurrentWeek ? t('home.thisWeekUpper') : weekRangeLabel(viewWeekKey).toUpperCase()}
             color={isCurrentWeek ? colors.textTertiary : colors.accent}
           />
           <TouchableOpacity
@@ -593,7 +599,7 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
             disabled={weekOffset >= WEEK_NAV_RANGE}
             hitSlop={{ top: 8, bottom: 8, left: 4, right: 8 }}
             accessibilityRole="button"
-            accessibilityLabel="Next week"
+            accessibilityLabel={t('home.nextWeek')}
           >
             <Ionicons
               name="chevron-forward"
@@ -606,15 +612,15 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
               onPress={() => goToWeek(0)}
               style={[styles.thisWeekChip, { backgroundColor: colors.accentSoft }]}
               accessibilityRole="button"
-              accessibilityLabel="Back to this week"
+              accessibilityLabel={t('home.backToThisWeek')}
             >
-              <Text style={[styles.thisWeekChipText, { color: colors.accent }]}>This week</Text>
+              <Text style={[styles.thisWeekChipText, { color: colors.accent }]}>{t('home.thisWeek')}</Text>
             </TouchableOpacity>
           )}
         </View>
         {dayTodos.length > 0 && (
           <Text style={[styles.calendarCount, { color: colors.textTertiary }]}>
-            {doneTodos}/{dayTodos.length} done
+            {t('home.doneCount', { done: doneTodos, total: dayTodos.length })}
           </Text>
         )}
       </View>
@@ -627,19 +633,19 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
             style={styles.carryTextWrap}
             onPress={() => goToWeek(-1)}
             accessibilityRole="button"
-            accessibilityLabel="View last week"
+            accessibilityLabel={t('home.viewLastWeek')}
           >
             <Text style={[styles.carryText, { color: colors.textPrimary }]}>
-              {carryCandidates.length} unfinished from last week
+              {t('home.unfinishedFromLastWeek', { count: carryCandidates.length })}
             </Text>
-            <Text style={[styles.carryLink, { color: colors.textSecondary }]}>View</Text>
+            <Text style={[styles.carryLink, { color: colors.textSecondary }]}>{t('home.view')}</Text>
           </TouchableOpacity>
           <TouchableOpacity
             onPress={handleDismissCarryOver}
             hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
             accessibilityRole="button"
           >
-            <Text style={[styles.carryAction, { color: colors.textSecondary }]}>Dismiss</Text>
+            <Text style={[styles.carryAction, { color: colors.textSecondary }]}>{t('home.dismiss')}</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.carryPrimary, { backgroundColor: colors.accent }]}
@@ -649,7 +655,7 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
           >
             {carrying
               ? <ActivityIndicator size="small" color={colors.accentForeground} />
-              : <Text style={[styles.carryPrimaryText, { color: colors.accentForeground }]}>Bring forward</Text>}
+              : <Text style={[styles.carryPrimaryText, { color: colors.accentForeground }]}>{t('home.bringForward')}</Text>}
           </TouchableOpacity>
         </View>
       )}
@@ -668,7 +674,7 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
               style={{ flex: 1 }}
               onPress={() => { cancelEdit(); setSelectedDay(full); }}
               accessibilityRole="button"
-              accessibilityLabel={full}
+              accessibilityLabel={dayName(full)}
               accessibilityState={{ selected: isSelected }}
             >
               <M
@@ -689,7 +695,7 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
                   { color: isSelected ? '#fff' : colors.textSecondary },
                   isToday && !isSelected && { color: colors.accent },
                 ]}>
-                  {short}
+                  {dayName(short, { short: true })}
                 </Text>
                 {pending > 0 && (
                   <View style={[
@@ -706,7 +712,7 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
       {/* Todo list */}
       {dayTodos.length === 0 && (
         <Text style={[styles.calendarEmpty, { color: colors.textTertiary }]}>
-          No tasks for {selectedDay}{isCurrentWeek ? '' : ` · ${weekRangeLabel(viewWeekKey)}`}
+          {t('home.noTasksFor', { day: dayName(selectedDay) })}{isCurrentWeek ? '' : ` · ${weekRangeLabel(viewWeekKey)}`}
         </Text>
       )}
       <Presence>
@@ -727,17 +733,17 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
                     value={editText}
                     onChangeText={setEditText}
                     onSubmitEditing={() => saveEdit(todo)}
-                    placeholder="Task"
+                    placeholder={t('home.taskPlaceholder')}
                     placeholderTextColor={colors.textTertiary}
                     returnKeyType="done"
                     autoFocus
-                    accessibilityLabel="Edit task text"
+                    accessibilityLabel={t('home.editTaskText')}
                   />
                   <TouchableOpacity
                     onPress={() => saveEdit(todo)}
                     hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     accessibilityRole="button"
-                    accessibilityLabel="Save task"
+                    accessibilityLabel={t('home.saveTask')}
                   >
                     <Ionicons name="checkmark-circle" size={22} color={colors.accent} />
                   </TouchableOpacity>
@@ -745,7 +751,7 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
                     onPress={cancelEdit}
                     hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     accessibilityRole="button"
-                    accessibilityLabel="Cancel editing"
+                    accessibilityLabel={t('home.cancelEditing')}
                   >
                     <Ionicons name="close-circle" size={22} color={colors.textTertiary} />
                   </TouchableOpacity>
@@ -765,14 +771,14 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
                         ]}
                         onPress={() => setEditDay(full)}
                         accessibilityRole="button"
-                        accessibilityLabel={`Move to ${full}`}
+                        accessibilityLabel={t('home.moveTo', { day: dayName(full) })}
                         accessibilityState={{ selected: isPicked }}
                       >
                         <Text style={[
                           styles.moveChipText,
                           { color: isPicked ? '#fff' : colors.textSecondary },
                         ]}>
-                          {short}
+                          {dayName(short, { short: true })}
                         </Text>
                       </TouchableOpacity>
                     );
@@ -781,7 +787,7 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
                     style={styles.moveDeleteBtn}
                     onPress={() => openRepeat(todo)}
                     accessibilityRole="button"
-                    accessibilityLabel="Repeat weekly"
+                    accessibilityLabel={t('home.repeatWeekly')}
                   >
                     <Ionicons name="repeat-outline" size={16} color={colors.accent} />
                   </TouchableOpacity>
@@ -789,7 +795,7 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
                     style={styles.moveDeleteBtn}
                     onPress={() => handleDelete(todo)}
                     accessibilityRole="button"
-                    accessibilityLabel="Delete task"
+                    accessibilityLabel={t('home.deleteTask')}
                   >
                     <Ionicons name="trash-outline" size={16} color={colors.danger} />
                   </TouchableOpacity>
@@ -800,7 +806,7 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
                   <TimePickerChip value={editRemindTime} onChange={pickRemindTime} />
                   {editRemindTime && !remindersSupported() && (
                     <Text style={[styles.remindHint, { color: colors.textTertiary }]}>
-                      Fires on your phone
+                      {t('home.firesOnPhone')}
                     </Text>
                   )}
                 </View>
@@ -810,14 +816,14 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
                 <View style={styles.todoEditRow}>
                   <Ionicons name="repeat-outline" size={18} color={colors.accent} />
                   <Text style={[styles.repeatTitle, { color: colors.textPrimary }]} numberOfLines={1}>
-                    Repeat “{todo.text}” every
+                    {t('home.repeatEvery', { text: todo.text })}
                   </Text>
                   <TouchableOpacity
                     onPress={() => saveRepeat(todo)}
                     disabled={repeatDays.length === 0}
                     hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     accessibilityRole="button"
-                    accessibilityLabel="Save repeat"
+                    accessibilityLabel={t('home.saveRepeat')}
                   >
                     <Ionicons
                       name="checkmark-circle"
@@ -829,7 +835,7 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
                     onPress={() => setRepeatId(null)}
                     hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     accessibilityRole="button"
-                    accessibilityLabel="Cancel repeat"
+                    accessibilityLabel={t('home.cancelRepeat')}
                   >
                     <Ionicons name="close-circle" size={22} color={colors.textTertiary} />
                   </TouchableOpacity>
@@ -844,11 +850,11 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
                         style={[styles.moveChip, { backgroundColor: isPicked ? colors.accent : colors.muted }]}
                         onPress={() => toggleRepeatDay(full)}
                         accessibilityRole="checkbox"
-                        accessibilityLabel={full}
+                        accessibilityLabel={dayName(full)}
                         accessibilityState={{ checked: isPicked }}
                       >
                         <Text style={[styles.moveChipText, { color: isPicked ? '#fff' : colors.textSecondary }]}>
-                          {short}
+                          {dayName(short, { short: true })}
                         </Text>
                       </TouchableOpacity>
                     );
@@ -860,7 +866,7 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
                     style={styles.stopRepeatBtn}
                     accessibilityRole="button"
                   >
-                    <Text style={[styles.stopRepeatText, { color: colors.danger }]}>Stop repeating</Text>
+                    <Text style={[styles.stopRepeatText, { color: colors.danger }]}>{t('home.stopRepeating')}</Text>
                   </TouchableOpacity>
                 )}
               </View>
@@ -889,8 +895,8 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
                   onPress={() => startEdit(todo)}
                   onLongPress={() => openRepeat(todo)}
                   accessibilityRole="button"
-                  accessibilityLabel={`Edit ${todo.text}`}
-                  accessibilityHint="Long-press to repeat weekly"
+                  accessibilityLabel={t('home.editItem', { text: todo.text })}
+                  accessibilityHint={t('home.longPressHint')}
                 >
                   <Text
                     style={[
@@ -909,14 +915,14 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
                           <Ionicons name="repeat-outline" size={11} color={colors.textTertiary} />
                           <Text style={[styles.remindBadgeText, { color: colors.textTertiary }]}>
                             {formatRecurrenceDays(rulesById.get(todo.recurrenceId).days)}
-                            {rulesById.get(todo.recurrenceId).active ? '' : ' · paused'}
+                            {rulesById.get(todo.recurrenceId).active ? '' : t('home.paused')}
                           </Text>
                         </View>
                       )}
                       {todo.carriedFrom && (
                         <View style={styles.remindBadge}>
                           <Ionicons name="return-down-forward-outline" size={11} color={colors.textTertiary} />
-                          <Text style={[styles.remindBadgeText, { color: colors.textTertiary }]}>carried</Text>
+                          <Text style={[styles.remindBadgeText, { color: colors.textTertiary }]}>{t('home.carried')}</Text>
                         </View>
                       )}
                       {todo.remindTime && (
@@ -928,7 +934,7 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
                           />
                           <Text style={[styles.remindBadgeText, { color: colors.textTertiary }]}>
                             {formatReminderLabel(todo.remindTime)}
-                            {todo.remindFor && todo.remindFor !== uid ? ' · theirs' : ''}
+                            {todo.remindFor && todo.remindFor !== uid ? t('home.theirs') : ''}
                           </Text>
                         </View>
                       )}
@@ -939,7 +945,7 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
                   onPress={() => handleDelete(todo)}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                   accessibilityRole="button"
-                  accessibilityLabel={`Delete ${todo.text}`}
+                  accessibilityLabel={t('home.deleteItem', { text: todo.text })}
                 >
                   <Ionicons name="close" size={15} color={colors.textTertiary} />
                 </TouchableOpacity>
@@ -965,7 +971,7 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
             onChangeText={setInputText}
             onSubmitEditing={handleAdd}
             blurOnSubmit={false}
-            placeholder="Add a task…"
+            placeholder={t('home.addTaskPlaceholder')}
             placeholderTextColor={colors.textTertiary}
             returnKeyType="done"
             autoCapitalize="sentences"
@@ -989,6 +995,8 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
 export default function HomeScreen({ navigation }) {
   const { user, householdId, displayName } = useAuth();
   const { colors } = useTheme();
+  useLanguage();
+  useFormat();
   const navScrollProps = useNavScrollProps();
   const isDesktop = useIsDesktop();
   const { animationsEnabled } = useHousehold();
@@ -996,7 +1004,8 @@ export default function HomeScreen({ navigation }) {
   const today       = new Date();
   const todayFull   = FULL_DAYS[today.getDay() === 0 ? 6 : today.getDay() - 1]; // Mon=0 offset
   const weekKey     = weekKeyFor(today);
-  const dateLabel   = `${DAYS_SHORT[today.getDay()]}, ${MONTH_NAMES[today.getMonth()]} ${today.getDate()}`;
+  // Weekday in the person's language, then the date in the household format.
+  const dateLabel   = `${dayName(todayFull, { short: true })}, ${formatDate(today, { short: true })}`;
   const initials    = (displayName || user?.email || 'Y').split(' ').map((w) => w[0]).join('').toUpperCase().slice(0, 2);
 
   const [household,    setHousehold]    = useState(null);
@@ -1120,7 +1129,7 @@ export default function HomeScreen({ navigation }) {
                   <Text style={[styles.greetingTime, { color: colors.textTertiary }]}>{greeting()}</Text>
                 </View>
                 <Text style={[styles.greetingName, { color: colors.textPrimary }]} numberOfLines={1}>
-                  {displayName || 'Welcome'}
+                  {displayName || t('home.welcome')}
                 </Text>
               </View>
               <View style={[styles.dateBadge, { backgroundColor: colors.muted }]}>
@@ -1131,7 +1140,7 @@ export default function HomeScreen({ navigation }) {
               <View style={[styles.householdRow, { borderTopColor: colors.border }]}>
                 <Ionicons name="home-outline" size={12} color={colors.textTertiary} />
                 <Text style={[styles.householdText, { color: colors.textTertiary }]}>
-                  {household?.name || 'Your household'} · {memberCount} member{memberCount !== 1 ? 's' : ''}
+                  {household?.name || t('home.yourHousehold')} · {t('home.members', { count: memberCount })}
                 </Text>
               </View>
             )}
@@ -1156,7 +1165,7 @@ export default function HomeScreen({ navigation }) {
           <View style={styles.statsRow}>
             <StatPill
               value={pendingGrocery}
-              label="to buy"
+              label={t('home.toBuy')}
               icon="cart-outline"
               color={colors.accent}
               soft={colors.accentSoft}
@@ -1164,7 +1173,7 @@ export default function HomeScreen({ navigation }) {
             />
             <StatPill
               value={lowPantry.length}
-              label="low stock"
+              label={t('home.lowStock')}
               icon="warning-outline"
               color={colors.amber}
               soft={colors.amberSoft}
@@ -1172,7 +1181,7 @@ export default function HomeScreen({ navigation }) {
             />
             <StatPill
               value={bills.length}
-              label="bills"
+              label={t('home.bills')}
               icon="card-outline"
               color={colors.sage}
               soft={colors.sageSoft}
@@ -1197,7 +1206,7 @@ export default function HomeScreen({ navigation }) {
           <View style={styles.twoCol}>
             {/* Weather */}
             <WidgetCard style={[styles.halfCard, { borderColor: colors.border, backgroundColor: colors.surface }]}>
-              <WidgetLabel icon="cloud-outline" label="WEATHER" color={colors.textTertiary} />
+              <WidgetLabel icon="cloud-outline" label={t('home.weatherLabel')} color={colors.textTertiary} />
               {weather ? (
                 <>
                   <M
@@ -1223,7 +1232,7 @@ export default function HomeScreen({ navigation }) {
               ) : weatherError ? (
                 <View style={styles.emptyWidget}>
                   <Ionicons name="cloud-offline-outline" size={22} color={colors.textTertiary} />
-                  <Text style={[styles.weatherDesc, { color: colors.textTertiary, marginTop: 4 }]}>Unavailable</Text>
+                  <Text style={[styles.weatherDesc, { color: colors.textTertiary, marginTop: 4 }]}>{t('home.unavailable')}</Text>
                 </View>
               ) : (
                 <View style={styles.emptyWidget}>
@@ -1237,7 +1246,7 @@ export default function HomeScreen({ navigation }) {
               style={[styles.halfCard, { borderColor: colors.border, backgroundColor: colors.surface }]}
               onPress={() => navigation.navigate('HomeLights')}
             >
-              <WidgetLabel icon="bulb-outline" label="LIGHTS" color={colors.textTertiary} />
+              <WidgetLabel icon="bulb-outline" label={t('home.lightsLabel')} color={colors.textTertiary} />
               {lights !== null ? (
                 <>
                   <View style={styles.lightsRow}>
@@ -1249,10 +1258,10 @@ export default function HomeScreen({ navigation }) {
                     </Text>
                   </View>
                   <Text style={[styles.lightsLabel, { color: colors.textSecondary }]}>
-                    {lights.total === 0 ? 'No devices' : `device${lights.total !== 1 ? 's' : ''} paired`}
+                    {lights.total === 0 ? t('home.noDevices') : t('home.devicesPaired', { count: lights.total })}
                   </Text>
                   <View style={[styles.viewAllPill, { backgroundColor: colors.muted }]}>
-                    <Text style={[styles.viewAllText, { color: colors.textSecondary }]}>Manage →</Text>
+                    <Text style={[styles.viewAllText, { color: colors.textSecondary }]}>{t('home.manage')}</Text>
                   </View>
                 </>
               ) : (
@@ -1271,7 +1280,7 @@ export default function HomeScreen({ navigation }) {
               style={[styles.fullCard, { borderColor: colors.border, backgroundColor: colors.surface }]}
               onPress={() => navigation.navigate('Bills')}
             >
-              <WidgetLabel icon="card-outline" label="NEXT BILL DUE" color={colors.textTertiary} />
+              <WidgetLabel icon="card-outline" label={t('home.nextBillDue')} color={colors.textTertiary} />
               <View style={styles.billRow}>
                 <View style={[styles.billIconWrap, { backgroundColor: colors.dangerSoft }]}>
                   <Ionicons name="receipt-outline" size={20} color={colors.danger} />
@@ -1281,11 +1290,11 @@ export default function HomeScreen({ navigation }) {
                     {nextBill.name}
                   </Text>
                   <Text style={[styles.billDue, { color: colors.textSecondary }]}>
-                    Due in {daysUntilBillDue(nextBill.dueDayOfMonth)} day{daysUntilBillDue(nextBill.dueDayOfMonth) !== 1 ? 's' : ''}
+                    {t('home.dueInDays', { count: daysUntilBillDue(nextBill.dueDayOfMonth) })}
                   </Text>
                 </View>
                 <Text style={[styles.billAmount, { color: colors.textPrimary }]}>
-                  ${Number(nextBill.amount || 0).toLocaleString('en-US', { minimumFractionDigits: 0 })}
+                  {formatMoney(nextBill.amount, { decimals: 0 })}
                 </Text>
               </View>
             </WidgetCard>
@@ -1298,7 +1307,7 @@ export default function HomeScreen({ navigation }) {
             style={[styles.fullCard, { borderColor: colors.border, backgroundColor: colors.surface }]}
             onPress={() => navigation.navigate('Nutrition')}
           >
-            <WidgetLabel icon="restaurant-outline" label="TODAY'S MEALS" color={colors.textTertiary} />
+            <WidgetLabel icon="restaurant-outline" label={t('home.todaysMeals')} color={colors.textTertiary} />
             <View style={styles.mealsGrid}>
               {todayMeals.map(({ type, meal }) => {
                 const mealColors = {
@@ -1310,12 +1319,14 @@ export default function HomeScreen({ navigation }) {
                 return (
                   <View key={type} style={[styles.mealSlot, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}>
                     <View style={[styles.mealTypePill, { backgroundColor: mc.bg }]}>
-                      <Text style={[styles.mealTypeText, { color: mc.text }]}>{type.slice(0, 5)}</Text>
+                      <Text style={[styles.mealTypeText, { color: mc.text }]} numberOfLines={1} adjustsFontSizeToFit>
+                        {t(`home.meals.${type}`)}
+                      </Text>
                     </View>
                     {meal ? (
                       <Text style={[styles.mealName, { color: colors.textPrimary }]} numberOfLines={2}>{meal.name}</Text>
                     ) : (
-                      <Text style={[styles.mealEmpty, { color: colors.textTertiary }]}>Not set</Text>
+                      <Text style={[styles.mealEmpty, { color: colors.textTertiary }]}>{t('home.notSet')}</Text>
                     )}
                   </View>
                 );
@@ -1332,8 +1343,8 @@ export default function HomeScreen({ navigation }) {
               onPress={() => navigation.navigate('Pantry')}
             >
               <View style={styles.widgetHeaderRow}>
-                <WidgetLabel icon="warning-outline" label="RUNNING LOW" color={colors.amber} />
-                <Text style={[styles.viewAllLink, { color: colors.accent }]}>View pantry →</Text>
+                <WidgetLabel icon="warning-outline" label={t('home.runningLow')} color={colors.amber} />
+                <Text style={[styles.viewAllLink, { color: colors.accent }]}>{t('home.viewPantry')}</Text>
               </View>
               <Presence>
                 {lowPantry.slice(0, 4).map((item, i) => (
@@ -1355,7 +1366,7 @@ export default function HomeScreen({ navigation }) {
               </Presence>
               {lowPantry.length > 4 && (
                 <Text style={[styles.moreItems, { color: colors.textTertiary }]}>
-                  +{lowPantry.length - 4} more items
+                  {t('home.moreItems', { count: lowPantry.length - 4 })}
                 </Text>
               )}
             </WidgetCard>
@@ -1368,9 +1379,9 @@ export default function HomeScreen({ navigation }) {
             style={[styles.fullCard, { borderColor: colors.border, backgroundColor: colors.surface }]}
             onPress={() => navigation.navigate('Grocery')}
           >
-            <WidgetLabel icon="cart-outline" label="GROCERY LIST" color={colors.textTertiary} />
+            <WidgetLabel icon="cart-outline" label={t('home.groceryList')} color={colors.textTertiary} />
             {groceryItems.length === 0 ? (
-              <Text style={[styles.emptyHint, { color: colors.textTertiary }]}>Nothing on the list yet</Text>
+              <Text style={[styles.emptyHint, { color: colors.textTertiary }]}>{t('home.nothingOnList')}</Text>
             ) : (
               <>
                 <View style={styles.groceryProgress}>
@@ -1380,7 +1391,7 @@ export default function HomeScreen({ navigation }) {
                     mutedColor={colors.muted}
                   />
                   <Text style={[styles.groceryProgressText, { color: colors.textSecondary }]}>
-                    {checkedGrocery}/{groceryItems.length} done
+                    {t('home.doneCount', { done: checkedGrocery, total: groceryItems.length })}
                   </Text>
                 </View>
                 <Presence>
@@ -1400,7 +1411,8 @@ export default function HomeScreen({ navigation }) {
                   ))}
                 </Presence>
                 {pendingGrocery > 3 && (
-                  <Text style={[styles.moreItems, { color: colors.textTertiary }]}>+{pendingGrocery - 3} more</Text>
+                  <Text style={[styles.moreItems, { color: colors.textTertiary }]}>{t('home.more', { count: pendingGrocery - 3 })}</Text>
+
                 )}
               </>
             )}

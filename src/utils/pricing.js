@@ -1,3 +1,7 @@
+import { t } from '../i18n';
+import { unitName } from './categories';
+import { formatMoney } from './format';
+
 // Grocery price tracking — pure helpers.
 //
 // A price entry records what was paid for a grocery item at a point in time.
@@ -448,10 +452,8 @@ export const buildStoreComparison = (rawEntries = [], { maxStores = 4, minItems 
 
 // ── Formatting ───────────────────────────────────────────
 
-export const formatPrice = (n, { decimals = 2 } = {}) =>
-  `$${Number(n || 0).toLocaleString('en-US', {
-    minimumFractionDigits: decimals, maximumFractionDigits: decimals,
-  })}`;
+// In the household's currency (Household settings → Date & currency).
+export const formatPrice = (n, { decimals = 2 } = {}) => formatMoney(n, { decimals });
 
 // Unit prices are often fractions of a cent (per gram, per ml); show enough
 // precision to be meaningful without printing noise.
@@ -459,7 +461,7 @@ export const formatUnitPrice = (n, unit) => {
   const v = Number(n);
   if (!Number.isFinite(v)) return '—';
   const decimals = v < 0.1 ? 3 : 2;
-  return `${formatPrice(v, { decimals })}/${unit || 'pcs'}`;
+  return `${formatPrice(v, { decimals })}/${unitName(unit || 'pcs')}`;
 };
 
 export const formatPercent = (pct) => {
@@ -471,9 +473,9 @@ export const formatPercent = (pct) => {
 // resolved against the active palette by the caller.
 export const trendPresentation = (direction) => {
   switch (direction) {
-    case 'up':   return { icon: 'trending-up',    colorKey: 'danger',        label: 'More expensive' };
-    case 'down': return { icon: 'trending-down',  colorKey: 'success',       label: 'Cheaper' };
-    case 'same': return { icon: 'remove-outline', colorKey: 'textSecondary', label: 'Unchanged' };
-    default:     return { icon: 'sparkles-outline', colorKey: 'accent',      label: 'First price' };
+    case 'up':   return { icon: 'trending-up',    colorKey: 'danger',        get label() { return t('grocery.trendUp'); } };
+    case 'down': return { icon: 'trending-down',  colorKey: 'success',       get label() { return t('grocery.trendDown'); } };
+    case 'same': return { icon: 'remove-outline', colorKey: 'textSecondary', get label() { return t('grocery.trendSame'); } };
+    default:     return { icon: 'sparkles-outline', colorKey: 'accent',      get label() { return t('grocery.trendFirst'); } };
   }
 };

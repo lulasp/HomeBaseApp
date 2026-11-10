@@ -10,6 +10,8 @@ import { useAlert } from '../../context/AlertContext';
 import { auth } from '../../config/firebase';
 import { spacing, radius, type } from '../../theme/colors';
 import { Rise } from '../../components/Motion';
+import { t } from '../../i18n';
+import { useLanguage } from '../../context/LanguageContext';
 
 if (Platform.OS !== 'web') {
   const { GoogleSignin } = require('@react-native-google-signin/google-signin');
@@ -21,6 +23,7 @@ if (Platform.OS !== 'web') {
 
 export default function SignInScreen() {
   const { colors } = useTheme();
+  useLanguage();
   const { showAlert } = useAlert();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const [loading, setLoading] = useState(false);
@@ -46,13 +49,13 @@ export default function SignInScreen() {
         await GoogleSignin.hasPlayServices();
         const userInfo = await GoogleSignin.signIn();
         const idToken = userInfo.data?.idToken;
-        if (!idToken) throw new Error('No ID token returned from Google.');
+        if (!idToken) throw new Error(t('auth.noIdToken'));
         const credential = GoogleAuthProvider.credential(idToken);
         await signInWithCredential(auth, credential);
       }
     } catch (e) {
       if (e.code !== 'SIGN_IN_CANCELLED') {
-        showAlert({ title: 'Sign-in failed', message: e.message, type: 'error' });
+        showAlert({ title: t('auth.signInFailed'), message: e.message, type: 'error' });
       }
     } finally {
       setLoading(false);
@@ -70,13 +73,13 @@ export default function SignInScreen() {
             </View>
           </View>
           <Text style={styles.appName}>HomeBase</Text>
-          <Text style={styles.tagline}>Your family's home hub</Text>
+          <Text style={styles.tagline}>{t('auth.tagline')}</Text>
         </Rise>
 
         <Rise index={1} style={styles.card}>
-          <Text style={styles.cardTitle}>Welcome back</Text>
+          <Text style={styles.cardTitle}>{t('auth.welcomeBack')}</Text>
           <Text style={styles.cardSubtitle}>
-            Sign in to access your household. Your data is secured and only shared with your household members.
+            {t('auth.signInIntro')}
           </Text>
 
           <TouchableOpacity
@@ -84,14 +87,14 @@ export default function SignInScreen() {
             onPress={signIn}
             disabled={loading}
             accessibilityRole="button"
-            accessibilityLabel="Sign in with Google"
+            accessibilityLabel={t('auth.signInWithGoogle')}
           >
             {loading ? (
               <ActivityIndicator color={colors.textPrimary} />
             ) : (
               <>
                 <Ionicons name="logo-google" size={20} color={colors.textPrimary} />
-                <Text style={styles.googleButtonLabel}>Continue with Google</Text>
+                <Text style={styles.googleButtonLabel}>{t('auth.continueWithGoogle')}</Text>
               </>
             )}
           </TouchableOpacity>

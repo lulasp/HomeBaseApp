@@ -23,17 +23,19 @@ import {
   buildPriceHistory, buildPriceEntryPatch, recentStores,
   formatPrice, formatUnitPrice, formatPercent, trendPresentation,
 } from '../../utils/pricing';
-import { UNITS } from '../../utils/categories';
+import { UNITS, unitName } from '../../utils/categories';
 import { spacing, radius, type } from '../../theme/colors';
 import { useIsDesktop, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
+import { t } from '../../i18n';
+import { useLanguage } from '../../context/LanguageContext';
+import { formatDate } from '../../utils/format';
+import useFormat from '../../hooks/useFormat';
 
 const CHART_HEIGHT = 120;
 const MAX_BARS = 24;
 
-const fmtDate = (iso) => {
-  if (!iso) return '';
-  try { return format(parseISO(iso), 'd MMM yyyy'); } catch { return iso; }
-};
+// In the household's date format.
+const fmtDate = (iso) => formatDate(iso) || iso;
 
 // ── Price-over-time bars ───────────────────────────────────────────────────────
 // Plain Views rather than a chart library: the data is a short, single series
@@ -50,11 +52,11 @@ function PriceChart({ entries, canonicalUnit, colors, styles }) {
   return (
     <View style={styles.card}>
       <View style={styles.cardHeader}>
-        <Text style={styles.cardTitle}>Unit price over time</Text>
-        <Text style={styles.cardHint}>per {canonicalUnit}</Text>
+        <Text style={styles.cardTitle}>{t('prices.unitPriceOverTime')}</Text>
+        <Text style={styles.cardHint}>{t('prices.perUnit', { unit: unitName(canonicalUnit) })}</Text>
       </View>
 
-      <View style={styles.chartRow} accessibilityLabel={`Price history chart, ${shown.length} entries`}>
+      <View style={styles.chartRow} accessibilityLabel={t('prices.chartA11y', { count: shown.length })}>
         {shown.map((entry, i) => {
           const price = Number(entry.unitPrice);
           // Flat series (span 0) would divide by zero — draw them all mid-height.
@@ -90,6 +92,8 @@ export default function PriceDetailScreen() {
   const { householdId } = useAuth();
   const { colors } = useTheme();
   const { showAlert, showConfirm } = useAlert();
+  useLanguage();
+  useFormat();
   const { notify } = useNotification();
   const navigation = useNavigation();
   const route = useRoute();
@@ -165,23 +169,23 @@ export default function PriceDetailScreen() {
   const handleSaveEdit = async () => {
     if (!editing || !form) return;
     const errs = {};
-    if (!form.price.trim() || !(Number(form.price) > 0)) errs.price = 'Enter a price';
-    if (form.quantity.trim() && !(Number(form.quantity) > 0)) errs.quantity = 'Must be > 0';
+    if (!form.price.trim() || !(Number(form.price) > 0)) errs.price = t('prices.enterPrice');
+    if (form.quantity.trim() && !(Number(form.quantity) > 0)) errs.quantity = t('prices.mustBePositive');
     if (form.purchasedAt.trim() && !/^\d{4}-\d{2}-\d{2}$/.test(form.purchasedAt.trim()))
-      errs.purchasedAt = 'Use YYYY-MM-DD format';
+      errs.purchasedAt = t('prices.useDateFormat');
     setErrors(errs);
     if (Object.keys(errs).length) return;
 
     const patch = buildPriceEntryPatch(form);
-    if (!patch) { setErrors({ price: 'Enter a price' }); return; }
+    if (!patch) { setErrors({ price: t('prices.enterPrice') }); return; }
 
     setSaving(true);
     try {
       await updatePriceEntry(householdId, editing.id, patch);
-      notify('Entry updated', `${item.itemName} · ${formatPrice(patch.price)}`, { type: 'success' });
+      notify(t('prices.entryUpdated'), `${item.itemName} · ${formatPrice(patch.price)}`, { type: 'success' });
       closeEdit();
     } catch (e) {
-      showAlert({ title: 'Error', message: e.message, type: 'error' });
+      showAlert({ title: t('common.error'), message: e.message, type: 'error' });
     } finally {
       setSaving(false);
     }
@@ -189,34 +193,34 @@ export default function PriceDetailScreen() {
 
   const handleDeleteEntry = async (entry) => {
     const confirmed = await showConfirm({
-      title: 'Delete entry',
-      message: `Remove the ${formatPrice(entry.price)} entry from ${fmtDate(entry.purchasedAt)}?`,
+      title: t('prices.deleteEntry'),
+      message: t('prices.deleteEntryConfirm', { price: formatPrice(entry.price), date: fmtDate(entry.purchasedAt) }),
       type: 'danger',
-      confirmLabel: 'Delete',
+      confirmLabel: t('common.delete'),
     });
     if (!confirmed) return;
     try {
       await deletePriceEntry(householdId, entry.id);
-      notify('Entry deleted', 'Price history updated.', { type: 'info' });
+      notify(t('prices.entryDeleted'), t('prices.historyUpdated'), { type: 'info' });
     } catch (e) {
-      showAlert({ title: 'Error', message: e.message, type: 'error' });
+      showAlert({ title: t('common.error'), message: e.message, type: 'error' });
     }
   };
 
   const handleDeleteAll = async () => {
     const confirmed = await showConfirm({
-      title: 'Delete history',
-      message: `Remove all ${item.count} price entries for "${item.itemName}"?`,
+      title: t('prices.deleteHistory'),
+      message: t('prices.deleteHistoryConfirm', { count: item.count, name: item.itemName }),
       type: 'danger',
-      confirmLabel: 'Delete all',
+      confirmLabel: t('prices.deleteAll'),
     });
     if (!confirmed) return;
     try {
       await deletePriceEntriesForItem(householdId, itemKey);
-      notify('History deleted', `${item.itemName} price history removed.`, { type: 'info' });
+      notify(t('prices.historyDeleted'), t('prices.historyDeletedMessage', { name: item.itemName }), { type: 'info' });
       navigation.goBack();
     } catch (e) {
-      showAlert({ title: 'Error', message: e.message, type: 'error' });
+      showAlert({ title: t('common.error'), message: e.message, type: 'error' });
     }
   };
 
@@ -226,17 +230,17 @@ export default function PriceDetailScreen() {
         onPress={() => navigation.goBack()}
         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         accessibilityRole="button"
-        accessibilityLabel="Back"
+        accessibilityLabel={t('prices.back')}
       >
         <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
       </TouchableOpacity>
-      <Text style={styles.headerTitle} numberOfLines={1}>{item?.itemName ?? 'Price history'}</Text>
+      <Text style={styles.headerTitle} numberOfLines={1}>{item?.itemName ?? t('prices.priceHistory')}</Text>
       {item ? (
         <TouchableOpacity
           onPress={handleDeleteAll}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           accessibilityRole="button"
-          accessibilityLabel="Delete all price history for this item"
+          accessibilityLabel={t('prices.deleteAllA11y')}
         >
           <Ionicons name="trash-outline" size={20} color={colors.textTertiary} />
         </TouchableOpacity>
@@ -257,9 +261,9 @@ export default function PriceDetailScreen() {
                 color={colors.textTertiary}
               />
             </View>
-            <Text style={styles.emptyTitle}>{loading ? 'Loading…' : 'No price history'}</Text>
+            <Text style={styles.emptyTitle}>{loading ? t('common.loading') : t('prices.noHistory')}</Text>
             <Text style={styles.emptySubtitle}>
-              {loading ? '' : 'Nothing has been logged for this item yet.'}
+              {loading ? '' : t('prices.nothingLogged')}
             </Text>
           </View>
         </View>
@@ -290,7 +294,7 @@ export default function PriceDetailScreen() {
 
         {/* Current price + how it moved */}
         <View style={styles.heroCard}>
-          <Text style={styles.heroLabel}>Last paid</Text>
+          <Text style={styles.heroLabel}>{t('prices.lastPaid')}</Text>
           <Text style={styles.heroPrice}>{formatPrice(item.latest.price)}</Text>
           <Text style={styles.heroMeta}>
             {item.latest.quantity} {item.latest.unit} · {formatUnitPrice(item.latest.unitPrice, item.canonicalUnit)}
@@ -303,17 +307,17 @@ export default function PriceDetailScreen() {
             <Ionicons name={trend.icon} size={16} color={trendColor} />
             <Text style={[styles.trendBannerText, { color: trendColor }]}>
               {item.trend.direction === 'new'
-                ? 'First price recorded'
+                ? t('prices.firstRecorded')
                 : item.trend.direction === 'same'
-                  ? 'Same as last time'
-                  : `${formatPercent(item.trend.pct)} ${item.trend.direction === 'up' ? 'more expensive' : 'cheaper'} than last time`}
+                  ? t('prices.sameAsLast')
+                  : t(item.trend.direction === 'up' ? 'prices.moreExpensiveThanLast' : 'prices.cheaperThanLast', { pct: formatPercent(item.trend.pct) })}
             </Text>
           </View>
 
           {previous && item.trend.direction !== 'new' && (
             <Text style={styles.heroCompare}>
-              Previously {formatUnitPrice(previous.unitPrice, item.canonicalUnit)} on {fmtDate(previous.purchasedAt)}
-              {previous.store ? ` at ${previous.store}` : ''}
+              {t('prices.previously', { price: formatUnitPrice(previous.unitPrice, item.canonicalUnit), date: fmtDate(previous.purchasedAt) })}
+              {previous.store ? t('prices.atStore', { store: previous.store }) : ''}
             </Text>
           )}
         </View>
@@ -321,9 +325,9 @@ export default function PriceDetailScreen() {
         {/* Low / average / high, all per canonical unit */}
         <View style={styles.statRow}>
           {[
-            { label: 'Lowest',  value: item.low,     color: colors.success },
-            { label: 'Average', value: item.average, color: colors.textPrimary },
-            { label: 'Highest', value: item.high,    color: colors.danger },
+            { label: t('prices.lowest'),  value: item.low,     color: colors.success },
+            { label: t('prices.average'), value: item.average, color: colors.textPrimary },
+            { label: t('prices.highest'), value: item.high,    color: colors.danger },
           ].map((stat) => (
             <View key={stat.label} style={styles.statCard}>
               <Text style={styles.statLabel}>{stat.label}</Text>
@@ -345,8 +349,8 @@ export default function PriceDetailScreen() {
         {item.stores.length > 1 && (
           <View style={styles.card}>
             <View style={styles.cardHeader}>
-              <Text style={styles.cardTitle}>By store</Text>
-              <Text style={styles.cardHint}>cheapest first</Text>
+              <Text style={styles.cardTitle}>{t('prices.byStore')}</Text>
+              <Text style={styles.cardHint}>{t('prices.cheapestFirst')}</Text>
             </View>
             {item.stores.map((store, i) => (
               <View key={store.store ?? 'unknown'} style={styles.storeRow}>
@@ -354,9 +358,9 @@ export default function PriceDetailScreen() {
                   <Text style={[styles.storeRankText, i === 0 && { color: colors.success }]}>{i + 1}</Text>
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.storeName}>{store.store ?? 'Unspecified store'}</Text>
+                  <Text style={styles.storeName}>{store.store ?? t('prices.unspecifiedStore')}</Text>
                   <Text style={styles.storeMeta}>
-                    {store.count} {store.count === 1 ? 'purchase' : 'purchases'} · low {formatUnitPrice(store.low, item.canonicalUnit)}
+                    {t('prices.purchases', { count: store.count, price: formatUnitPrice(store.low, item.canonicalUnit) })}
                   </Text>
                 </View>
                 <Text style={[styles.storeAvg, i === 0 && { color: colors.success }]}>
@@ -370,7 +374,7 @@ export default function PriceDetailScreen() {
         {/* Raw entries, newest first */}
         <View style={styles.card}>
           <View style={styles.cardHeader}>
-            <Text style={styles.cardTitle}>All entries</Text>
+            <Text style={styles.cardTitle}>{t('prices.allEntries')}</Text>
             <Text style={styles.cardHint}>{item.count}</Text>
           </View>
           {[...item.entries].reverse().map((entry) => (
@@ -379,16 +383,16 @@ export default function PriceDetailScreen() {
               style={styles.entryRow}
               onPress={() => openEdit(entry)}
               accessibilityRole="button"
-              accessibilityLabel={`Edit ${formatPrice(entry.price)} entry from ${fmtDate(entry.purchasedAt)}`}
+              accessibilityLabel={t('prices.editEntryA11y', { price: formatPrice(entry.price), date: fmtDate(entry.purchasedAt) })}
             >
               <View style={{ flex: 1 }}>
                 <Text style={styles.entryPrice}>
                   {formatPrice(entry.price)}
-                  <Text style={styles.entryQty}>  {entry.quantity} {entry.unit}</Text>
+                  <Text style={styles.entryQty}>  {entry.quantity} {unitName(entry.unit)}</Text>
                 </Text>
                 <Text style={styles.entryMeta}>
                   {fmtDate(entry.purchasedAt)}{entry.store ? ` · ${entry.store}` : ''}
-                  {entry.canonicalUnit !== item.canonicalUnit ? ' · different unit' : ''}
+                  {entry.canonicalUnit !== item.canonicalUnit ? t('prices.differentUnit') : ''}
                 </Text>
               </View>
               <Text style={styles.entryUnitPrice}>
@@ -400,7 +404,7 @@ export default function PriceDetailScreen() {
                   onPress={() => handleDeleteEntry(entry)}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                   accessibilityRole="button"
-                  accessibilityLabel={`Delete ${formatPrice(entry.price)} entry from ${fmtDate(entry.purchasedAt)}`}
+                  accessibilityLabel={t('prices.deleteEntryA11y', { price: formatPrice(entry.price), date: fmtDate(entry.purchasedAt) })}
                 >
                   <Ionicons name="close" size={16} color={colors.textTertiary} />
                 </TouchableOpacity>
@@ -417,12 +421,12 @@ export default function PriceDetailScreen() {
             {!!form && (
               <View style={styles.sheetInner}>
                 <View style={styles.dragHandle} />
-                <Text style={styles.sheetTitle}>Edit Entry</Text>
+                <Text style={styles.sheetTitle}>{t('prices.editEntry')}</Text>
                 <Text style={styles.sheetSubtitle}>{item.itemName}</Text>
 
                 <View style={styles.formRow}>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.inputLabel}>Price *</Text>
+                    <Text style={styles.inputLabel}>{t('prices.price')}</Text>
                     <TextInput
                       style={[styles.textInput, !!errors.price && styles.inputError]}
                       placeholder="0.00"
@@ -430,12 +434,12 @@ export default function PriceDetailScreen() {
                       onChangeText={(price) => setForm((f) => ({ ...f, price: price.replace(/[^0-9.]/g, '') }))}
                       keyboardType="decimal-pad"
                       placeholderTextColor={colors.textTertiary}
-                      accessibilityLabel="Price"
+                      accessibilityLabel={t('prices.priceA11y')}
                     />
                     {!!errors.price && <Text style={styles.errorText}>{errors.price}</Text>}
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.inputLabel}>Quantity</Text>
+                    <Text style={styles.inputLabel}>{t('prices.quantity')}</Text>
                     <TextInput
                       style={[styles.textInput, !!errors.quantity && styles.inputError]}
                       placeholder="1"
@@ -443,7 +447,7 @@ export default function PriceDetailScreen() {
                       onChangeText={(quantity) => setForm((f) => ({ ...f, quantity: quantity.replace(/[^0-9.]/g, '') }))}
                       keyboardType="decimal-pad"
                       placeholderTextColor={colors.textTertiary}
-                      accessibilityLabel="Quantity"
+                      accessibilityLabel={t('grocery.quantityA11y')}
                     />
                     {!!errors.quantity && <Text style={styles.errorText}>{errors.quantity}</Text>}
                   </View>
@@ -452,11 +456,11 @@ export default function PriceDetailScreen() {
                 {/* Live preview: the number the comparison actually uses. */}
                 <Text style={styles.previewText}>
                   {previewUnitPrice
-                    ? `Compares as ${previewUnitPrice}`
-                    : 'Enter a price to see the per-unit value'}
+                    ? t('prices.comparesAs', { price: previewUnitPrice })
+                    : t('prices.enterPriceToSee')}
                 </Text>
 
-                <Text style={styles.inputLabel}>Unit</Text>
+                <Text style={styles.inputLabel}>{t('grocery.unit')}</Text>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                   {units.map((unit) => (
                     <TouchableOpacity
@@ -466,19 +470,19 @@ export default function PriceDetailScreen() {
                       accessibilityRole="radio"
                       accessibilityState={{ selected: form.unit === unit }}
                     >
-                      <Text style={[styles.chipLabel, form.unit === unit && styles.chipLabelActive]}>{unit}</Text>
+                      <Text style={[styles.chipLabel, form.unit === unit && styles.chipLabelActive]}>{unitName(unit)}</Text>
                     </TouchableOpacity>
                   ))}
                 </ScrollView>
 
-                <Text style={styles.inputLabel}>Store</Text>
+                <Text style={styles.inputLabel}>{t('grocery.store')}</Text>
                 <TextInput
                   style={styles.textInput}
-                  placeholder="e.g. Lidl"
+                  placeholder={t('grocery.storePlaceholder')}
                   value={form.store}
                   onChangeText={(store) => setForm((f) => ({ ...f, store }))}
                   placeholderTextColor={colors.textTertiary}
-                  accessibilityLabel="Store"
+                  accessibilityLabel={t('grocery.store')}
                 />
                 {storeSuggestions.length > 0 && (
                   <View style={styles.chipWrapRow}>
@@ -496,7 +500,7 @@ export default function PriceDetailScreen() {
                   </View>
                 )}
 
-                <Text style={styles.inputLabel}>Purchase Date</Text>
+                <Text style={styles.inputLabel}>{t('prices.purchaseDate')}</Text>
                 <DatePickerInput
                   value={form.purchasedAt}
                   onChange={(purchasedAt) => {
@@ -509,14 +513,14 @@ export default function PriceDetailScreen() {
 
                 <View style={styles.actionRow}>
                   <TouchableOpacity style={styles.cancelButton} onPress={closeEdit}>
-                    <Text style={styles.cancelButtonLabel}>Cancel</Text>
+                    <Text style={styles.cancelButtonLabel}>{t('common.cancel')}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={[styles.confirmButton, saving && styles.confirmButtonDisabled]}
                     disabled={saving}
                     onPress={handleSaveEdit}
                   >
-                    <Text style={styles.confirmButtonLabel}>{saving ? 'Saving…' : 'Save Changes'}</Text>
+                    <Text style={styles.confirmButtonLabel}>{saving ? t('common.saving') : t('grocery.saveChanges')}</Text>
                   </TouchableOpacity>
                 </View>
               </View>

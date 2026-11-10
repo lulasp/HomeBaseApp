@@ -7,6 +7,7 @@ import { SafeAreaProvider, initialWindowMetrics } from 'react-native-safe-area-c
 import { AuthProvider } from './src/context/AuthContext';
 import { HouseholdProvider } from './src/context/HouseholdContext';
 import { ThemeProvider, useTheme } from './src/context/ThemeContext';
+import { LanguageProvider } from './src/context/LanguageContext';
 import { AlertProvider } from './src/context/AlertContext';
 import { NotificationProvider } from './src/context/NotificationContext';
 import { LightTimerProvider } from './src/context/LightTimerContext';
@@ -33,6 +34,7 @@ export default function App() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider initialMetrics={initialWindowMetrics}>
+        <LanguageProvider>
         <AuthProvider>
           <HouseholdProvider>
           <ThemeProvider>
@@ -50,6 +52,8 @@ export default function App() {
           </ThemeProvider>
           </HouseholdProvider>
         </AuthProvider>
+        </LanguageProvider>
+
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

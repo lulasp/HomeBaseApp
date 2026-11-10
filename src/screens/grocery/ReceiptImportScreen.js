@@ -31,10 +31,13 @@ import {
 import {
   buildPriceHistory, recentStores, formatPrice, todayKey, itemKeyOf,
 } from '../../utils/pricing';
-import { PANTRY_CATEGORIES, NON_FOOD_CATEGORIES, UNITS, withOverrides } from '../../utils/categories';
+import { PANTRY_CATEGORIES, NON_FOOD_CATEGORIES, UNITS, withOverrides, categoryName, unitName } from '../../utils/categories';
 import { DEFAULT_AI_MODEL, getAiModel, visionModels } from '../../utils/aiModels';
 import { spacing, radius, type } from '../../theme/colors';
 import { useIsDesktop, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
+import { t } from '../../i18n';
+import { useLanguage } from '../../context/LanguageContext';
+import useFormat from '../../hooks/useFormat';
 
 // Read a picked file's bytes as base64. Works on web (blob: URI) and native
 // (file:// URI) — mirrors StatementImportScreen, avoiding expo-file-system,
@@ -44,7 +47,7 @@ function uriToBase64(uri) {
     .then((res) => res.blob())
     .then((blob) => new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onerror = () => reject(new Error('Could not read the selected file.'));
+      reader.onerror = () => reject(new Error(t('statement.readFileError')));
       reader.onload = () => {
         const result = String(reader.result);      // "data:<mime>;base64,XXXX"
         const comma = result.indexOf(',');
@@ -72,7 +75,7 @@ function LineRow({
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           accessibilityRole="checkbox"
           accessibilityState={{ checked: line.include }}
-          accessibilityLabel={`Log a price for ${line.name}`}
+          accessibilityLabel={t('receipt.logPriceFor', { name: line.name })}
         >
           <View style={[styles.checkbox, line.include && styles.checkboxChecked]}>
             {line.include && <Ionicons name="checkmark" size={12} color="#fff" />}
@@ -85,12 +88,12 @@ function LineRow({
             value={line.name}
             onChangeText={(name) => onChange(index, { name })}
             placeholderTextColor={colors.textTertiary}
-            accessibilityLabel={`Name for line ${index + 1}`}
+            accessibilityLabel={t('receipt.nameForLine', { line: index + 1 })}
           />
           <View style={styles.lineTags}>
             {needsChoice && (
               <View style={[styles.tag, { backgroundColor: colors.warningSoft }]}>
-                <Text style={[styles.tagLabel, { color: colors.warning }]}>Pick item</Text>
+                <Text style={[styles.tagLabel, { color: colors.warning }]}>{t('receipt.pickItem')}</Text>
               </View>
             )}
             {line.aliasApplied && (
@@ -107,7 +110,7 @@ function LineRow({
               </View>
             ) : (
               <View style={[styles.tag, { backgroundColor: colors.accentSoft }]}>
-                <Text style={[styles.tagLabel, { color: colors.accent }]}>New item</Text>
+                <Text style={[styles.tagLabel, { color: colors.accent }]}>{t('receipt.newItem')}</Text>
               </View>
             )}
             {line.toPantry && (
@@ -118,7 +121,7 @@ function LineRow({
                   color={colors.textSecondary}
                 />
                 <Text style={styles.lineHint}>
-                  {line.pantryMatch ? `+ on ${line.pantryMatch.quantity} ${line.pantryMatch.unit}` : 'to pantry'}
+                  {line.pantryMatch ? t('receipt.onTopOf', { amount: `${line.pantryMatch.quantity} ${unitName(line.pantryMatch.unit)}` }) : t('receipt.toPantry')}
                 </Text>
               </View>
             )}
@@ -126,7 +129,7 @@ function LineRow({
               <Text style={styles.lineHint}>last {formatPrice(line.lastPrice)}</Text>
             )}
             {line.unitMismatch && (
-              <Text style={[styles.lineHint, { color: colors.warning }]}>different unit</Text>
+              <Text style={[styles.lineHint, { color: colors.warning }]}>{t('receipt.differentUnit')}</Text>
             )}
           </View>
         </View>
@@ -137,9 +140,9 @@ function LineRow({
             value={String(line.quantity)}
             onChangeText={(v) => onChange(index, { quantity: v.replace(/[^0-9.]/g, '') })}
             keyboardType="decimal-pad"
-            accessibilityLabel={`Quantity for ${line.name}`}
+            accessibilityLabel={t('receipt.quantityFor', { name: line.name })}
           />
-          <Text style={styles.lineUnit}>{line.unit}</Text>
+          <Text style={styles.lineUnit}>{unitName(line.unit)}</Text>
         </View>
 
         <TextInput
@@ -147,7 +150,7 @@ function LineRow({
           value={String(line.price)}
           onChangeText={(v) => onChange(index, { price: v.replace(/[^0-9.]/g, '') })}
           keyboardType="decimal-pad"
-          accessibilityLabel={`Price for ${line.name}`}
+          accessibilityLabel={t('receipt.priceFor', { name: line.name })}
         />
 
         <TouchableOpacity
@@ -155,7 +158,7 @@ function LineRow({
           hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
           accessibilityRole="button"
           accessibilityState={{ expanded }}
-          accessibilityLabel={`${expanded ? 'Hide' : 'Show'} details for ${line.name}`}
+          accessibilityLabel={t(expanded ? 'receipt.hideDetails' : 'receipt.showDetails', { name: line.name })}
         >
           <Ionicons
             name={expanded ? 'chevron-up' : 'chevron-down'}
@@ -167,7 +170,7 @@ function LineRow({
 
       {expanded && (
         <View style={styles.lineDetail}>
-          <Text style={styles.detailLabel}>Printed on the receipt</Text>
+          <Text style={styles.detailLabel}>{t('receipt.printed')}</Text>
           <Text style={styles.rawText}>
             {line.rawName}{line.code ? `  ·  #${line.code}` : ''}
           </Text>
@@ -175,7 +178,7 @@ function LineRow({
           {line.aliasOptions?.length > 1 && (
             <>
               <Text style={styles.warnText}>
-                This line has meant different products before — pick which one it is.
+                {t('receipt.meantDifferent')}
               </Text>
               <View style={styles.chipRow}>
                 {line.aliasOptions.map((opt) => (
@@ -196,14 +199,14 @@ function LineRow({
             </>
           )}
 
-          <Text style={styles.detailLabel}>Link to a tracked item</Text>
+          <Text style={styles.detailLabel}>{t('receipt.linkTracked')}</Text>
           <TextInput
             style={styles.textInput}
             value={linkSearch}
             onChangeText={onLinkSearch}
-            placeholder="Search your items"
+            placeholder={t('receipt.searchItems')}
             placeholderTextColor={colors.textTertiary}
-            accessibilityLabel="Search tracked items to link this line to"
+            accessibilityLabel={t('receipt.searchLinkA11y')}
           />
           <View style={styles.chipRow}>
             {linkResults.map((target) => (
@@ -221,16 +224,15 @@ function LineRow({
             ))}
             {linkResults.length === 0 && (
               <Text style={styles.lineHint}>
-                No match — the name above starts a new item.
+                {t('receipt.noMatch')}
               </Text>
             )}
           </View>
           <Text style={styles.lineHint}>
-            Whatever you pick is remembered for “{line.rawName}”, so the next receipt files it
-            for you.
+            {t('receipt.remembered', { name: line.rawName })}
           </Text>
 
-          <Text style={styles.detailLabel}>Unit</Text>
+          <Text style={styles.detailLabel}>{t('receipt.unit')}</Text>
           <View style={styles.chipRow}>
             {units.map((u) => (
               <TouchableOpacity
@@ -240,12 +242,12 @@ function LineRow({
                 accessibilityRole="button"
                 accessibilityState={{ selected: line.unit === u }}
               >
-                <Text style={[styles.chipLabel, line.unit === u && styles.chipLabelActive]}>{u}</Text>
+                <Text style={[styles.chipLabel, line.unit === u && styles.chipLabelActive]}>{unitName(u)}</Text>
               </TouchableOpacity>
             ))}
           </View>
 
-          <Text style={styles.detailLabel}>Category</Text>
+          <Text style={styles.detailLabel}>{t('receipt.category')}</Text>
           <View style={styles.chipRow}>
             {categoryDefs.map((cat) => (
               <TouchableOpacity
@@ -256,7 +258,7 @@ function LineRow({
                 accessibilityState={{ selected: line.category === cat.label }}
               >
                 <Text style={[styles.chipLabel, line.category === cat.label && styles.chipLabelActive]}>
-                  {iconFor(cat.label)} {cat.label}
+                  {iconFor(cat.label)} {categoryName(cat.label)}
                 </Text>
               </TouchableOpacity>
             ))}
@@ -267,16 +269,16 @@ function LineRow({
             onPress={onTogglePantry}
             accessibilityRole="switch"
             accessibilityState={{ checked: line.toPantry }}
-            accessibilityLabel={`Add ${line.name} to the pantry`}
+            accessibilityLabel={t('receipt.addToPantryA11y', { name: line.name })}
           >
             <View style={[styles.checkbox, line.toPantry && styles.checkboxChecked]}>
               {line.toPantry && <Ionicons name="checkmark" size={12} color="#fff" />}
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.pantryToggleLabel}>Add to pantry</Text>
+              <Text style={styles.pantryToggleLabel}>{t('receipt.addToPantry')}</Text>
               {line.pantryMatch && (
                 <Text style={styles.lineHint}>
-                  Tops up “{line.pantryMatch.name}” — {line.pantryMatch.quantity} {line.pantryMatch.unit} on hand
+                  {t('receipt.topsUp', { name: line.pantryMatch.name, amount: `${line.pantryMatch.quantity} ${unitName(line.pantryMatch.unit)}` })}
                 </Text>
               )}
             </View>
@@ -284,7 +286,7 @@ function LineRow({
 
           {line.toPantry && (
             <>
-              <Text style={styles.detailLabel}>Expires (optional)</Text>
+              <Text style={styles.detailLabel}>{t('receipt.expiresOptional')}</Text>
               <DatePickerInput
                 value={line.expiryDate}
                 onChange={(expiryDate) => onChange(index, { expiryDate })}
@@ -302,6 +304,8 @@ function LineRow({
 export default function ReceiptImportScreen({ navigation }) {
   const { householdId, user } = useAuth();
   const { colors } = useTheme();
+  useLanguage();
+  useFormat();
   const { showAlert } = useAlert();
   const { notify } = useNotification();
   const isDesktop = useIsDesktop();
@@ -408,7 +412,7 @@ export default function ReceiptImportScreen({ navigation }) {
       if (res.canceled || !res.assets?.length) return;
       takeFile(res.assets[0]);
     } catch {
-      showAlert({ title: 'Could not open file', message: 'Please try selecting the receipt again.', type: 'error' });
+      showAlert({ title: t('receipt.openFileError'), message: t('receipt.openFileMessage'), type: 'error' });
     }
   };
 
@@ -420,8 +424,8 @@ export default function ReceiptImportScreen({ navigation }) {
       const perm = await ImagePicker.requestCameraPermissionsAsync();
       if (!perm.granted) {
         showAlert({
-          title: 'Camera access needed',
-          message: 'Allow camera access in Settings to photograph a receipt, or pick an existing photo instead.',
+          title: t('receipt.cameraNeeded'),
+          message: t('receipt.cameraNeededMessage'),
           type: 'warning',
         });
         return;
@@ -439,7 +443,7 @@ export default function ReceiptImportScreen({ navigation }) {
         mimeType: shot.mimeType || 'image/jpeg',
       });
     } catch (e) {
-      showAlert({ title: 'Could not open the camera', message: e.message, type: 'error' });
+      showAlert({ title: t('receipt.cameraError'), message: e.message, type: 'error' });
     }
   };
 
@@ -447,8 +451,8 @@ export default function ReceiptImportScreen({ navigation }) {
     if (!file) return;
     if (!apiKey) {
       showAlert({
-        title: 'No API key',
-        message: 'Add an OpenRouter API key in Household settings to scan receipts.',
+        title: t('receipt.noApiKey'),
+        message: t('receipt.noApiKeyMessage'),
         type: 'error',
       });
       return;
@@ -460,8 +464,8 @@ export default function ReceiptImportScreen({ navigation }) {
       const receipt = normalizeReceipt(parsed);
       if (!receipt.lines.length) {
         showAlert({
-          title: 'Nothing found',
-          message: 'No product lines could be read from that receipt. Try a sharper photo or a PDF.',
+          title: t('receipt.nothingFound'),
+          message: t('receipt.nothingFoundMessage'),
           type: 'warning',
         });
         return;
@@ -477,7 +481,7 @@ export default function ReceiptImportScreen({ navigation }) {
       setStore(shopStore);
       setDate(receipt.date || todayKey());
     } catch (e) {
-      showAlert({ title: 'Could not read receipt', message: e.message, type: 'error' });
+      showAlert({ title: t('receipt.readError'), message: e.message, type: 'error' });
     } finally {
       setAnalyzing(false);
     }
@@ -529,8 +533,8 @@ export default function ReceiptImportScreen({ navigation }) {
 
     if (!docs.length && !pantryTotal) {
       showAlert({
-        title: 'Nothing to import',
-        message: 'Select at least one line to log a price for, or to add to the pantry.',
+        title: t('receipt.nothingToImport'),
+        message: t('receipt.nothingToImportMessage'),
         type: 'warning',
       });
       return;
@@ -549,12 +553,12 @@ export default function ReceiptImportScreen({ navigation }) {
         .catch(() => { /* the import itself already succeeded */ });
 
       const parts = [];
-      if (docs.length)   parts.push(`${docs.length} price${docs.length !== 1 ? 's' : ''} logged`);
-      if (pantryTotal)   parts.push(`${pantryTotal} pantry item${pantryTotal !== 1 ? 's' : ''} stocked`);
-      notify('Receipt imported', `${parts.join(' · ')} from ${store || 'this receipt'}.`, { type: 'success' });
+      if (docs.length)   parts.push(t('receipt.pricesLogged', { count: docs.length }));
+      if (pantryTotal)   parts.push(t('receipt.pantryStocked', { count: pantryTotal }));
+      notify(t('receipt.imported'), t('receipt.importedFrom', { parts: parts.join(' · '), store: store || t('receipt.thisReceipt') }), { type: 'success' });
       navigation.goBack();
     } catch (e) {
-      showAlert({ title: 'Error', message: e.message, type: 'error' });
+      showAlert({ title: t('common.error'), message: e.message, type: 'error' });
     } finally {
       setSaving(false);
     }
@@ -581,11 +585,11 @@ export default function ReceiptImportScreen({ navigation }) {
             onPress={() => navigation.goBack()}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             accessibilityRole="button"
-            accessibilityLabel="Back"
+            accessibilityLabel={t('receipt.back')}
           >
             <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
           </TouchableOpacity>
-          <Text style={styles.title}>Scan receipt</Text>
+          <Text style={styles.title}>{t('receipt.title')}</Text>
           <View style={{ width: 26 }} />
         </View>
 
@@ -596,24 +600,26 @@ export default function ReceiptImportScreen({ navigation }) {
               style={styles.cameraButton}
               onPress={shootReceipt}
               accessibilityRole="button"
-              accessibilityLabel="Photograph a receipt"
+              accessibilityLabel={t('receipt.photographA11y')}
             >
               <Ionicons name="camera-outline" size={18} color="#fff" />
-              <Text style={styles.cameraButtonLabel}>Photograph receipt</Text>
+              <Text style={styles.cameraButtonLabel}>{t('receipt.photograph')}</Text>
             </TouchableOpacity>
           )}
 
           <TouchableOpacity style={styles.pickButton} onPress={pickFile} accessibilityRole="button">
             <Ionicons name="receipt-outline" size={18} color={colors.accent} />
             <Text style={styles.pickButtonLabel} numberOfLines={1}>
-              {file ? file.name : 'Choose a receipt photo or PDF'}
+              {file ? file.name : t('receipt.choose')}
             </Text>
           </TouchableOpacity>
 
           {needsVision && (
             <Text style={styles.warnText}>
-              {model?.label ?? 'The selected model'} can't read images. Switch to{' '}
-              {visionModels().map((m) => m.label).join(' or ')} in Household settings, or pick a PDF.
+              {t('receipt.cantReadImages', {
+                model: model?.label ?? t('receipt.selectedModel'),
+                models: visionModels().map((m) => m.label).join(t('receipt.or')),
+              })}
             </Text>
           )}
 
@@ -625,10 +631,10 @@ export default function ReceiptImportScreen({ navigation }) {
           >
             {analyzing
               ? <ActivityIndicator color="#fff" />
-              : <Text style={styles.primaryButtonLabel}>Read receipt</Text>}
+              : <Text style={styles.primaryButtonLabel}>{t('receipt.read')}</Text>}
           </TouchableOpacity>
           <Text style={styles.hintText}>
-            Lines are read by AI and always shown for review — nothing is saved until you confirm.
+            {t('receipt.reviewHint')}
           </Text>
         </View>
 
@@ -636,15 +642,15 @@ export default function ReceiptImportScreen({ navigation }) {
         {lines && (
           <>
             <View style={styles.card}>
-              <Text style={styles.cardTitle}>Shop details</Text>
-              <Text style={styles.inputLabel}>Store</Text>
+              <Text style={styles.cardTitle}>{t('receipt.shopDetails')}</Text>
+              <Text style={styles.inputLabel}>{t('receipt.store')}</Text>
               <TextInput
                 style={styles.textInput}
                 value={store}
                 onChangeText={setStore}
-                placeholder="e.g. Lidl"
+                placeholder={t('grocery.storePlaceholder')}
                 placeholderTextColor={colors.textTertiary}
-                accessibilityLabel="Store"
+                accessibilityLabel={t('receipt.store')}
               />
               {stores.length > 0 && (
                 <View style={styles.chipRow}>
@@ -661,15 +667,15 @@ export default function ReceiptImportScreen({ navigation }) {
                   ))}
                 </View>
               )}
-              <Text style={styles.inputLabel}>Purchase date</Text>
+              <Text style={styles.inputLabel}>{t('receipt.purchaseDate')}</Text>
               <DatePickerInput value={date} onChange={setDate} />
             </View>
 
             <View style={styles.card}>
               <View style={styles.cardHeader}>
-                <Text style={styles.cardTitle}>Lines</Text>
+                <Text style={styles.cardTitle}>{t('receipt.lines')}</Text>
                 <Text style={styles.cardHint}>
-                  {includedCount} priced · {pantryCount} to pantry
+                  {t('receipt.pricedCount', { priced: includedCount, pantry: pantryCount })}
                 </Text>
               </View>
               {lines.map((line, i) => (
@@ -694,12 +700,11 @@ export default function ReceiptImportScreen({ navigation }) {
                 />
               ))}
               <View style={styles.totalRow}>
-                <Text style={styles.totalLabel}>Selected total</Text>
+                <Text style={styles.totalLabel}>{t('receipt.selectedTotal')}</Text>
                 <Text style={styles.totalValue}>{formatPrice(total)}</Text>
               </View>
               <Text style={styles.hintText}>
-                Compare this against the receipt's printed total to spot a misread line.
-                Tap a line to set its unit, category or expiry date.
+                {t('receipt.totalHint')}
               </Text>
             </View>
 
@@ -712,8 +717,8 @@ export default function ReceiptImportScreen({ navigation }) {
               {saving
                 ? <ActivityIndicator color="#fff" />
                 : <Text style={styles.primaryButtonLabel}>
-                    Import {includedCount} price{includedCount !== 1 ? 's' : ''}
-                    {pantryCount > 0 ? ` · ${pantryCount} to pantry` : ''}
+                    {t('receipt.importPrices', { count: includedCount })}
+                    {pantryCount > 0 ? t('receipt.toPantryCount', { count: pantryCount }) : ''}
                   </Text>}
             </TouchableOpacity>
           </>

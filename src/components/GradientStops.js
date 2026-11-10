@@ -3,6 +3,8 @@ import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
 import { spacing, radius, type } from '../theme/colors';
 import { gradientColors } from '../utils/color';
+import { t } from '../i18n';
+import { useLanguage } from '../context/LanguageContext';
 
 // Start / (Middle) / End stop chips + a preview bar of `previewCount` cells.
 // The parent owns the stops and which one is being edited.
@@ -10,8 +12,11 @@ export default function GradientStops({
   stops, active, onSelect, onStopsChange, previewCount, previewHint,
 }) {
   const { colors } = useTheme();
+  useLanguage();
   const styles = useMemo(() => makeStyles(colors), [colors]);
-  const labels = stops.length === 3 ? ['Start', 'Middle', 'End'] : ['Start', 'End'];
+  const labels = stops.length === 3
+    ? [t('components.gradientStart'), t('components.gradientMiddle'), t('components.gradientEnd')]
+    : [t('components.gradientStart'), t('components.gradientEnd')];
   const preview = useMemo(() => gradientColors(stops, previewCount), [stops, previewCount]);
 
   const toggleMiddle = () => {
@@ -33,7 +38,7 @@ export default function GradientStops({
             style={[styles.stop, i === active && styles.stopActive]}
             onPress={() => onSelect(i)}
             accessibilityRole="button"
-            accessibilityLabel={`Edit ${labels[i].toLowerCase()} colour`}
+            accessibilityLabel={t('components.editStopColour', { stop: labels[i].toLowerCase() })}
             accessibilityState={{ selected: i === active }}
           >
             <View style={[styles.swatch, { backgroundColor: c }]} />
@@ -42,7 +47,7 @@ export default function GradientStops({
         ))}
         <View style={styles.spacer} />
         <TouchableOpacity onPress={toggleMiddle} accessibilityRole="button" hitSlop={8}>
-          <Text style={styles.link}>{stops.length === 3 ? '− Middle' : '+ Middle'}</Text>
+          <Text style={styles.link}>{stops.length === 3 ? t('components.removeMiddle') : t('components.addMiddle')}</Text>
         </TouchableOpacity>
       </View>
 

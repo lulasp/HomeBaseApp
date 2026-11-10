@@ -1,3 +1,5 @@
+import { t } from '../i18n';
+
 export const PANTRY_CATEGORIES = [
   { label: 'Grains & Pasta', icon: '🌾' },
   { label: 'Canned Goods', icon: '🥫' },
@@ -67,3 +69,15 @@ export const UNITS = [
 export const MEAL_TYPES = ['Breakfast', 'Lunch', 'Dinner', 'Snack'];
 export const DAYS_OF_WEEK = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 export const FULL_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
+// Display names. Built-in categories and units are stored by their English name
+// (items, orders and renames all key on it), so translate only when showing
+// them; a household's own or renamed labels are shown as typed.
+const lookupName = (group, value) => {
+  if (!value) return value;
+  const key = `${group}.${value}`;
+  const text = t(key);
+  return text === key ? value : text;
+};
+export const categoryName = (label) => lookupName('categories', label);
+export const unitName = (unit) => lookupName('units', unit);

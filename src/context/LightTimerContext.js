@@ -5,6 +5,7 @@ import { useTheme } from './ThemeContext';
 import { spacing, radius, type } from '../theme/colors';
 import { useIsDesktop } from '../navigation/TabBar';
 import { navigateTo } from '../navigation/navigationRef';
+import { t } from '../i18n';
 
 const LightTimerContext = createContext(null);
 
@@ -69,7 +70,7 @@ function TimerWidget({ deviceId, deviceName, remaining, total, onCancel, stackIn
           onPress={handleNavigate}
           activeOpacity={0.75}
           accessibilityRole="button"
-          accessibilityLabel={`Go to ${deviceName}`}
+          accessibilityLabel={t('timers.goTo', { name: deviceName })}
         >
           <View style={[styles.cardIcon, { backgroundColor: colors.accentSoft }]}>
             <Ionicons name="timer" size={16} color={colors.accent} />
@@ -86,7 +87,7 @@ function TimerWidget({ deviceId, deviceName, remaining, total, onCancel, stackIn
             onPress={onCancel}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             accessibilityRole="button"
-            accessibilityLabel="Cancel timer"
+            accessibilityLabel={t('timers.cancel')}
           >
             <Ionicons name="close" size={16} color={colors.textTertiary} />
           </TouchableOpacity>
@@ -112,7 +113,7 @@ function TimerWidget({ deviceId, deviceName, remaining, total, onCancel, stackIn
         onPress={handleNavigate}
         activeOpacity={0.75}
         accessibilityRole="button"
-        accessibilityLabel={`Go to ${deviceName}`}
+        accessibilityLabel={t('timers.goTo', { name: deviceName })}
       >
         <Ionicons name="timer-outline" size={13} color={colors.accent} />
         <Text style={[styles.pillTime, { color: colors.textPrimary }]}>
@@ -126,7 +127,7 @@ function TimerWidget({ deviceId, deviceName, remaining, total, onCancel, stackIn
           onPress={onCancel}
           hitSlop={{ top: 12, bottom: 12, left: 8, right: 4 }}
           accessibilityRole="button"
-          accessibilityLabel="Cancel timer"
+          accessibilityLabel={t('timers.cancel')}
         >
           <Ionicons name="close" size={13} color={colors.textTertiary} />
         </TouchableOpacity>
@@ -159,7 +160,7 @@ function TimerBubble({ count, isExpanded, onToggle }) {
         onPress={onToggle}
         activeOpacity={0.8}
         accessibilityRole="button"
-        accessibilityLabel={isExpanded ? 'Collapse timers' : `${count} active timers — tap to expand`}
+        accessibilityLabel={isExpanded ? t('timers.collapse') : t('timers.expand', { count })}
       >
         <Ionicons
           name={isExpanded ? 'chevron-down' : 'timer'}

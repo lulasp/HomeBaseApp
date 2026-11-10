@@ -5,6 +5,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../context/ThemeContext';
 import { spacing, radius, type } from '../theme/colors';
+import { t } from '../i18n';
 
 const ICON_MAP = {
   danger:  { name: 'warning-outline',             tintKey: 'danger',  bgKey: 'dangerSoft'  },
@@ -20,8 +21,9 @@ export default function AlertModal({
   icon,
   title,
   message,
-  confirmLabel = 'OK',
-  cancelLabel  = 'Cancel',
+  confirmLabel = t('common.ok'),
+  cancelLabel  = t('common.cancel'),
+
   options,
   onClose,
 }) {
