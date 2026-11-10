@@ -182,3 +182,38 @@ describe('renameInList', () => {
     expect(renameInList(undefined, 'A', 'B')).toBeUndefined();
   });
 });
+
+describe('categoryName / unitName', () => {
+  const { categoryName, unitName } = require('../utils/categories');
+  const { setCurrentLanguage } = require('../i18n');
+  afterEach(() => setCurrentLanguage('en'));
+
+  it('shows built-in names as stored in English', () => {
+    expect(categoryName('Grains & Pasta')).toBe('Grains & Pasta');
+    expect(unitName('pcs')).toBe('pcs');
+  });
+
+  it('translates built-in categories and units in Portuguese', () => {
+    setCurrentLanguage('pt');
+    expect(categoryName('Grains & Pasta')).toBe('Cereais e massas');
+    expect(categoryName('Other Non-Food')).toBe('Outros não alimentares');
+    expect(unitName('pcs')).toBe('un.');
+    expect(unitName('bottle')).toBe('garrafa');
+  });
+
+  it('leaves custom names, symbols and empty values alone', () => {
+    setCurrentLanguage('pt');
+    expect(categoryName('Pet food')).toBe('Pet food');
+    expect(unitName('kg')).toBe('kg');
+    expect(unitName('jar')).toBe('jar');
+    expect(categoryName('')).toBe('');
+    expect(unitName(undefined)).toBeUndefined();
+  });
+
+  it('has a translation for every built-in category', () => {
+    setCurrentLanguage('pt');
+    for (const { label } of [...PANTRY_CATEGORIES, ...NON_FOOD_CATEGORIES]) {
+      expect(categoryName(label)).not.toMatch(/^categories\./);
+    }
+  });
+});

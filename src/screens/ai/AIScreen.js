@@ -10,6 +10,7 @@ import { useNavScrollProps } from '../../context/NavScrollContext';
 import { useAuth } from '../../context/AuthContext';
 import { useHousehold } from '../../context/HouseholdContext';
 import { useAlert } from '../../context/AlertContext';
+import { useLanguage } from '../../context/LanguageContext';
 import { subscribePantryItems, saveRecipe, getHouseholdWithPrivate } from '../../services/firestore';
 import { sendChatMessage, suggestRecipes } from '../../services/openrouter';
 import { DEFAULT_AI_MODEL } from '../../utils/aiModels';
@@ -31,6 +32,7 @@ function ChatTab({ colors, styles, apiKey, aiModel }) {
   const navScrollProps          = useNavScrollProps();
   const navClearance            = useMobileNavClearance();
   const keyboardVisible         = useKeyboardVisible();
+  const { t, language }         = useLanguage();
 
   // The mobile nav floats over the bottom of the screen, so the composer has to
   // clear it. With the keyboard up on iOS the nav is behind the keyboard while
@@ -47,7 +49,7 @@ function ChatTab({ colors, styles, apiKey, aiModel }) {
     const text = input.trim();
     if (!text || loading) return;
     if (!apiKey) {
-      showAlert({ title: 'AI not configured', message: 'Add an OpenRouter API key in Household settings to use the assistant.', type: 'info' });
+      showAlert({ title: t('ai.notConfiguredTitle'), message: t('ai.notConfiguredMessage'), type: 'info' });
       return;
     }
 
@@ -58,18 +60,18 @@ function ChatTab({ colors, styles, apiKey, aiModel }) {
     setLoading(true);
 
     try {
-      const reply = await sendChatMessage(apiKey, history, text, aiModel);
+      const reply = await sendChatMessage(apiKey, history, text, aiModel, language);
       setHistory([...nextHistory, { role: 'model', text: reply }]);
     } catch (err) {
       showAlert({
-        title: 'AI Error',
-        message: err.message || 'Something went wrong. Please try again.',
+        title: t('ai.errorTitle'),
+        message: err.message || t('ai.genericError'),
         type: 'error',
       });
     } finally {
       setLoading(false);
     }
-  }, [input, loading, history, showAlert, apiKey, aiModel]);
+  }, [input, loading, history, showAlert, apiKey, aiModel, language, t]);
 
   const renderMessage = ({ item }) => {
     const isUser = item.role === 'user';
@@ -106,13 +108,13 @@ function ChatTab({ colors, styles, apiKey, aiModel }) {
             <Ionicons name="sparkles" size={28} color={colors.accent} />
           </View>
           <Text style={[styles.emptyChatTitle, { color: colors.textPrimary }]}>
-            Ask me anything
+            {t('ai.askAnything')}
           </Text>
           <Text style={[styles.emptyChatSubtitle, { color: colors.textSecondary }]}>
-            Recipes, meal planning, grocery tips, home tasks — I'm here to help.
+            {t('ai.askSubtitle')}
           </Text>
           <View style={styles.suggestionChips}>
-            {['What can I cook tonight?', 'Help me plan this week\'s meals', 'Give me a quick pasta recipe'].map((s) => (
+            {[t('ai.suggestion1'), t('ai.suggestion2'), t('ai.suggestion3')].map((s) => (
               <TouchableOpacity
                 key={s}
                 style={[styles.suggestionChip, { backgroundColor: colors.surface, borderColor: colors.border }]}
@@ -139,7 +141,7 @@ function ChatTab({ colors, styles, apiKey, aiModel }) {
       {loading && (
         <View style={[styles.typingIndicator, { backgroundColor: colors.surface, borderColor: colors.border }]}>
           <ActivityIndicator size="small" color={colors.accent} />
-          <Text style={[styles.typingText, { color: colors.textTertiary }]}>Thinking…</Text>
+          <Text style={[styles.typingText, { color: colors.textTertiary }]}>{t('ai.thinking')}</Text>
         </View>
       )}
 
@@ -150,7 +152,7 @@ function ChatTab({ colors, styles, apiKey, aiModel }) {
       ]}>
         <TextInput
           style={[styles.chatInput, { color: colors.textPrimary }]}
-          placeholder="Message AI…"
+          placeholder={t('ai.messagePlaceholder')}
           placeholderTextColor={colors.textTertiary}
           value={input}
           onChangeText={setInput}
@@ -164,7 +166,7 @@ function ChatTab({ colors, styles, apiKey, aiModel }) {
           style={[styles.sendBtn, { backgroundColor: input.trim() ? colors.accent : colors.muted }]}
           onPress={handleSend}
           disabled={!input.trim() || loading}
-          accessibilityLabel="Send message"
+          accessibilityLabel={t('ai.sendMessage')}
         >
           <Ionicons name="arrow-up" size={18} color={input.trim() ? '#fff' : colors.textTertiary} />
         </TouchableOpacity>
@@ -209,6 +211,7 @@ function RecipeCard({ recipe, colors, styles, householdId, userId }) {
   const [saving, setSaving]     = useState(false);
   const { showAlert }           = useAlert();
   const { notify }              = useNotification();
+  const { t }                   = useLanguage();
 
   const handleSave = async () => {
     if (saved || saving) return;
@@ -216,9 +219,9 @@ function RecipeCard({ recipe, colors, styles, householdId, userId }) {
     try {
       await saveRecipe(householdId, aiRecipeToAppRecipe(recipe, userId));
       setSaved(true);
-      notify('Recipe saved', `"${recipe.name}" added to your recipes.`, { type: 'success' });
+      notify(t('ai.recipeSaved'), t('ai.recipeSavedMessage', { name: recipe.name }), { type: 'success' });
     } catch (err) {
-      showAlert({ title: 'Save failed', message: err.message, type: 'error' });
+      showAlert({ title: t('ai.saveFailed'), message: err.message, type: 'error' });
     } finally {
       setSaving(false);
     }
@@ -246,14 +249,14 @@ function RecipeCard({ recipe, colors, styles, householdId, userId }) {
               ]}
               onPress={handleSave}
               disabled={saved || saving}
-              accessibilityLabel={saved ? 'Recipe saved' : 'Save recipe'}
+              accessibilityLabel={saved ? t('ai.recipeSaved') : t('ai.saveRecipe')}
             >
               {saving
                 ? <ActivityIndicator size="small" color={colors.sage} />
                 : <Ionicons name={saved ? 'checkmark' : 'bookmark-outline'} size={15} color={saved ? colors.sage : colors.textSecondary} />
               }
               <Text style={[styles.saveRecipeBtnText, { color: saved ? colors.sage : colors.textSecondary }]}>
-                {saved ? 'Saved' : 'Save'}
+                {saved ? t('common.saved') : t('common.save')}
               </Text>
             </TouchableOpacity>
           </View>
@@ -277,7 +280,7 @@ function RecipeCard({ recipe, colors, styles, householdId, userId }) {
 
       {expanded && (
         <View style={[styles.stepsSection, { borderTopColor: colors.border }]}>
-          <Text style={[styles.stepsLabel, { color: colors.textTertiary }]}>STEPS</Text>
+          <Text style={[styles.stepsLabel, { color: colors.textTertiary }]}>{t('ai.steps')}</Text>
           {recipe.steps.map((step, i) => (
             <View key={i} style={styles.stepRow}>
               <View style={[styles.stepNum, { backgroundColor: colors.accentSoft }]}>
@@ -291,7 +294,7 @@ function RecipeCard({ recipe, colors, styles, householdId, userId }) {
 
       <TouchableOpacity onPress={() => setExpanded((v) => !v)} style={styles.expandToggle}>
         <Text style={[styles.expandToggleText, { color: colors.accent }]}>
-          {expanded ? 'Show less' : 'View steps'}
+          {expanded ? t('ai.showLess') : t('ai.viewSteps')}
         </Text>
         <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={13} color={colors.accent} />
       </TouchableOpacity>
@@ -302,6 +305,7 @@ function RecipeCard({ recipe, colors, styles, householdId, userId }) {
 function RecipeSuggesterTab({ colors, styles, apiKey, aiModel }) {
   const { householdId, user } = useAuth();
   const { showAlert }         = useAlert();
+  const { t, language }       = useLanguage();
 
   const [items, setItems]         = useState([]);
   const [inputText, setInputText] = useState('');
@@ -331,7 +335,7 @@ function RecipeSuggesterTab({ colors, styles, apiKey, aiModel }) {
 
   const loadFromPantry = () => {
     if (!pantryItems.length) {
-      showAlert({ title: 'Empty pantry', message: 'Add items to your pantry first.', type: 'info' });
+      showAlert({ title: t('ai.emptyPantryTitle'), message: t('ai.emptyPantryMessage'), type: 'info' });
       return;
     }
     setItems(pantryItems.map((i) => ({ name: i.name, quantity: i.quantity, unit: i.unit })));
@@ -339,22 +343,22 @@ function RecipeSuggesterTab({ colors, styles, apiKey, aiModel }) {
 
   const handleSuggest = async () => {
     if (!items.length) {
-      showAlert({ title: 'No items', message: 'Add at least one ingredient first.', type: 'warning' });
+      showAlert({ title: t('ai.noItemsTitle'), message: t('ai.noItemsMessage'), type: 'warning' });
       return;
     }
     if (!apiKey) {
-      showAlert({ title: 'AI not configured', message: 'Add an OpenRouter API key in Household settings to use the assistant.', type: 'info' });
+      showAlert({ title: t('ai.notConfiguredTitle'), message: t('ai.notConfiguredMessage'), type: 'info' });
       return;
     }
     setLoading(true);
     setRecipes(null);
     try {
-      const data = await suggestRecipes(apiKey, items, aiModel);
+      const data = await suggestRecipes(apiKey, items, aiModel, language);
       setRecipes(data.recipes ?? []);
     } catch (err) {
       showAlert({
-        title: 'AI Error',
-        message: err.message || 'Could not get recipe suggestions. Please try again.',
+        title: t('ai.errorTitle'),
+        message: err.message || t('ai.suggestError'),
         type: 'error',
       });
     } finally {
@@ -370,16 +374,16 @@ function RecipeSuggesterTab({ colors, styles, apiKey, aiModel }) {
       showsVerticalScrollIndicator={false}
       {...navScrollProps}
     >
-      <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>What's in your kitchen?</Text>
+      <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>{t('ai.kitchenTitle')}</Text>
       <Text style={[styles.sectionSubtitle, { color: colors.textSecondary }]}>
-        Add ingredients and I'll suggest recipes you can make.
+        {t('ai.kitchenSubtitle')}
       </Text>
 
       {/* Input row */}
       <View style={[styles.itemInputRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
         <TextInput
           style={[styles.itemInput, { color: colors.textPrimary }]}
-          placeholder="Add ingredient…"
+          placeholder={t('ai.addIngredientPlaceholder')}
           placeholderTextColor={colors.textTertiary}
           value={inputText}
           onChangeText={setInputText}
@@ -389,7 +393,7 @@ function RecipeSuggesterTab({ colors, styles, apiKey, aiModel }) {
         <TouchableOpacity
           style={[styles.addIngBtn, { backgroundColor: colors.accent }]}
           onPress={addItem}
-          accessibilityLabel="Add ingredient"
+          accessibilityLabel={t('ai.addIngredient')}
         >
           <Ionicons name="add" size={20} color="#fff" />
         </TouchableOpacity>
@@ -402,7 +406,7 @@ function RecipeSuggesterTab({ colors, styles, apiKey, aiModel }) {
       >
         <Ionicons name="nutrition-outline" size={15} color={colors.sage} />
         <Text style={[styles.pantryShortcutText, { color: colors.sage }]}>
-          Load from my pantry ({pantryItems.length} items)
+          {t('ai.loadFromPantry', { count: pantryItems.length })}
         </Text>
       </TouchableOpacity>
 
@@ -428,7 +432,7 @@ function RecipeSuggesterTab({ colors, styles, apiKey, aiModel }) {
         ]}
         onPress={handleSuggest}
         disabled={!items.length || loading}
-        accessibilityLabel="Get recipe suggestions"
+        accessibilityLabel={t('ai.getSuggestions')}
       >
         {loading ? (
           <ActivityIndicator color="#fff" size="small" />
@@ -436,7 +440,7 @@ function RecipeSuggesterTab({ colors, styles, apiKey, aiModel }) {
           <>
             <Ionicons name="sparkles" size={16} color={items.length ? '#fff' : colors.textTertiary} />
             <Text style={[styles.suggestBtnText, { color: items.length ? '#fff' : colors.textTertiary }]}>
-              Suggest Recipes
+              {t('ai.suggestRecipes')}
             </Text>
           </>
         )}
@@ -446,13 +450,13 @@ function RecipeSuggesterTab({ colors, styles, apiKey, aiModel }) {
       {loading && (
         <View style={styles.loadingState}>
           <ActivityIndicator color={colors.accent} />
-          <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Finding recipes…</Text>
+          <Text style={[styles.loadingText, { color: colors.textSecondary }]}>{t('ai.findingRecipes')}</Text>
         </View>
       )}
 
       {recipes && recipes.length === 0 && (
         <Text style={[styles.noResults, { color: colors.textTertiary }]}>
-          No recipes found. Try adding more ingredients.
+          {t('ai.noRecipes')}
         </Text>
       )}
 
@@ -470,8 +474,8 @@ function RecipeSuggesterTab({ colors, styles, apiKey, aiModel }) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const TABS = [
-  { key: 'chat',    label: 'Chat',           icon: 'chatbubble-ellipses-outline' },
-  { key: 'recipes', label: 'Recipe Ideas',   icon: 'restaurant-outline'           },
+  { key: 'chat',    labelKey: 'ai.tabChat',    icon: 'chatbubble-ellipses-outline' },
+  { key: 'recipes', labelKey: 'ai.tabRecipes', icon: 'restaurant-outline'          },
 ];
 
 export default function AIScreen() {
@@ -484,6 +488,7 @@ export default function AIScreen() {
   const [apiKey, setApiKey] = useState('');
   const [aiModel, setAiModel] = useState(DEFAULT_AI_MODEL);
   const fadeAnim        = useRef(new Animated.Value(0)).current;
+  const { t }           = useLanguage();
 
   useEffect(() => {
     if (!animationsEnabled) { fadeAnim.setValue(1); return; }
@@ -509,30 +514,31 @@ export default function AIScreen() {
               <Ionicons name="sparkles" size={16} color={colors.accent} />
             </View>
             <View>
-              <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>AI Assistant</Text>
-              <Text style={[styles.headerSubtitle, { color: colors.textTertiary }]}>Powered by OpenRouter</Text>
+              <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>{t('ai.title')}</Text>
+              <Text style={[styles.headerSubtitle, { color: colors.textTertiary }]}>{t('ai.poweredBy')}</Text>
             </View>
           </View>
         </View>
 
         {/* Tab switcher */}
         <View style={[styles.tabBar, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-          {TABS.map((t) => (
+          {TABS.map((item) => (
             <TouchableOpacity
-              key={t.key}
-              style={[styles.tabBtn, tab === t.key && { backgroundColor: colors.accent }]}
-              onPress={() => setTab(t.key)}
+              key={item.key}
+              style={[styles.tabBtn, tab === item.key && { backgroundColor: colors.accent }]}
+              onPress={() => setTab(item.key)}
               accessibilityRole="tab"
-              accessibilityState={{ selected: tab === t.key }}
+              accessibilityState={{ selected: tab === item.key }}
             >
               <Ionicons
-                name={t.icon}
+                name={item.icon}
                 size={14}
-                color={tab === t.key ? '#fff' : colors.textTertiary}
+                color={tab === item.key ? '#fff' : colors.textTertiary}
               />
-              <Text style={[styles.tabBtnLabel, { color: tab === t.key ? '#fff' : colors.textTertiary }]}>
-                {t.label}
+              <Text style={[styles.tabBtnLabel, { color: tab === item.key ? '#fff' : colors.textTertiary }]}>
+                {t(item.labelKey)}
               </Text>
+
             </TouchableOpacity>
           ))}
         </View>

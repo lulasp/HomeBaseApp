@@ -17,38 +17,40 @@ import { spacing, radius, type } from '../../theme/colors';
 import { useIsDesktop, SIDEBAR_WIDTH, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
 import { Rise, Reveal, useEntranceReplay } from '../../components/Motion';
 import AddRecipeScreen from './AddRecipeScreen';
+import { t } from '../../i18n';
+import { useLanguage } from '../../context/LanguageContext';
 
 // ── Filter option definitions ─────────────────────────────────────────────────
 const FILTER_OPTIONS = {
   type: [
-    { label: 'Breakfast',    value: 'breakfast'    },
-    { label: 'Main Course',  value: 'main course'  },
-    { label: 'Side Dish',    value: 'side dish'    },
-    { label: 'Dessert',      value: 'dessert'      },
-    { label: 'Appetizer',    value: 'appetizer'    },
-    { label: 'Soup',         value: 'soup'         },
-    { label: 'Salad',        value: 'salad'        },
-    { label: 'Snack',        value: 'snack'        },
+    { label: 'recipes.filters.breakfast',    value: 'breakfast'    },
+    { label: 'recipes.filters.main course',  value: 'main course'  },
+    { label: 'recipes.filters.side dish',    value: 'side dish'    },
+    { label: 'recipes.filters.dessert',      value: 'dessert'      },
+    { label: 'recipes.filters.appetizer',    value: 'appetizer'    },
+    { label: 'recipes.filters.soup',         value: 'soup'         },
+    { label: 'recipes.filters.salad',        value: 'salad'        },
+    { label: 'recipes.filters.snack',        value: 'snack'        },
   ],
   diet: [
-    { label: 'Vegetarian',  value: 'vegetarian'  },
-    { label: 'Vegan',       value: 'vegan'       },
-    { label: 'Gluten Free', value: 'gluten free' },
-    { label: 'Ketogenic',   value: 'ketogenic'   },
-    { label: 'Paleo',       value: 'paleo'       },
-    { label: 'Whole30',     value: 'whole30'     },
+    { label: 'recipes.filters.vegetarian',  value: 'vegetarian'  },
+    { label: 'recipes.filters.vegan',       value: 'vegan'       },
+    { label: 'recipes.filters.gluten free', value: 'gluten free' },
+    { label: 'recipes.filters.ketogenic',   value: 'ketogenic'   },
+    { label: 'recipes.filters.paleo',       value: 'paleo'       },
+    { label: 'recipes.filters.whole30',     value: 'whole30'     },
   ],
   cuisine: [
-    { label: 'Italian',       value: 'italian'       },
-    { label: 'Mexican',       value: 'mexican'       },
-    { label: 'Asian',         value: 'asian'         },
-    { label: 'Indian',        value: 'indian'        },
-    { label: 'Mediterranean', value: 'mediterranean' },
-    { label: 'American',      value: 'american'      },
-    { label: 'French',        value: 'french'        },
-    { label: 'Chinese',       value: 'chinese'       },
-    { label: 'Thai',          value: 'thai'          },
-    { label: 'Japanese',      value: 'japanese'      },
+    { label: 'recipes.filters.italian',       value: 'italian'       },
+    { label: 'recipes.filters.mexican',       value: 'mexican'       },
+    { label: 'recipes.filters.asian',         value: 'asian'         },
+    { label: 'recipes.filters.indian',        value: 'indian'        },
+    { label: 'recipes.filters.mediterranean', value: 'mediterranean' },
+    { label: 'recipes.filters.american',      value: 'american'      },
+    { label: 'recipes.filters.french',        value: 'french'        },
+    { label: 'recipes.filters.chinese',       value: 'chinese'       },
+    { label: 'recipes.filters.thai',          value: 'thai'          },
+    { label: 'recipes.filters.japanese',      value: 'japanese'      },
   ],
   maxReadyTime: [
     { label: '15 min', value: 15 },
@@ -86,31 +88,33 @@ const chipStyles = StyleSheet.create({
 
 // ── FilterPanel ───────────────────────────────────────────────────────────────
 const FILTER_SECTIONS = [
-  { key: 'type',         label: 'Meal Type', multi: false },
-  { key: 'diet',         label: 'Diet',      multi: false },
-  { key: 'cuisine',      label: 'Cuisine',   multi: true  },
-  { key: 'maxReadyTime', label: 'Max Time',  multi: false },
+  { key: 'type',         label: 'recipes.mealType', multi: false },
+  { key: 'diet',         label: 'recipes.diet',     multi: false },
+  { key: 'cuisine',      label: 'recipes.cuisine',  multi: true  },
+  { key: 'maxReadyTime', label: 'recipes.maxTime',  multi: false },
 ];
 
-const FilterPanel = memo(({ filters, onToggle, onClear, colors }) => (
+const FilterPanel = memo(({ filters, onToggle, onClear, colors }) => {
+  useLanguage();
+  return (
   <View style={[panelStyles.panel, { backgroundColor: colors.surface, borderColor: colors.border }]}>
     <View style={panelStyles.header}>
-      <Text style={[panelStyles.headerLabel, { color: colors.textTertiary }]}>FILTERS</Text>
-      <TouchableOpacity onPress={onClear} accessibilityRole="button" accessibilityLabel="Clear all filters">
-        <Text style={[panelStyles.clearBtn, { color: colors.accent }]}>Clear all</Text>
+      <Text style={[panelStyles.headerLabel, { color: colors.textTertiary }]}>{t('recipes.filtersTitle')}</Text>
+      <TouchableOpacity onPress={onClear} accessibilityRole="button" accessibilityLabel={t('recipes.clearAllA11y')}>
+        <Text style={[panelStyles.clearBtn, { color: colors.accent }]}>{t('recipes.clearAll')}</Text>
       </TouchableOpacity>
     </View>
 
     {FILTER_SECTIONS.map(({ key, label, multi }) => (
       <View key={key} style={panelStyles.section}>
-        <Text style={[panelStyles.sectionLabel, { color: colors.textTertiary }]}>{label}</Text>
+        <Text style={[panelStyles.sectionLabel, { color: colors.textTertiary }]}>{t(label)}</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={panelStyles.chipRow}>
           {FILTER_OPTIONS[key].map(({ label: chipLabel, value }) => {
             const active = multi ? filters[key].includes(value) : filters[key] === value;
             return (
               <FilterChip
                 key={String(value)}
-                label={chipLabel}
+                label={t(chipLabel)}
                 active={active}
                 onPress={() => onToggle(key, value, multi)}
                 colors={colors}
@@ -121,7 +125,8 @@ const FilterPanel = memo(({ filters, onToggle, onClear, colors }) => (
       </View>
     ))}
   </View>
-));
+  );
+});
 
 const panelStyles = StyleSheet.create({
   panel:        { marginHorizontal: spacing.xl, marginBottom: spacing.md, borderRadius: radius.lg, borderWidth: 1, paddingVertical: 14 },
@@ -136,6 +141,7 @@ const panelStyles = StyleSheet.create({
 // ── RecipeCard ────────────────────────────────────────────────────────────────
 const RecipeCard = memo(({ recipe, onPress, onLongPress, onSave, onUnsave, isSaved, onDelete, selectionMode, selected }) => {
   const { colors } = useTheme();
+  useLanguage();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   return (
     <TouchableOpacity
@@ -194,7 +200,7 @@ const RecipeCard = memo(({ recipe, onPress, onLongPress, onSave, onUnsave, isSav
               style={[styles.recipeCardActionButton, isSaved && styles.recipeCardSavedButton]}
               onPress={isSaved ? onUnsave : onSave}
               accessibilityRole="button"
-              accessibilityLabel={isSaved ? 'Remove from saved' : 'Save recipe'}
+              accessibilityLabel={isSaved ? t('recipes.removeFromSaved') : t('recipes.saveRecipe')}
             >
               <Ionicons name={isSaved ? 'bookmark' : 'bookmark-outline'} size={14} color="#fff" />
             </TouchableOpacity>
@@ -204,7 +210,7 @@ const RecipeCard = memo(({ recipe, onPress, onLongPress, onSave, onUnsave, isSav
               style={[styles.recipeCardActionButton, styles.recipeCardDeleteButton]}
               onPress={onDelete}
               accessibilityRole="button"
-              accessibilityLabel="Delete recipe"
+              accessibilityLabel={t('recipes.deleteRecipeA11y')}
             >
               <Ionicons name="trash-outline" size={14} color="#fff" />
             </TouchableOpacity>
@@ -219,6 +225,7 @@ const RecipeCard = memo(({ recipe, onPress, onLongPress, onSave, onUnsave, isSav
 export default function RecipesScreen({ navigation }) {
   const { householdId } = useAuth();
   const { colors } = useTheme();
+  useLanguage();
   const navScrollProps = useNavScrollProps();
   const { showAlert, showConfirm } = useAlert();
   const { notify } = useNotification();
@@ -333,7 +340,7 @@ export default function RecipesScreen({ navigation }) {
       setIsRandomMode(false);
     } catch (e) {
       if (e instanceof ApiLimitError) { setApiLimitReached(true); }
-      else if (!append) showAlert({ title: 'Search failed', message: 'Check your Spoonacular API key', type: 'error' });
+      else if (!append) showAlert({ title: t('recipes.searchFailed'), message: t('recipes.checkSpoonacular'), type: 'error' });
     } finally {
       setIsSearching(false);
       setIsLoadingMore(false);
@@ -374,7 +381,7 @@ export default function RecipesScreen({ navigation }) {
 
   const handleSaveRecipe = async (recipe) => {
     await saveRecipe(householdId, recipe);
-    notify('Saved', `"${recipe.title}" added to your recipes.`, { type: 'success' });
+    notify(t('recipes.saved'), t('recipes.addedToRecipes', { name: recipe.title }), { type: 'success' });
   };
 
   const handleUnsaveRecipe = async (recipe) => {
@@ -382,25 +389,25 @@ export default function RecipesScreen({ navigation }) {
     if (!saved) return;
     try {
       await deleteRecipe(householdId, saved.id);
-      notify('Removed', `"${recipe.title}" removed from your recipes.`, { type: 'info' });
+      notify(t('recipes.removed'), t('recipes.removedFromRecipes', { name: recipe.title }), { type: 'info' });
     } catch (e) {
-      showAlert({ title: 'Remove failed', message: e.message, type: 'error' });
+      showAlert({ title: t('recipes.removeFailed'), message: e.message, type: 'error' });
     }
   };
 
   const handleDeleteRecipe = async (recipe) => {
     const confirmed = await showConfirm({
-      title: 'Delete recipe',
-      message: `Remove "${recipe.title}"?`,
+      title: t('recipes.deleteRecipe'),
+      message: t('recipes.removeConfirm', { name: recipe.title }),
       type: 'danger',
-      confirmLabel: 'Delete',
+      confirmLabel: t('common.delete'),
     });
     if (!confirmed) return;
     try {
       await deleteRecipe(householdId, recipe.id);
-      notify('Recipe deleted', `"${recipe.title}" has been removed.`, { type: 'info' });
+      notify(t('recipes.recipeDeleted'), t('recipes.recipeRemoved', { name: recipe.title }), { type: 'info' });
     } catch (e) {
-      showAlert({ title: 'Delete failed', message: e.message, type: 'error' });
+      showAlert({ title: t('recipes.deleteFailed'), message: e.message, type: 'error' });
     }
   };
 
@@ -434,12 +441,12 @@ export default function RecipesScreen({ navigation }) {
     const targets = savedRecipes.filter(r => selectedIds.has(r.id));
     if (targets.length === 0) return;
     const confirmed = await showConfirm({
-      title: `Delete ${targets.length} recipe${targets.length > 1 ? 's' : ''}`,
+      title: t('recipes.deleteCount', { count: targets.length }),
       message: targets.length === 1
-        ? `Remove "${targets[0].title}"?`
-        : `Remove these ${targets.length} recipes? This can't be undone.`,
+        ? t('recipes.removeConfirm', { name: targets[0].title })
+        : t('recipes.removeManyConfirm', { count: targets.length }),
       type: 'danger',
-      confirmLabel: 'Delete',
+      confirmLabel: t('common.delete'),
     });
     if (!confirmed) return;
     const results = await Promise.allSettled(targets.map(r => deleteRecipe(householdId, r.id)));
@@ -447,12 +454,12 @@ export default function RecipesScreen({ navigation }) {
     exitSelection();
     if (failed) {
       showAlert({
-        title: 'Delete failed',
-        message: `${failed} of ${targets.length} recipes could not be deleted.`,
+        title: t('recipes.deleteFailed'),
+        message: t('recipes.someFailed', { failed, total: targets.length }),
         type: 'error',
       });
     } else {
-      notify('Recipes deleted', `${targets.length} recipe${targets.length > 1 ? 's' : ''} removed.`, { type: 'info' });
+      notify(t('recipes.recipesDeleted'), t('recipes.recipesRemoved', { count: targets.length }), { type: 'info' });
     }
   };
 
@@ -463,40 +470,40 @@ export default function RecipesScreen({ navigation }) {
       {selectionMode ? (
         <View style={styles.selectionBar}>
           <TouchableOpacity onPress={exitSelection} accessibilityRole="button">
-            <Text style={styles.selectionCancel}>Cancel</Text>
+            <Text style={styles.selectionCancel}>{t('common.cancel')}</Text>
           </TouchableOpacity>
           <Text style={styles.selectionCount}>
-            {selectedIds.size} selected
+            {t('recipes.selectedCount', { count: selectedIds.size })}
           </Text>
           <TouchableOpacity
             style={[styles.selectionDeleteButton, selectedIds.size === 0 && styles.selectionDeleteButtonDisabled]}
             onPress={handleDeleteSelected}
             disabled={selectedIds.size === 0}
             accessibilityRole="button"
-            accessibilityLabel={`Delete ${selectedIds.size} selected recipes`}
+            accessibilityLabel={t('recipes.deleteSelectedA11y', { count: selectedIds.size })}
           >
             <Ionicons name="trash-outline" size={15} color="#fff" />
-            <Text style={styles.selectionDeleteLabel}>Delete</Text>
+            <Text style={styles.selectionDeleteLabel}>{t('common.delete')}</Text>
           </TouchableOpacity>
         </View>
       ) : (
       <Rise index={0}>
       <View style={styles.headerSection}>
-        <Text style={styles.screenTitle}>Recipes</Text>
+        <Text style={styles.screenTitle}>{t('recipes.title')}</Text>
         <View style={styles.headerActions}>
           {activeTab === 'saved' && savedRecipes.length > 0 && (
             <TouchableOpacity
               style={styles.selectButton}
               onPress={() => startSelection(null)}
               accessibilityRole="button"
-              accessibilityLabel="Select recipes"
+              accessibilityLabel={t('recipes.selectA11y')}
             >
-              <Text style={styles.selectButtonLabel}>Select</Text>
+              <Text style={styles.selectButtonLabel}>{t('recipes.select')}</Text>
             </TouchableOpacity>
           )}
           <TouchableOpacity style={styles.addRecipeButton} onPress={() => setShowAddModal(true)} accessibilityRole="button">
             <Ionicons name="add" size={16} color="#fff" />
-            <Text style={styles.addRecipeButtonLabel}>New</Text>
+            <Text style={styles.addRecipeButtonLabel}>{t('recipes.new')}</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -506,8 +513,8 @@ export default function RecipesScreen({ navigation }) {
       {!selectionMode && (
       <View style={styles.tabRow}>
         {[
-          ['saved',  'bookmark-outline', 'Saved'   ],
-          ['search', 'search-outline',   'Discover'],
+          ['saved',  'bookmark-outline', t('recipes.tabSaved')   ],
+          ['search', 'search-outline',   t('recipes.tabDiscover')],
         ].map(([value, icon, label]) => (
           <TouchableOpacity
             key={value}
@@ -529,20 +536,20 @@ export default function RecipesScreen({ navigation }) {
             <Ionicons name="search-outline" size={17} color={colors.textTertiary} />
             <TextInput
               style={styles.searchInput}
-              placeholder="Search recipes…"
+              placeholder={t('recipes.searchPlaceholder')}
               value={searchQuery}
               onChangeText={setSearchQuery}
               onSubmitEditing={handleSearch}
               returnKeyType="search"
               placeholderTextColor={colors.textTertiary}
-              accessibilityLabel="Search recipes"
+              accessibilityLabel={t('recipes.searchA11y')}
             />
           </View>
           <TouchableOpacity
             style={[styles.filterToggleButton, showFilters && styles.filterToggleButtonActive]}
             onPress={() => setShowFilters(v => !v)}
             accessibilityRole="button"
-            accessibilityLabel="Toggle filters"
+            accessibilityLabel={t('recipes.toggleFilters')}
           >
             <Ionicons
               name="options-outline"
@@ -577,7 +584,7 @@ export default function RecipesScreen({ navigation }) {
         <View style={styles.limitBanner}>
           <Ionicons name="warning-outline" size={18} color={colors.amber} />
           <Text style={styles.limitBannerText}>
-            Daily API limit reached. New recipes will load again tomorrow.
+            {t('recipes.apiLimit')}
           </Text>
         </View>
       )}
@@ -620,9 +627,9 @@ export default function RecipesScreen({ navigation }) {
                   <Ionicons name={activeTab === 'saved' ? 'book-outline' : 'restaurant-outline'} size={36} color={colors.textTertiary} />
                 </View>
                 <Text style={styles.emptyStateTitle}>
-                  {activeTab === 'saved' ? 'No saved recipes' : 'Discover recipes above'}
+                  {activeTab === 'saved' ? t('recipes.noSaved') : t('recipes.discoverAbove')}
                 </Text>
-                {activeTab === 'saved' && <Text style={styles.emptyStateSubtitle}>Save from search or add your own</Text>}
+                {activeTab === 'saved' && <Text style={styles.emptyStateSubtitle}>{t('recipes.noSavedSub')}</Text>}
               </View>
             ) : null
           }

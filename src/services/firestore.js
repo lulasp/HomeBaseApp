@@ -21,6 +21,7 @@ import { db } from '../config/firebase';
 import { weightLogId } from '../utils/bodyMetrics';
 import { monthKey as currentMonthKey } from '../utils/financeSummary';
 import { amountForMonth, billTypeOf } from '../utils/recurring';
+import { t } from '../i18n';
 
 // ── Households ───────────────────────────────────────────
 const sanitizeProfile = ({ name, email } = {}) => ({
@@ -57,7 +58,7 @@ export const createHousehold = async (uid, name, profile = {}) => {
 export const joinHousehold = async (uid, inviteCode, profile = {}) => {
   const q = query(collection(db, 'households'), where('inviteCode', '==', inviteCode.toUpperCase()));
   const snap = await getDocs(q);
-  if (snap.empty) throw new Error('Invalid invite code.');
+  if (snap.empty) throw new Error(t('errors.invalidInvite'));
   const householdDoc = snap.docs[0];
   const members = householdDoc.data().members || [];
   if (!members.includes(uid)) {
@@ -285,9 +286,9 @@ export const regenerateInviteCode = async (householdId) => {
 export const transferHouseholdOwnership = async (householdId, newOwnerUid) => {
   const ref = doc(db, 'households', householdId);
   const snap = await getDoc(ref);
-  if (!snap.exists()) throw new Error('Household not found.');
+  if (!snap.exists()) throw new Error(t('errors.householdNotFound'));
   if (!(snap.data().members || []).includes(newOwnerUid)) {
-    throw new Error('The new owner must be a household member.');
+    throw new Error(t('errors.newOwnerMember'));
   }
   await updateDoc(ref, { createdBy: newOwnerUid });
 };
@@ -476,7 +477,7 @@ export const removeHouseholdMember = async (householdId, uid) => {
   const snap = await getDoc(ref);
   if (!snap.exists()) return;
   const data = snap.data();
-  if (data.createdBy === uid) throw new Error('The household owner cannot be removed.');
+  if (data.createdBy === uid) throw new Error(t('errors.ownerCannotBeRemoved'));
   const members = data.members || [];
   await updateDoc(ref, { members: members.filter((m) => m !== uid) });
   await updateDoc(privateRef(householdId), { [`memberProfiles.${uid}`]: deleteField() }).catch(() => {});

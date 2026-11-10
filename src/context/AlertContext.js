@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useRef, useState } from 'react';
 import AlertModal from '../components/AlertModal';
+import { t } from '../i18n';
 
 const AlertContext = createContext(null);
 
@@ -19,11 +20,12 @@ export function AlertProvider({ children }) {
   };
 
   // Single-button info / success / error / warning
-  const showAlert = ({ title, message, type = 'info', icon, confirmLabel = 'OK' }) =>
+  const showAlert = ({ title, message, type = 'info', icon, confirmLabel = t('common.ok') }) =>
     _show({ mode: 'alert', title, message, type, icon, confirmLabel });
 
   // Two-button confirmation — resolves true (confirm) or false (cancel)
-  const showConfirm = ({ title, message, type = 'danger', icon, confirmLabel = 'Confirm', cancelLabel = 'Cancel' }) =>
+  const showConfirm = ({ title, message, type = 'danger', icon, confirmLabel = t('common.confirm'), cancelLabel = t('common.cancel') }) =>
+
     _show({ mode: 'confirm', title, message, type, icon, confirmLabel, cancelLabel });
 
   // Multi-option sheet — resolves with opt.value or null for cancel

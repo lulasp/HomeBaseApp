@@ -21,15 +21,17 @@ import {
   buildPriceHistory, recentStores, buildPriceEntry, itemKeyOf, buildStoreComparison,
   formatPrice, formatUnitPrice, formatPercent, trendPresentation,
 } from '../../utils/pricing';
-import { PANTRY_CATEGORIES, NON_FOOD_CATEGORIES, UNITS, withOverrides } from '../../utils/categories';
+import { PANTRY_CATEGORIES, NON_FOOD_CATEGORIES, UNITS, withOverrides, categoryName, unitName } from '../../utils/categories';
 import { spacing, radius, type } from '../../theme/colors';
 import { useIsDesktop, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
+import { t } from '../../i18n';
+import { useLanguage } from '../../context/LanguageContext';
 
 const SORTS = [
-  { id: 'recent',  label: 'Recent'  },
-  { id: 'up',      label: 'Rising'  },
-  { id: 'down',    label: 'Falling' },
-  { id: 'name',    label: 'A–Z'     },
+  { id: 'recent',  label: 'prices.sortRecent'  },
+  { id: 'up',      label: 'prices.sortRising'  },
+  { id: 'down',    label: 'prices.sortFalling' },
+  { id: 'name',    label: 'prices.sortAZ'      },
 ];
 
 const BLANK_ENTRY = { name: '', price: '', quantity: '1', unit: 'pcs', store: '', category: 'Other' };
@@ -43,6 +45,7 @@ const PICKER_LIMIT = 6;
 
 const PriceRow = memo(({ item, icon, onPress }) => {
   const { colors } = useTheme();
+  useLanguage();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const trend = trendPresentation(item.trend.direction);
   const trendColor = colors[trend.colorKey];
@@ -53,7 +56,7 @@ const PriceRow = memo(({ item, icon, onPress }) => {
       style={styles.row}
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel={`${item.itemName}, last paid ${formatPrice(item.latest.price)}, ${trend.label}`}
+      accessibilityLabel={t('prices.rowA11y', { name: item.itemName, price: formatPrice(item.latest.price), trend: trend.label })}
     >
       <Text style={styles.rowIcon}>{icon}</Text>
       <View style={styles.rowInfo}>
@@ -61,7 +64,7 @@ const PriceRow = memo(({ item, icon, onPress }) => {
         <Text style={styles.rowMeta} numberOfLines={1}>
           {formatUnitPrice(item.latest.unitPrice, item.canonicalUnit)}
           {item.latest.store ? ` · ${item.latest.store}` : ''}
-          {` · ${item.count} ${item.count === 1 ? 'entry' : 'entries'}`}
+          {` · ${t('prices.entries', { count: item.count })}`}
         </Text>
       </View>
       <View style={styles.rowRight}>
@@ -69,7 +72,7 @@ const PriceRow = memo(({ item, icon, onPress }) => {
         <View style={[styles.trendBadge, { backgroundColor: `${trendColor}22` }]}>
           <Ionicons name={trend.icon} size={11} color={trendColor} />
           <Text style={[styles.trendBadgeLabel, { color: trendColor }]}>
-            {isFirst ? 'New' : item.trend.direction === 'same' ? 'Flat' : formatPercent(item.trend.pct)}
+            {isFirst ? t('prices.new') : item.trend.direction === 'same' ? t('prices.flat') : formatPercent(item.trend.pct)}
           </Text>
         </View>
       </View>
@@ -83,6 +86,7 @@ const PriceRow = memo(({ item, icon, onPress }) => {
 export default function PriceHistoryScreen() {
   const { householdId, user } = useAuth();
   const { colors } = useTheme();
+  useLanguage();
   const { showAlert } = useAlert();
   const { notify } = useNotification();
   const navScrollProps = useNavScrollProps();
@@ -217,20 +221,20 @@ export default function PriceHistoryScreen() {
 
   const handleSave = async () => {
     const errs = {};
-    if (!form.name.trim()) errs.name = 'Required';
-    if (!form.price.trim() || !(Number(form.price) > 0)) errs.price = 'Enter a price';
-    if (form.quantity.trim() && !(Number(form.quantity) > 0)) errs.quantity = 'Must be > 0';
+    if (!form.name.trim()) errs.name = t('common.required');
+    if (!form.price.trim() || !(Number(form.price) > 0)) errs.price = t('prices.enterPrice');
+    if (form.quantity.trim() && !(Number(form.quantity) > 0)) errs.quantity = t('prices.mustBePositive');
     setErrors(errs);
     if (Object.keys(errs).length) return;
 
     const entry = buildPriceEntry({ ...form, addedBy: user.uid });
-    if (!entry) { setErrors({ price: 'Enter a price' }); return; }
+    if (!entry) { setErrors({ price: t('prices.enterPrice') }); return; }
     try {
       await addPriceEntry(householdId, entry);
-      notify('Price logged', `${entry.itemName} · ${formatPrice(entry.price)}`, { type: 'success' });
+      notify(t('prices.priceLogged'), `${entry.itemName} · ${formatPrice(entry.price)}`, { type: 'success' });
       closeForm();
     } catch (e) {
-      showAlert({ title: 'Error', message: e.message, type: 'error' });
+      showAlert({ title: t('common.error'), message: e.message, type: 'error' });
     }
   };
 
@@ -247,24 +251,24 @@ export default function PriceHistoryScreen() {
               onPress={() => navigation.goBack()}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               accessibilityRole="button"
-              accessibilityLabel="Back"
+              accessibilityLabel={t('prices.back')}
             >
               <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
             </TouchableOpacity>
             <View style={{ flex: 1 }}>
-              <Text style={styles.screenTitle}>Price History</Text>
+              <Text style={styles.screenTitle}>{t('prices.title')}</Text>
               <Text style={styles.screenSubtitle}>
-                {summary.tracked} tracked · {summary.cheaper} cheaper · {summary.pricier} pricier
+                {t('prices.summary', { tracked: summary.tracked, cheaper: summary.cheaper, pricier: summary.pricier })}
               </Text>
             </View>
             <TouchableOpacity
               style={styles.scanButton}
               onPress={() => navigation.navigate('ReceiptImport')}
               accessibilityRole="button"
-              accessibilityLabel="Scan a receipt"
+              accessibilityLabel={t('grocery.scanReceipt')}
             >
               <Ionicons name="receipt-outline" size={15} color={colors.accent} />
-              <Text style={styles.scanButtonLabel}>Scan</Text>
+              <Text style={styles.scanButtonLabel}>{t('grocery.scan')}</Text>
             </TouchableOpacity>
           </View>
 
@@ -272,14 +276,14 @@ export default function PriceHistoryScreen() {
             <Ionicons name="search" size={15} color={colors.textTertiary} />
             <TextInput
               style={styles.searchInput}
-              placeholder="Search items"
+              placeholder={t('prices.searchPlaceholder')}
               value={search}
               onChangeText={setSearch}
               placeholderTextColor={colors.textTertiary}
-              accessibilityLabel="Search tracked items"
+              accessibilityLabel={t('prices.searchA11y')}
             />
             {search.length > 0 && (
-              <TouchableOpacity onPress={() => setSearch('')} accessibilityLabel="Clear search">
+              <TouchableOpacity onPress={() => setSearch('')} accessibilityLabel={t('prices.clearSearch')}>
                 <Ionicons name="close-circle" size={16} color={colors.textTertiary} />
               </TouchableOpacity>
             )}
@@ -294,7 +298,7 @@ export default function PriceHistoryScreen() {
                 accessibilityRole="button"
                 accessibilityState={{ selected: sort === s.id }}
               >
-                <Text style={[styles.pillLabel, sort === s.id && styles.pillLabelActive]}>{s.label}</Text>
+                <Text style={[styles.pillLabel, sort === s.id && styles.pillLabelActive]}>{t(s.label)}</Text>
               </TouchableOpacity>
             ))}
           </View>
@@ -307,7 +311,7 @@ export default function PriceHistoryScreen() {
                 accessibilityRole="button"
                 accessibilityState={{ selected: !storeFilter }}
               >
-                <Text style={[styles.pillLabel, !storeFilter && styles.pillLabelActive]}>All stores</Text>
+                <Text style={[styles.pillLabel, !storeFilter && styles.pillLabelActive]}>{t('prices.allStores')}</Text>
               </TouchableOpacity>
               {stores.map((store) => (
                 <TouchableOpacity
@@ -336,14 +340,14 @@ export default function PriceHistoryScreen() {
               <View style={styles.compareCard}>
                 <View style={styles.compareHeader}>
                   <Ionicons name="storefront-outline" size={16} color={colors.textSecondary} />
-                  <Text style={styles.compareTitle}>Where to shop</Text>
+                  <Text style={styles.compareTitle}>{t('prices.whereToShop')}</Text>
                 </View>
 
                 <Text style={styles.compareHeadline}>
                   <Text style={{ color: colors.success }}>{comparison.best.store}</Text>
                   {comparison.best.saving > 0
-                    ? ` is ${formatPrice(comparison.best.saving)} cheaper than ${comparison.best.versus}`
-                    : ' matches the others on price'}
+                    ? t('prices.cheaperThan', { saving: formatPrice(comparison.best.saving), versus: comparison.best.versus })
+                    : t('prices.matchesOthers')}
                 </Text>
 
                 {comparison.totals.map((row, i) => {
@@ -374,9 +378,7 @@ export default function PriceHistoryScreen() {
                 {/* The number only means something over the shared items, so say
                     exactly what it was computed from. */}
                 <Text style={styles.compareNote}>
-                  Same basket of {comparison.common.length} item
-                  {comparison.common.length !== 1 ? 's' : ''} priced at all{' '}
-                  {comparison.totals.length} stores, at your usual quantities.
+                  {t('prices.basketNote', { count: comparison.common.length, stores: comparison.totals.length })}
                 </Text>
               </View>
             ) : null
@@ -391,14 +393,14 @@ export default function PriceHistoryScreen() {
                 />
               </View>
               <Text style={styles.emptyTitle}>
-                {loading ? 'Loading prices…'
-                  : entries.length ? 'No matches'
-                  : 'No prices logged yet'}
+                {loading ? t('prices.loadingPrices')
+                  : entries.length ? t('prices.noMatches')
+                  : t('prices.noPrices')}
               </Text>
               <Text style={styles.emptySubtitle}>
                 {loading ? ''
-                  : entries.length ? 'Try a different search or store filter.'
-                  : 'Tick an item off your grocery list and enter what it cost, or tap + to log one.'}
+                  : entries.length ? t('prices.tryDifferent')
+                  : t('prices.noPricesSub')}
               </Text>
             </View>
           }
@@ -413,7 +415,7 @@ export default function PriceHistoryScreen() {
 
         <FloatingActionButton
           onPress={openForm}
-          accessibilityLabel="Log a price"
+          accessibilityLabel={t('prices.logPriceA11y')}
           enterAnim={fabAnim}
           hideAnim={fab.hideAnim}
           interactive={fab.interactive}
@@ -426,14 +428,14 @@ export default function PriceHistoryScreen() {
           <ScrollView style={styles.sheetScroll} keyboardShouldPersistTaps="handled">
             <View style={styles.sheetInner}>
               <View style={styles.dragHandle} />
-              <Text style={styles.sheetTitle}>Log a Price</Text>
+              <Text style={styles.sheetTitle}>{t('prices.logPrice')}</Text>
 
-              <Text style={styles.inputLabel}>Item *</Text>
+              <Text style={styles.inputLabel}>{t('prices.item')}</Text>
               {/* Combobox: type a new item, or open the list to pick a tracked one. */}
               <View style={[styles.comboRow, !!errors.name && styles.inputError]}>
                 <TextInput
                   style={styles.comboInput}
-                  placeholder="Search or type a new item"
+                  placeholder={t('prices.itemPlaceholder')}
                   value={form.name}
                   onChangeText={(name) => {
                     setForm((f) => ({ ...f, name }));
@@ -443,7 +445,7 @@ export default function PriceHistoryScreen() {
                   onFocus={() => setPickerOpen(true)}
                   placeholderTextColor={colors.textTertiary}
                   autoFocus
-                  accessibilityLabel="Item name"
+                  accessibilityLabel={t('grocery.itemNameA11y')}
                 />
                 {allItems.length > 0 && (
                   <TouchableOpacity
@@ -451,7 +453,7 @@ export default function PriceHistoryScreen() {
                     hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                     accessibilityRole="button"
                     accessibilityState={{ expanded: pickerOpen }}
-                    accessibilityLabel={pickerOpen ? 'Hide tracked items' : 'Show tracked items'}
+                    accessibilityLabel={pickerOpen ? t('prices.hideTracked') : t('prices.showTracked')}
                   >
                     <Ionicons
                       name={pickerOpen ? 'chevron-up' : 'chevron-down'}
@@ -471,7 +473,7 @@ export default function PriceHistoryScreen() {
                       style={[styles.pickerRow, i > 0 && styles.pickerRowDivided]}
                       onPress={() => selectItem(pick)}
                       accessibilityRole="button"
-                      accessibilityLabel={`${pick.itemName}, last paid ${formatPrice(pick.latest.price)}`}
+                      accessibilityLabel={t('prices.pickA11y', { name: pick.itemName, price: formatPrice(pick.latest.price) })}
                     >
                       <Text style={styles.pickerIcon}>{iconFor(pick.category)}</Text>
                       <Text style={styles.pickerName} numberOfLines={1}>{pick.itemName}</Text>
@@ -481,7 +483,7 @@ export default function PriceHistoryScreen() {
                     </TouchableOpacity>
                   ))}
                   {allItems.length > pickerItems.length && (
-                    <Text style={styles.pickerHint}>Keep typing to narrow the list…</Text>
+                    <Text style={styles.pickerHint}>{t('prices.keepTyping')}</Text>
                   )}
                 </View>
               )}
@@ -490,14 +492,14 @@ export default function PriceHistoryScreen() {
               {!!form.name.trim() && (
                 <Text style={styles.comboNote}>
                   {matchedItem
-                    ? `Adds to ${matchedItem.itemName}'s history · last ${formatPrice(matchedItem.latest.price)}`
-                    : 'New item — starts its own price history'}
+                    ? t('prices.addsTo', { name: matchedItem.itemName, price: formatPrice(matchedItem.latest.price) })
+                    : t('prices.newItemHistory')}
                 </Text>
               )}
 
               <View style={styles.formRow}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.inputLabel}>Price *</Text>
+                  <Text style={styles.inputLabel}>{t('prices.price')}</Text>
                   <TextInput
                     style={[styles.textInput, !!errors.price && styles.inputError]}
                     placeholder="0.00"
@@ -505,12 +507,12 @@ export default function PriceHistoryScreen() {
                     onChangeText={(price) => setForm((f) => ({ ...f, price: price.replace(/[^0-9.]/g, '') }))}
                     keyboardType="decimal-pad"
                     placeholderTextColor={colors.textTertiary}
-                    accessibilityLabel="Price"
+                    accessibilityLabel={t('prices.priceA11y')}
                   />
                   {!!errors.price && <Text style={styles.errorText}>{errors.price}</Text>}
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.inputLabel}>Quantity</Text>
+                  <Text style={styles.inputLabel}>{t('prices.quantity')}</Text>
                   <TextInput
                     style={[styles.textInput, !!errors.quantity && styles.inputError]}
                     placeholder="1"
@@ -518,13 +520,13 @@ export default function PriceHistoryScreen() {
                     onChangeText={(quantity) => setForm((f) => ({ ...f, quantity: quantity.replace(/[^0-9.]/g, '') }))}
                     keyboardType="decimal-pad"
                     placeholderTextColor={colors.textTertiary}
-                    accessibilityLabel="Quantity"
+                    accessibilityLabel={t('grocery.quantityA11y')}
                   />
                   {!!errors.quantity && <Text style={styles.errorText}>{errors.quantity}</Text>}
                 </View>
               </View>
 
-              <Text style={styles.inputLabel}>Unit</Text>
+              <Text style={styles.inputLabel}>{t('grocery.unit')}</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                 {units.map((unit) => (
                   <TouchableOpacity
@@ -532,19 +534,19 @@ export default function PriceHistoryScreen() {
                     style={[styles.chip, form.unit === unit && styles.chipActive]}
                     onPress={() => setForm((f) => ({ ...f, unit }))}
                   >
-                    <Text style={[styles.chipLabel, form.unit === unit && styles.chipLabelActive]}>{unit}</Text>
+                    <Text style={[styles.chipLabel, form.unit === unit && styles.chipLabelActive]}>{unitName(unit)}</Text>
                   </TouchableOpacity>
                 ))}
               </ScrollView>
 
-              <Text style={styles.inputLabel}>Store</Text>
+              <Text style={styles.inputLabel}>{t('grocery.store')}</Text>
               <TextInput
                 style={styles.textInput}
-                placeholder="e.g. Lidl"
+                placeholder={t('grocery.storePlaceholder')}
                 value={form.store}
                 onChangeText={(store) => setForm((f) => ({ ...f, store }))}
                 placeholderTextColor={colors.textTertiary}
-                accessibilityLabel="Store"
+                accessibilityLabel={t('grocery.store')}
               />
               {stores.length > 0 && (
                 <View style={styles.chipWrapRow}>
@@ -560,7 +562,7 @@ export default function PriceHistoryScreen() {
                 </View>
               )}
 
-              <Text style={styles.inputLabel}>Category</Text>
+              <Text style={styles.inputLabel}>{t('grocery.category')}</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                 {categoryDefs.map((cat) => (
                   <TouchableOpacity
@@ -570,7 +572,7 @@ export default function PriceHistoryScreen() {
                   >
                     <Text style={styles.chipIcon}>{cat.icon}</Text>
                     <Text style={[styles.chipLabel, form.category === cat.label && styles.chipLabelActive]}>
-                      {cat.label}
+                      {categoryName(cat.label)}
                     </Text>
                   </TouchableOpacity>
                 ))}
@@ -578,10 +580,10 @@ export default function PriceHistoryScreen() {
 
               <View style={styles.actionRow}>
                 <TouchableOpacity style={styles.cancelButton} onPress={closeForm}>
-                  <Text style={styles.cancelButtonLabel}>Cancel</Text>
+                  <Text style={styles.cancelButtonLabel}>{t('common.cancel')}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.confirmButton} onPress={handleSave}>
-                  <Text style={styles.confirmButtonLabel}>Save Price</Text>
+                  <Text style={styles.confirmButtonLabel}>{t('prices.savePrice')}</Text>
                 </TouchableOpacity>
               </View>
             </View>

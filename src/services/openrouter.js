@@ -4,11 +4,21 @@
 // Govee service. Nothing here reads from env.
 
 import { DEFAULT_AI_MODEL, getAiModel } from '../utils/aiModels';
+import { t } from '../i18n';
 
 const BASE = 'https://openrouter.ai/api/v1';
 
 const SYSTEM_PROMPT =
   'You are a helpful assistant for a home and food management app. You help with cooking, grocery shopping, meal planning, and home management.';
+
+const REPLY_LANGUAGE = {
+  pt: 'Always reply in European Portuguese (Portugal, pt-PT), never Brazilian Portuguese, whatever language the user writes in.',
+};
+
+// The system prompt, plus an instruction to answer in the app's language.
+export function systemPromptFor(language) {
+  return REPLY_LANGUAGE[language] ? `${SYSTEM_PROMPT} ${REPLY_LANGUAGE[language]}` : SYSTEM_PROMPT;
+}
 
 const RECIPE_SCHEMA = {
   type: 'object',
@@ -85,21 +95,18 @@ const RECEIPT_SCHEMA = {
 };
 
 function assertKey(apiKey) {
-  if (!apiKey) throw new Error('OpenRouter API key not set. Add it in Household settings.');
+  if (!apiKey) throw new Error(t('errors.aiKeyMissing'));
 }
 
 function friendlyError(status, json) {
   const msg = json?.error?.message || json?.message || '';
-  if (status === 401) return new Error('Invalid OpenRouter API key. Check it in Household settings.');
-  if (status === 402) return new Error('OpenRouter credits exhausted. Add credits at openrouter.ai.');
+  if (status === 401) return new Error(t('errors.aiKeyInvalid'));
+  if (status === 402) return new Error(t('errors.aiNoCredits'));
   if (status === 429) {
-    return new Error(
-      'Rate limited. Free models cap at ~20/min and ~50/day (shared, so this can happen even when idle). ' +
-      'Wait a minute, add credits, or pick a paid model in Household settings.',
-    );
+    return new Error(t('errors.aiRateLimited'));
   }
-  if (status === 403) return new Error(msg || 'Request was blocked by content moderation.');
-  return new Error(msg || `OpenRouter request failed (HTTP ${status}).`);
+  if (status === 403) return new Error(msg || t('errors.aiBlocked'));
+  return new Error(msg || t('errors.aiFailed', { status }));
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -119,7 +126,7 @@ async function requestOnce(apiKey, body) {
       body: JSON.stringify(body),
     });
   } catch {
-    throw new Error('Network error reaching OpenRouter. Check your connection.');
+    throw new Error(t('errors.aiNetwork'));
   }
   const text = await res.text();
   let json;
@@ -143,7 +150,7 @@ async function complete(apiKey, { messages, schema, schemaName, plugins, model =
 
     if (res.ok && !json.error) {
       const content = json.choices?.[0]?.message?.content;
-      if (content == null) throw new Error('OpenRouter returned an empty response.');
+      if (content == null) throw new Error(t('errors.aiEmpty'));
       return content;
     }
 
@@ -161,7 +168,7 @@ async function complete(apiKey, { messages, schema, schemaName, plugins, model =
 // Core request expecting JSON that matches `schema`.
 async function completeJson(apiKey, opts) {
   const content = await complete(apiKey, opts);
-  try { return JSON.parse(content); } catch { throw new Error('AI returned malformed data. Please try again.'); }
+  try { return JSON.parse(content); } catch { throw new Error(t('errors.aiMalformed')); }
 }
 
 /**
@@ -170,11 +177,12 @@ async function completeJson(apiKey, opts) {
  * @param {Array<{role:'user'|'model', text:string}>} history - previous turns (excluding newMessage)
  * @param {string} newMessage
  * @param {string} [model] - OpenRouter model id
+ * @param {string} [language] - app language code; 'pt' replies in European Portuguese
  * @returns {Promise<string>} the model's reply text
  */
-export function sendChatMessage(apiKey, history, newMessage, model = DEFAULT_AI_MODEL) {
+export function sendChatMessage(apiKey, history, newMessage, model = DEFAULT_AI_MODEL, language = 'en') {
   const messages = [
-    { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'system', content: systemPromptFor(language) },
     ...history.map((m) => ({ role: m.role === 'model' ? 'assistant' : 'user', content: m.text })),
     { role: 'user', content: newMessage },
   ];
@@ -186,19 +194,21 @@ export function sendChatMessage(apiKey, history, newMessage, model = DEFAULT_AI_
  * @param {string} apiKey
  * @param {Array<{name:string, quantity?:string, unit?:string}>} pantryItems
  * @param {string} [model] - OpenRouter model id
+ * @param {string} [language] - app language code; 'pt' writes the recipes in European Portuguese
  * @returns {Promise<{recipes: Array}>}
  */
-export function suggestRecipes(apiKey, pantryItems, model = DEFAULT_AI_MODEL) {
+export function suggestRecipes(apiKey, pantryItems, model = DEFAULT_AI_MODEL, language = 'en') {
   const itemList = pantryItems
     .map((i) => (i.quantity && i.unit ? `${i.name} (${i.quantity} ${i.unit})` : i.name))
     .join(', ');
   const prompt = `I have these items available: ${itemList}. Suggest 2–3 recipes I can make with them, noting any missing ingredients.`;
   return completeJson(apiKey, {
     messages: [
-      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'system', content: systemPromptFor(language) },
       { role: 'user', content: prompt },
     ],
     schema: RECIPE_SCHEMA,
+
     schemaName: 'recipes',
     model,
   });

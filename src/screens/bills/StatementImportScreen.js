@@ -27,6 +27,8 @@ import { payableBills } from '../../utils/recurring';
 import { xlsxBase64ToCsv, isSpreadsheet } from '../../utils/spreadsheet';
 import { DEFAULT_AI_MODEL } from '../../utils/aiModels';
 import { BILL_CATS, EXPENSE_CATS, withCustomCats } from '../../utils/financeCategories';
+import { useLanguage } from '../../context/LanguageContext';
+import { t as translateNow } from '../../i18n';
 import { spacing, radius, type } from '../../theme/colors';
 import { useIsDesktop, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
 import { Rise, useEntranceReplay } from '../../components/Motion';
@@ -46,7 +48,7 @@ function uriToBase64(uri) {
     .then((res) => res.blob())
     .then((blob) => new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onerror = () => reject(new Error('Could not read the selected file.'));
+      reader.onerror = () => reject(new Error(translateNow('statement.readFileError')));
       reader.onload = () => {
         const result = String(reader.result);      // "data:<mime>;base64,XXXX"
         const comma = result.indexOf(',');
@@ -86,8 +88,9 @@ function CatChip({ cat, selected, onPress, colors }) {
 // ── Review row ─────────────────────────────────────────────────────────────────
 
 function ReviewRow({ row, index, onChange, expenseCats, billCats, bills, colors, styles }) {
+  const { t } = useLanguage();
   const cats = row.type === 'bill' ? billCats : expenseCats;
-  const dateLabel = row.date ? format(new Date(row.date + 'T00:00:00'), 'MMM d') : 'No date';
+  const dateLabel = row.date ? format(new Date(row.date + 'T00:00:00'), 'MMM d') : t('statement.noDate');
   const isIncome = row.direction === 'in';
 
   const set = (patch) => onChange(index, patch);
@@ -114,7 +117,7 @@ function ReviewRow({ row, index, onChange, expenseCats, billCats, bills, colors,
             style={styles.rowTitle}
             value={row.description}
             onChangeText={(t) => set({ description: t })}
-            placeholder="Description"
+            placeholder={t('statement.description')}
             placeholderTextColor={colors.textTertiary}
           />
           <View style={styles.rowMeta}>
@@ -123,7 +126,7 @@ function ReviewRow({ row, index, onChange, expenseCats, billCats, bills, colors,
             {row.duplicate && (
               <View style={styles.dupPill}>
                 <Ionicons name="copy-outline" size={10} color={colors.amber} />
-                <Text style={styles.dupText}>Possible duplicate</Text>
+                <Text style={styles.dupText}>{t('statement.possibleDuplicate')}</Text>
               </View>
             )}
           </View>
@@ -147,7 +150,7 @@ function ReviewRow({ row, index, onChange, expenseCats, billCats, bills, colors,
       {/* toggles */}
       <View style={styles.toggleRow}>
         <View style={styles.segment}>
-          {[['out', 'Spent'], ['in', 'Income']].map(([val, label]) => (
+          {[['out', t('statement.spent')], ['in', t('statement.income')]].map(([val, label]) => (
             <TouchableOpacity
               key={val}
               style={[styles.segBtn, row.direction === val && styles.segBtnActive]}
@@ -158,7 +161,7 @@ function ReviewRow({ row, index, onChange, expenseCats, billCats, bills, colors,
           ))}
         </View>
         <View style={styles.segment}>
-          {[['expense', 'Expense'], ['bill', 'Bill']].map(([val, label]) => (
+          {[['expense', t('statement.expense')], ['bill', t('statement.bill')]].map(([val, label]) => (
             <TouchableOpacity
               key={val}
               style={[styles.segBtn, row.type === val && styles.segBtnActive]}
@@ -173,7 +176,7 @@ function ReviewRow({ row, index, onChange, expenseCats, billCats, bills, colors,
       {/* existing bill this pays — a linked row updates that bill, never adds one */}
       {!isIncome && payable.length > 0 && (
         <View style={styles.billLink}>
-          <Text style={styles.billLinkLabel}>Pays a bill?</Text>
+          <Text style={styles.billLinkLabel}>{t('statement.paysBill')}</Text>
           <View style={styles.chipRow}>
             {payable.map((bill) => (
               <CatChip
@@ -212,6 +215,7 @@ export default function StatementImportScreen({ navigation }) {
   const { colors } = useTheme();
   const { showAlert } = useAlert();
   const { notify } = useNotification();
+  const { t, language } = useLanguage();
   const isDesktop = useIsDesktop();
   const windowHeight = useVisualViewportHeight();
   const styles = useMemo(() => makeStyles(colors), [colors]);
@@ -232,8 +236,8 @@ export default function StatementImportScreen({ navigation }) {
   const [rows, setRows] = useState(null);        // null = not analyzed yet
   const [saving, setSaving] = useState(false);
 
-  const expenseCats = useMemo(() => withCustomCats(EXPENSE_CATS, customExpCats, expOverrides), [customExpCats, expOverrides]);
-  const billCats    = useMemo(() => withCustomCats(BILL_CATS, customBillCats, billOverrides), [customBillCats, billOverrides]);
+  const expenseCats = useMemo(() => withCustomCats(EXPENSE_CATS, customExpCats, expOverrides), [customExpCats, expOverrides, language]);
+  const billCats    = useMemo(() => withCustomCats(BILL_CATS, customBillCats, billOverrides), [customBillCats, billOverrides, language]);
 
   useEffect(() => {
     if (!householdId) return;
@@ -298,14 +302,14 @@ export default function StatementImportScreen({ navigation }) {
       setFile(res.assets[0]);
       setRows(null);
     } catch (e) {
-      showAlert({ title: 'Could not open file', message: 'Please try selecting the file again.', type: 'error' });
+      showAlert({ title: t('statement.openFileError'), message: t('statement.openFileErrorMessage'), type: 'error' });
     }
   };
 
   const analyze = async () => {
     if (!file) return;
     if (!apiKey) {
-      showAlert({ title: 'AI not configured', message: 'Add an OpenRouter API key in Household settings to import statements.', type: 'info' });
+      showAlert({ title: t('ai.notConfiguredTitle'), message: t('statement.notConfiguredMessage'), type: 'info' });
       return;
     }
     setAnalyzing(true);
@@ -317,8 +321,8 @@ export default function StatementImportScreen({ navigation }) {
         ? await parseStatementText(apiKey, xlsxBase64ToCsv(base64), cats, aiModel)
         : await parseBankStatement(apiKey, base64, cats, aiModel);
       const validKeys = [...expenseCats, ...billCats].map((c) => c.key);
-      const normalized = (transactions ?? []).map((t) =>
-        normalizeTransaction(t, { validCategoryKeys: validKeys }));
+      const normalized = (transactions ?? []).map((tx) =>
+        normalizeTransaction(tx, { validCategoryKeys: validKeys }));
       const flagged = flagDuplicates(normalized, existingExpenses);
       setRows(flagged.map((r) => ({
         ...linkRowToBill(r, suggestBillId(r, payableBills(bills, r.date.slice(0, 7)))),
@@ -326,13 +330,13 @@ export default function StatementImportScreen({ navigation }) {
       })));
       if (!flagged.length) {
         showAlert({
-          title: 'No transactions found',
-          message: 'The AI could not read any transactions from this statement.',
+          title: t('statement.noTransactions'),
+          message: t('statement.noTransactionsMessage'),
           type: 'warning',
         });
       }
     } catch (e) {
-      showAlert({ title: 'Analysis failed', message: e.message || 'Could not read this statement.', type: 'error' });
+      showAlert({ title: t('statement.analysisFailed'), message: e.message || t('statement.analysisFailedMessage'), type: 'error' });
     } finally {
       setAnalyzing(false);
     }
@@ -366,14 +370,14 @@ export default function StatementImportScreen({ navigation }) {
 
       await AsyncStorage.removeItem(draftKey(householdId));
       notify(
-        'Statement imported',
-        `${expenseDocs.length} expense${expenseDocs.length === 1 ? '' : 's'}` +
-          (billRows.length ? ` · ${billRows.length} bill${billRows.length === 1 ? '' : 's'}` : ''),
+        t('statement.imported'),
+        t('statement.expenses', { count: expenseDocs.length }) +
+          (billRows.length ? ` · ${t('statement.bills', { count: billRows.length })}` : ''),
         { type: 'success' },
       );
       navigation.goBack();
     } catch (e) {
-      showAlert({ title: 'Import failed', message: e.message || 'Could not save the transactions.', type: 'error' });
+      showAlert({ title: t('statement.importFailed'), message: e.message || t('statement.importFailedMessage'), type: 'error' });
     } finally {
       setSaving(false);
     }
@@ -411,11 +415,11 @@ export default function StatementImportScreen({ navigation }) {
             onPress={() => navigation.goBack()}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             accessibilityRole="button"
-            accessibilityLabel="Back"
+            accessibilityLabel={t('statement.back')}
           >
             <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
           </TouchableOpacity>
-          <Text style={styles.title}>Import statement</Text>
+          <Text style={styles.title}>{t('statement.title')}</Text>
           <View style={{ width: 26 }} />
         </View>
         </Rise>
@@ -426,11 +430,11 @@ export default function StatementImportScreen({ navigation }) {
           <TouchableOpacity style={styles.pickBtn} onPress={pickFile} accessibilityRole="button">
             <Ionicons name={file ? 'document-text' : 'cloud-upload-outline'} size={22} color={colors.accent} />
             <Text style={styles.pickBtnText} numberOfLines={1}>
-              {file ? file.name : 'Choose a PDF or Excel bank statement'}
+              {file ? file.name : t('statement.choose')}
             </Text>
           </TouchableOpacity>
           <Text style={styles.privacyNote}>
-            Statement data is sent to OpenRouter (your configured AI model) to extract transactions.
+            {t('statement.privacy')}
           </Text>
           {!!file?.uri && (
             <TouchableOpacity
@@ -441,13 +445,13 @@ export default function StatementImportScreen({ navigation }) {
             >
               {analyzing
                 ? <ActivityIndicator color="#fff" />
-                : <Text style={styles.analyzeBtnText}>{rows ? 'Re-analyze' : 'Analyze statement'}</Text>}
+                : <Text style={styles.analyzeBtnText}>{rows ? t('statement.reanalyze') : t('statement.analyze')}</Text>}
             </TouchableOpacity>
           )}
           {rows !== null && (
             <TouchableOpacity onPress={clearDraft} accessibilityRole="button" style={styles.discardBtn}>
               <Ionicons name="trash-outline" size={14} color={colors.danger} />
-              <Text style={styles.discardText}>Discard & start over</Text>
+              <Text style={styles.discardText}>{t('statement.discard')}</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -457,9 +461,9 @@ export default function StatementImportScreen({ navigation }) {
         {rows === null && !analyzing && (
           <View style={styles.emptyState}>
             <Ionicons name="reader-outline" size={44} color={colors.textTertiary} />
-            <Text style={styles.emptyTitle}>No statement analyzed yet</Text>
+            <Text style={styles.emptyTitle}>{t('statement.emptyTitle')}</Text>
             <Text style={styles.emptySub}>
-              Pick a PDF or Excel file and tap Analyze. You'll review every transaction before anything is saved.
+              {t('statement.emptySub')}
             </Text>
           </View>
         )}
@@ -470,15 +474,15 @@ export default function StatementImportScreen({ navigation }) {
             <Rise index={2} style={styles.summaryRow}>
               <View style={styles.summaryCard}>
                 <Text style={styles.summaryValue}>{selected.length}</Text>
-                <Text style={styles.summaryLabel}>To import</Text>
+                <Text style={styles.summaryLabel}>{t('statement.toImport')}</Text>
               </View>
               <View style={styles.summaryCard}>
                 <Text style={[styles.summaryValue, { color: colors.accent }]}>{counts.bills}</Text>
-                <Text style={styles.summaryLabel}>Bills</Text>
+                <Text style={styles.summaryLabel}>{t('statement.bills')}</Text>
               </View>
               <View style={styles.summaryCard}>
                 <Text style={[styles.summaryValue, { color: colors.sage }]}>{counts.income}</Text>
-                <Text style={styles.summaryLabel}>Income</Text>
+                <Text style={styles.summaryLabel}>{t('fin.tabIncome')}</Text>
               </View>
             </Rise>
 
@@ -510,7 +514,8 @@ export default function StatementImportScreen({ navigation }) {
               {saving
                 ? <ActivityIndicator color="#fff" />
                 : <Text style={styles.confirmBtnText}>
-                    Import {selected.length} transaction{selected.length === 1 ? '' : 's'}
+                    {t('statement.importCount', { count: selected.length })}
+
                   </Text>}
             </TouchableOpacity>
           </>

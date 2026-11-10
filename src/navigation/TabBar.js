@@ -8,29 +8,32 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useNavScroll } from '../context/NavScrollContext';
 import { useHousehold } from '../context/HouseholdContext';
+import { useLanguage } from '../context/LanguageContext';
+import { LANGUAGES } from '../i18n';
 import { spacing, radius, type } from '../theme/colors';
 
 export const SIDEBAR_WIDTH       = 220;
 export const DESKTOP_BREAKPOINT  = 1322;
 export const DESKTOP_MAX_CONTENT = 920;
 
+// `label` is an i18n key, translated where it's rendered.
 const TAB_CONFIG = {
-  Home:       { icon: 'grid',      iconOff: 'grid-outline',      label: 'Overview',  section: 'home'    },
-  Grocery:    { icon: 'cart',      iconOff: 'cart-outline',      label: 'Grocery',   section: 'food'    },
-  Recipes:    { icon: 'book',      iconOff: 'book-outline',      label: 'Recipes',   section: 'food'    },
-  Pantry:     { icon: 'nutrition', iconOff: 'nutrition-outline', label: 'Pantry',    section: 'food'    },
-  Nutrition:  { icon: 'calendar',  iconOff: 'calendar-outline',  label: 'Nutrition', section: 'food'    },
-  AI:                { icon: 'sparkles',     iconOff: 'sparkles-outline',     label: 'AI',         section: 'food'    },
-  HomeLights:        { icon: 'bulb',         iconOff: 'bulb-outline',         label: 'Lights',     section: 'home'    },
-  Xiaomi:            { icon: 'aperture',     iconOff: 'aperture-outline',     label: 'Xiaomi',     section: 'home'    },
-  Bills:             { icon: 'wallet',       iconOff: 'wallet-outline',       label: 'Finances',   section: 'home'    },
-  EmergencyContacts: { icon: 'alert-circle', iconOff: 'alert-circle-outline', label: 'Emergency',  section: 'home'    },
-  Profile:           { icon: 'person',       iconOff: 'person-outline',       label: 'Profile',    section: 'profile' },
+  Home:       { icon: 'grid',      iconOff: 'grid-outline',      label: 'nav.overview',  section: 'home'    },
+  Grocery:    { icon: 'cart',      iconOff: 'cart-outline',      label: 'nav.grocery',   section: 'food'    },
+  Recipes:    { icon: 'book',      iconOff: 'book-outline',      label: 'nav.recipes',   section: 'food'    },
+  Pantry:     { icon: 'nutrition', iconOff: 'nutrition-outline', label: 'nav.pantry',    section: 'food'    },
+  Nutrition:  { icon: 'calendar',  iconOff: 'calendar-outline',  label: 'nav.nutrition', section: 'food'    },
+  AI:                { icon: 'sparkles',     iconOff: 'sparkles-outline',     label: 'nav.ai',         section: 'food'    },
+  HomeLights:        { icon: 'bulb',         iconOff: 'bulb-outline',         label: 'nav.lights',     section: 'home'    },
+  Xiaomi:            { icon: 'aperture',     iconOff: 'aperture-outline',     label: 'nav.xiaomi',     section: 'home'    },
+  Bills:             { icon: 'wallet',       iconOff: 'wallet-outline',       label: 'nav.finances',   section: 'home'    },
+  EmergencyContacts: { icon: 'alert-circle', iconOff: 'alert-circle-outline', label: 'nav.emergency',  section: 'home'    },
+  Profile:           { icon: 'person',       iconOff: 'person-outline',       label: 'nav.profile',    section: 'profile' },
 };
 
 const SECTIONS = [
-  { key: 'home', label: 'HOME', mobileLabel: 'Home', icon: 'home-outline',       iconActive: 'home'       },
-  { key: 'food', label: 'FOOD', mobileLabel: 'Food', icon: 'restaurant-outline', iconActive: 'restaurant' },
+  { key: 'home', label: 'nav.sectionHome', mobileLabel: 'nav.sectionHomeShort', icon: 'home-outline',       iconActive: 'home'       },
+  { key: 'food', label: 'nav.sectionFood', mobileLabel: 'nav.sectionFoodShort', icon: 'restaurant-outline', iconActive: 'restaurant' },
 ];
 
 function getActiveSection(routeName) {
@@ -65,7 +68,7 @@ export function useMobileNavClearance() {
 }
 
 // ── Animated Sidebar Nav Item ──────────────────────────────────────────────────
-const AnimatedNavItem = memo(function AnimatedNavItem({ route, isFocused, navigation, tab, styles, colors }) {
+const AnimatedNavItem = memo(function AnimatedNavItem({ route, isFocused, navigation, tab, label, styles, colors }) {
   const indicatorScale = useRef(new Animated.Value(isFocused ? 1 : 0)).current;
   const bgOpacity      = useRef(new Animated.Value(isFocused ? 1 : 0)).current;
   const iconScale      = useRef(new Animated.Value(isFocused ? 1.1 : 1)).current;
@@ -92,7 +95,7 @@ const AnimatedNavItem = memo(function AnimatedNavItem({ route, isFocused, naviga
       style={styles.navItem}
       onPress={() => navigation.navigate(route.name)}
       accessibilityRole="button"
-      accessibilityLabel={tab.label}
+      accessibilityLabel={label}
       accessibilityState={{ selected: isFocused }}
     >
       <Animated.View style={[
@@ -115,7 +118,7 @@ const AnimatedNavItem = memo(function AnimatedNavItem({ route, isFocused, naviga
         />
       </Animated.View>
       <Text style={[styles.navLabel, isFocused && styles.navLabelActive]}>
-        {tab.label}
+        {label}
       </Text>
     </TouchableOpacity>
   );
@@ -123,7 +126,7 @@ const AnimatedNavItem = memo(function AnimatedNavItem({ route, isFocused, naviga
 
 // ── Animated Mobile Tab Item ───────────────────────────────────────────────────
 const AnimatedMobileTabItem = memo(function AnimatedMobileTabItem({
-  route, isFocused, onPress, tab, styles, colors, labelOpacity, contentTranslateY,
+  route, isFocused, onPress, tab, label, styles, colors, labelOpacity, contentTranslateY,
 }) {
   const iconScale  = useRef(new Animated.Value(1)).current;
   const wasFocused = useRef(isFocused);
@@ -147,7 +150,7 @@ const AnimatedMobileTabItem = memo(function AnimatedMobileTabItem({
       style={styles.mobileTabItem}
       onPress={onPress}
       accessibilityRole="tab"
-      accessibilityLabel={tab.label}
+      accessibilityLabel={label}
       accessibilityState={{ selected: isFocused }}
     >
       <Animated.View style={{ alignItems: 'center', transform: [{ translateY: contentTranslateY }] }}>
@@ -165,8 +168,12 @@ const AnimatedMobileTabItem = memo(function AnimatedMobileTabItem({
             />
           </Animated.View>
         </View>
-        <Animated.Text style={[styles.mobileTabLabel, isFocused && styles.mobileTabLabelActive, { opacity: labelOpacity }]}>
-          {tab.label}
+        <Animated.Text
+          style={[styles.mobileTabLabel, isFocused && styles.mobileTabLabelActive, { opacity: labelOpacity }]}
+          numberOfLines={1}
+          adjustsFontSizeToFit
+        >
+          {label}
         </Animated.Text>
       </Animated.View>
     </TouchableOpacity>
@@ -176,6 +183,7 @@ const AnimatedMobileTabItem = memo(function AnimatedMobileTabItem({
 // ── Desktop Sidebar ────────────────────────────────────────────────────────────
 function DesktopSidebar({ state, navigation, hidden }) {
   const { colors, theme, toggleTheme } = useTheme();
+  const { t, language, setLanguage } = useLanguage();
   const styles  = useMemo(() => makeStyles(colors), [colors]);
   const isLight = theme === 'light';
 
@@ -205,7 +213,7 @@ function DesktopSidebar({ state, navigation, hidden }) {
             .filter(({ route }) => TAB_CONFIG[route.name]?.section === section.key && !hidden.has(route.name));
           return (
             <View key={section.key} style={si > 0 ? styles.sectionGroup : undefined}>
-              <Text style={styles.sectionLabel}>{section.label}</Text>
+              <Text style={styles.sectionLabel}>{t(section.label)}</Text>
               <View style={styles.navItemList}>
                 {sectionItems.map(({ route, index }) => {
                   const tab = TAB_CONFIG[route.name];
@@ -218,6 +226,7 @@ function DesktopSidebar({ state, navigation, hidden }) {
                       isFocused={state.index === index}
                       navigation={navigation}
                       tab={tab}
+                      label={t(tab.label)}
                       styles={styles}
                       colors={colors}
                     />
@@ -246,6 +255,7 @@ function DesktopSidebar({ state, navigation, hidden }) {
                   isFocused={state.index === index}
                   navigation={navigation}
                   tab={tab}
+                  label={t(tab.label)}
                   styles={styles}
                   colors={colors}
                 />
@@ -255,12 +265,34 @@ function DesktopSidebar({ state, navigation, hidden }) {
 
         <View style={{ flex: 1 }} />
 
+        {/* Language */}
+        <View style={styles.languageRow} accessibilityRole="radiogroup" accessibilityLabel={t('language.title')}>
+          <Ionicons name="language-outline" size={15} color={colors.textSecondary} />
+          {LANGUAGES.map((lang) => {
+            const selected = language === lang.code;
+            return (
+              <TouchableOpacity
+                key={lang.code}
+                style={[styles.languageOption, selected && styles.languageOptionActive]}
+                onPress={() => setLanguage(lang.code)}
+                accessibilityRole="radio"
+                accessibilityLabel={lang.label}
+                accessibilityState={{ selected }}
+              >
+                <Text style={[styles.languageOptionLabel, selected && styles.languageOptionLabelActive]}>
+                  {lang.code.toUpperCase()}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
         {/* Theme toggle */}
         <TouchableOpacity
           style={styles.themeToggleButton}
           onPress={toggleTheme}
           accessibilityRole="button"
-          accessibilityLabel={isLight ? 'Switch to dark mode' : 'Switch to light mode'}
+          accessibilityLabel={isLight ? t('nav.switchToDark') : t('nav.switchToLight')}
         >
           <Ionicons
             name={isLight ? 'moon-outline' : 'sunny-outline'}
@@ -268,7 +300,7 @@ function DesktopSidebar({ state, navigation, hidden }) {
             color={isLight ? colors.textSecondary : colors.amber}
           />
           <Text style={styles.themeToggleLabel}>
-            {isLight ? 'Dark mode' : 'Light mode'}
+            {isLight ? t('nav.darkMode') : t('nav.lightMode')}
           </Text>
         </TouchableOpacity>
 
@@ -284,6 +316,7 @@ function DesktopSidebar({ state, navigation, hidden }) {
 // ── Mobile Nav (section switcher + pill bar) ───────────────────────────────────
 function MobileNav({ state, navigation, hidden }) {
   const { colors } = useTheme();
+  const { t } = useLanguage();
   const styles  = useMemo(() => makeStyles(colors), [colors]);
   const { compactAnim, resetCompact } = useNavScroll();
 
@@ -330,7 +363,7 @@ function MobileNav({ state, navigation, hidden }) {
               style={[styles.sectionBtn, isActive && styles.sectionBtnActive]}
               onPress={() => switchToSection(section.key)}
               accessibilityRole="button"
-              accessibilityLabel={`Switch to ${section.mobileLabel} area`}
+              accessibilityLabel={t('nav.switchArea', { area: t(section.mobileLabel) })}
             >
               <Ionicons
                 name={isActive ? section.iconActive : section.icon}
@@ -338,7 +371,7 @@ function MobileNav({ state, navigation, hidden }) {
                 color={isActive ? colors.accent : colors.textTertiary}
               />
               <Text style={[styles.sectionBtnLabel, isActive && styles.sectionBtnLabelActive]}>
-                {section.mobileLabel}
+                {t(section.mobileLabel)}
               </Text>
             </TouchableOpacity>
           );
@@ -363,6 +396,7 @@ function MobileNav({ state, navigation, hidden }) {
               isFocused={isFocused}
               onPress={() => navigation.navigate(route.name)}
               tab={tab}
+              label={t(tab.label)}
               styles={styles}
               colors={colors}
               labelOpacity={labelOpacity}
@@ -463,6 +497,23 @@ const makeStyles = (colors) => StyleSheet.create({
     backgroundColor: colors.surfaceElevated,
   },
   themeToggleLabel: { ...type.caption, color: colors.textSecondary, fontWeight: '600' },
+
+  languageRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    marginHorizontal: 12, marginBottom: 8,
+    paddingHorizontal: 12, paddingVertical: 6,
+    borderRadius: radius.md,
+    borderWidth: 1, borderColor: colors.border,
+    backgroundColor: colors.surfaceElevated,
+  },
+  languageOption: {
+    flex: 1, alignItems: 'center', paddingVertical: 4,
+    borderRadius: radius.sm,
+  },
+  languageOptionActive: { backgroundColor: colors.accentSoft },
+  languageOptionLabel: { ...type.caption, color: colors.textTertiary, fontWeight: '700' },
+  languageOptionLabelActive: { color: colors.accent },
+
 
   sidebarFooter: {
     flexDirection: 'row', alignItems: 'center', gap: 8,

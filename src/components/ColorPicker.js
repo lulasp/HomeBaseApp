@@ -5,6 +5,8 @@ import {
 import { useTheme } from '../context/ThemeContext';
 import { spacing, radius, type } from '../theme/colors';
 import { normalizeHex, wheelPointToHex, hexToWheelPoint } from '../utils/color';
+import { t } from '../i18n';
+import { useLanguage } from '../context/LanguageContext';
 
 const WHEEL = require('../../assets/color-wheel.png');
 const THUMB = 28;
@@ -18,6 +20,7 @@ export default function ColorPicker({
   color, onChange, onChangeComplete, onDragActive, size = 220, disabled,
 }) {
   const { colors } = useTheme();
+  useLanguage();
   const styles = useMemo(() => makeStyles(colors, size), [colors, size]);
   const r = size / 2;
 
@@ -80,7 +83,7 @@ export default function ColorPicker({
       <View
         style={[styles.wheel, disabled && styles.disabled]}
         {...pan.panHandlers}
-        accessibilityLabel="Colour wheel"
+        accessibilityLabel={t('components.colourWheel')}
       >
         <Image source={WHEEL} style={styles.wheelImage} pointerEvents="none" />
         <View
@@ -93,7 +96,7 @@ export default function ColorPicker({
       </View>
 
       <View style={styles.hexRow}>
-        <Text style={styles.hexLabel}>HEX</Text>
+        <Text style={styles.hexLabel}>{t('components.hex')}</Text>
         <TextInput
           style={[styles.hexInput, focused && !draftValid && draft !== '' && styles.hexInputInvalid]}
           value={draft}
@@ -108,7 +111,7 @@ export default function ColorPicker({
           placeholder="#FF8800"
           placeholderTextColor={colors.textTertiary}
           returnKeyType="done"
-          accessibilityLabel="Hex colour"
+          accessibilityLabel={t('components.hexColour')}
         />
       </View>
     </View>

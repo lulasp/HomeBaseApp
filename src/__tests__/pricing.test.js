@@ -754,3 +754,18 @@ describe('trendPresentation', () => {
     expect(trendPresentation('none').colorKey).toBe('accent');
   });
 });
+
+describe('pricing labels in Portuguese', () => {
+  const { setCurrentLanguage } = require('../i18n');
+  afterEach(() => setCurrentLanguage('en'));
+
+  it('translates trend labels and per-unit names', () => {
+    setCurrentLanguage('pt');
+    expect(trendPresentation('up').label).toBe('Mais caro');
+    expect(trendPresentation('down').label).toBe('Mais barato');
+    expect(trendPresentation('same').label).toBe('Sem alteração');
+    expect(trendPresentation('new').label).toBe('Primeiro preço');
+    expect(formatUnitPrice(1.5, 'kg')).toBe('$1.50/kg');
+    expect(formatUnitPrice(2, 'pcs')).toMatch(/\/un\.$/);
+  });
+});

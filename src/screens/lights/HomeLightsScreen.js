@@ -35,6 +35,8 @@ import {
   DEFAULT_PRESET_COLORS, sanitizePresets, pushRecentColor, removeRecentColor, isLightColor,
   gradientColors, groupSegmentsByColor,
 } from '../../utils/color';
+import { t } from '../../i18n';
+import { useLanguage } from '../../context/LanguageContext';
 
 const MUSIC_MODES = [
   { id: 0, name: 'Energic',  icon: 'musical-notes' },
@@ -58,9 +60,9 @@ const SCENE_VISUALS = [
 ];
 
 const SCENE_SOURCES = [
-  { id: 'static',  label: 'Featured' },
-  { id: 'dynamic', label: 'Built-in' },
-  { id: 'diy',     label: 'DIY' },
+  { id: 'static',  label: 'lights.sourceFeatured' },
+  { id: 'dynamic', label: 'lights.sourceBuiltIn' },
+  { id: 'diy',     label: 'lights.sourceDiy' },
 ];
 
 // The dynamic catalogue can run to hundreds of scenes — show a slice until the
@@ -119,7 +121,7 @@ function DeviceCard({ device, isSelected, isOn, isOnline, onSelect, onToggle }) 
       style={[styles.deviceCard, isSelected && styles.deviceCardSelected]}
       onPress={onSelect}
       accessibilityRole="button"
-      accessibilityLabel={`Select ${device.deviceName}${isOnline ? '' : ' (offline)'}`}
+      accessibilityLabel={t(isOnline ? 'lights.selectDevice' : 'lights.selectDeviceOffline', { name: device.deviceName })}
       accessibilityState={{ selected: isSelected }}
     >
       <View style={[
@@ -146,7 +148,7 @@ function DeviceCard({ device, isSelected, isOn, isOnline, onSelect, onToggle }) 
             ) : (
               <>
                 <Ionicons name="cloud-offline-outline" size={13} color={colors.textTertiary} />
-                <Text style={styles.offlineLabel}>Offline</Text>
+                <Text style={styles.offlineLabel}>{t('lights.offline')}</Text>
               </>
             )}
             {supportsBt && (
@@ -166,7 +168,7 @@ function DeviceCard({ device, isSelected, isOn, isOnline, onSelect, onToggle }) 
           trackColor={{ false: colors.muted, true: colors.accent }}
           thumbColor="#fff"
           ios_backgroundColor={colors.muted}
-          accessibilityLabel={`Toggle ${device.deviceName}`}
+          accessibilityLabel={t('lights.toggleDevice', { name: device.deviceName })}
         />
       ) : (
         // A disabled Switch reads as a half-drawn control — show an inert
@@ -183,6 +185,7 @@ function DeviceCard({ device, isSelected, isOn, isOnline, onSelect, onToggle }) 
 
 export default function HomeLightsScreen({ route }) {
   const { colors } = useTheme();
+  useLanguage();
   const navScrollProps = useNavScrollProps();
   const { householdId } = useAuth();
   const styles = useMemo(() => makeStyles(colors), [colors]);
@@ -349,9 +352,9 @@ export default function HomeLightsScreen({ route }) {
 
   const colorTemK = selected.colorTem;
   const colorTemLabel =
-    colorTemK <= 3000 ? 'Warm' :
-    colorTemK <= 4500 ? 'Neutral' :
-    colorTemK <= 6000 ? 'Cool' : 'Daylight';
+    colorTemK <= 3000 ? t('lights.warm') :
+    colorTemK <= 4500 ? t('lights.neutral') :
+    colorTemK <= 6000 ? t('lights.cool') : t('lights.daylight');
 
   const segmentCount = getSegmentCount(selectedDevice);
   const segmentLimit = getSegmentLimit(selectedDevice);
@@ -520,7 +523,7 @@ export default function HomeLightsScreen({ route }) {
     setPresets(next);
     saveLightColorPresets(householdId, next).catch((e) => {
       console.error(e);
-      showAlert({ title: 'Couldn’t save presets', message: e.message, type: 'danger' });
+      showAlert({ title: t('lights.couldNotSavePresets'), message: e.message, type: 'danger' });
     });
   }, [presetDraft, presets, householdId, showAlert]);
 
@@ -612,7 +615,7 @@ export default function HomeLightsScreen({ route }) {
       });
     } catch (e) {
       console.error(e);
-      showAlert({ title: 'Gradient not fully applied', message: e.message, type: 'danger' });
+      showAlert({ title: t('lights.gradientFailed'), message: e.message, type: 'danger' });
     } finally {
       setGradProgress(null);
     }
@@ -699,11 +702,11 @@ export default function HomeLightsScreen({ route }) {
   const handleSaveShortcut = useCallback(async () => {
     const name = shortcutForm.name.trim();
     if (!name) {
-      showAlert({ title: 'Name required', message: 'Give your shortcut a name.', type: 'warning' });
+      showAlert({ title: t('lights.nameRequired'), message: t('lights.nameRequiredMessage'), type: 'warning' });
       return;
     }
     if (shortcutForm.deviceIds.length === 0) {
-      showAlert({ title: 'No lights selected', message: 'Pick at least one light to include.', type: 'warning' });
+      showAlert({ title: t('lights.noLightsSelected'), message: t('lights.noLightsSelectedMessage'), type: 'warning' });
       return;
     }
     const doc = {
@@ -727,7 +730,7 @@ export default function HomeLightsScreen({ route }) {
       else await addLightShortcut(householdId, doc);
       setShortcutModalVisible(false);
     } catch (e) {
-      showAlert({ title: 'Could not save', message: e.message, type: 'error' });
+      showAlert({ title: t('lights.couldNotSave'), message: e.message, type: 'error' });
     } finally {
       setSavingShortcut(false);
     }
@@ -784,7 +787,7 @@ export default function HomeLightsScreen({ route }) {
     return (
       <SafeAreaView style={[styles.root, { justifyContent: 'center', alignItems: 'center' }]}>
         <ActivityIndicator size="large" color={colors.accent} />
-        <Text style={[styles.subtitle, { marginTop: 12 }]}>Loading devices…</Text>
+        <Text style={[styles.subtitle, { marginTop: 12 }]}>{t('lights.loadingDevices')}</Text>
       </SafeAreaView>
     );
   }
@@ -793,7 +796,7 @@ export default function HomeLightsScreen({ route }) {
     return (
       <SafeAreaView style={[styles.root, { justifyContent: 'center', alignItems: 'center', padding: 32 }]}>
         <Ionicons name="cloud-offline-outline" size={48} color={colors.textTertiary} />
-        <Text style={[styles.title, { marginTop: 16, textAlign: 'center' }]}>Could not load devices</Text>
+        <Text style={[styles.title, { marginTop: 16, textAlign: 'center' }]}>{t('lights.couldNotLoad')}</Text>
         <Text style={[styles.subtitle, { textAlign: 'center', marginTop: 8 }]}>{error}</Text>
       </SafeAreaView>
     );
@@ -803,9 +806,9 @@ export default function HomeLightsScreen({ route }) {
     return (
       <SafeAreaView style={[styles.root, { justifyContent: 'center', alignItems: 'center', padding: 32 }]}>
         <Ionicons name="key-outline" size={48} color={colors.textTertiary} />
-        <Text style={[styles.title, { marginTop: 16, textAlign: 'center' }]}>No Govee API key</Text>
+        <Text style={[styles.title, { marginTop: 16, textAlign: 'center' }]}>{t('lights.noApiKey')}</Text>
         <Text style={[styles.subtitle, { textAlign: 'center', marginTop: 8 }]}>
-          Add your Govee API key in Household Settings to control your lights.
+          {t('lights.noApiKeyMessage')}
         </Text>
       </SafeAreaView>
     );
@@ -815,9 +818,9 @@ export default function HomeLightsScreen({ route }) {
     return (
       <SafeAreaView style={[styles.root, { justifyContent: 'center', alignItems: 'center', padding: 32 }]}>
         <Ionicons name="bulb-outline" size={48} color={colors.textTertiary} />
-        <Text style={[styles.title, { marginTop: 16, textAlign: 'center' }]}>No devices found</Text>
+        <Text style={[styles.title, { marginTop: 16, textAlign: 'center' }]}>{t('lights.noDevices')}</Text>
         <Text style={[styles.subtitle, { textAlign: 'center', marginTop: 8 }]}>
-          Make sure your Govee devices are linked to your account.
+          {t('lights.noDevicesMessage')}
         </Text>
       </SafeAreaView>
     );
@@ -831,8 +834,8 @@ export default function HomeLightsScreen({ route }) {
           <Ionicons name="color-filter-outline" size={18} color={selected.gradient ? colors.accent : colors.textTertiary} />
         </View>
         <View>
-          <Text style={styles.controlLabel}>Smooth blending</Text>
-          <Text style={styles.controlValue}>Blend colours between subsections</Text>
+          <Text style={styles.controlLabel}>{t('lights.smoothBlending')}</Text>
+          <Text style={styles.controlValue}>{t('lights.smoothBlendingHint')}</Text>
         </View>
       </View>
       <Switch
@@ -842,7 +845,7 @@ export default function HomeLightsScreen({ route }) {
         trackColor={{ false: colors.muted, true: colors.accent }}
         thumbColor="#fff"
         ios_backgroundColor={colors.muted}
-        accessibilityLabel="Smooth blending"
+        accessibilityLabel={t('lights.smoothBlending')}
       />
     </View>
   );
@@ -865,10 +868,10 @@ export default function HomeLightsScreen({ route }) {
         <Rise index={0}>
         <View style={styles.header}>
           <View>
-            <Text style={styles.title}>Home Lights</Text>
+            <Text style={styles.title}>{t('lights.title')}</Text>
             <Text style={styles.subtitle}>
-              {onlineOnCount} of {onlineCount} online lights on
-              {offlineCount > 0 ? ` · ${offlineCount} offline` : ''}
+              {t('lights.onlineOn', { on: onlineOnCount, online: onlineCount })}
+              {offlineCount > 0 ? t('lights.offlineCount', { count: offlineCount }) : ''}
             </Text>
           </View>
           <View style={styles.headerBadge}>
@@ -881,7 +884,7 @@ export default function HomeLightsScreen({ route }) {
         {/* Shortcuts */}
         <Rise index={1}>
         <View style={styles.sectionLabelRow}>
-          <Text style={[styles.sectionLabel, styles.sectionLabelFlat]}>SHORTCUTS</Text>
+          <Text style={[styles.sectionLabel, styles.sectionLabelFlat]}>{t('lights.shortcuts')}</Text>
         </View>
         <LightShortcutsRow
           householdId={householdId}
@@ -897,7 +900,7 @@ export default function HomeLightsScreen({ route }) {
         {/* Devices */}
         <Rise index={2}>
         <View style={styles.sectionLabelRow}>
-          <Text style={[styles.sectionLabel, styles.sectionLabelFlat]}>DEVICES</Text>
+          <Text style={[styles.sectionLabel, styles.sectionLabelFlat]}>{t('lights.devices')}</Text>
           {onlineOnCount > 0 && (
             <View style={styles.activeBadge}>
               <View style={styles.activeDot} />
@@ -929,7 +932,7 @@ export default function HomeLightsScreen({ route }) {
 
         {/* Controls header */}
         <View style={styles.controlsHeader}>
-          <Text style={styles.sectionLabel}>CONTROLS</Text>
+          <Text style={styles.sectionLabel}>{t('lights.controls')}</Text>
           <Text style={styles.selectedDeviceLabel}>{selectedDevice?.deviceName}</Text>
         </View>
 
@@ -937,7 +940,7 @@ export default function HomeLightsScreen({ route }) {
           <View style={styles.offlineNotice}>
             <Ionicons name="cloud-offline-outline" size={16} color={colors.textSecondary} />
             <Text style={styles.offlineNoticeText}>
-              This light is offline — controls are unavailable. Pull down to refresh.
+              {t('lights.offlineNotice')}
             </Text>
           </View>
         )}
@@ -954,9 +957,9 @@ export default function HomeLightsScreen({ route }) {
                 />
               </View>
               <View>
-                <Text style={styles.controlLabel}>Power</Text>
+                <Text style={styles.controlLabel}>{t('lights.power')}</Text>
                 <Text style={styles.controlValue}>
-                  {!selectedOnline ? 'Offline' : selected.on ? 'On' : 'Off'}
+                  {!selectedOnline ? t('lights.offline') : selected.on ? t('lights.on') : t('lights.off')}
                 </Text>
               </View>
             </View>
@@ -991,7 +994,7 @@ export default function HomeLightsScreen({ route }) {
                     <View style={styles.controlIcon}>
                       <Ionicons name="sunny-outline" size={18} color={colors.textSecondary} />
                     </View>
-                    <Text style={styles.controlLabel}>Brightness</Text>
+                    <Text style={styles.controlLabel}>{t('lights.brightness')}</Text>
                   </View>
                   <Text style={styles.sliderValue}>{selected.brightness}%</Text>
                 </View>
@@ -1006,7 +1009,7 @@ export default function HomeLightsScreen({ route }) {
                   maximumTrackTintColor={colors.muted}
                   thumbTintColor={colors.accent}
                   disabled={!selectedOnline}
-                  accessibilityLabel="Brightness slider"
+                  accessibilityLabel={t('lights.brightnessSlider')}
                 />
               </View>
             </>
@@ -1017,23 +1020,23 @@ export default function HomeLightsScreen({ route }) {
         {supports('color') && (
           <>
             <View style={styles.sectionLabelRow}>
-              <Text style={[styles.sectionLabel, styles.sectionLabelFlat]}>COLOR</Text>
+              <Text style={[styles.sectionLabel, styles.sectionLabelFlat]}>{t('lights.color')}</Text>
               <View style={styles.flexSpacer} />
               {editingPresets ? (
                 <>
                   <TouchableOpacity onPress={() => setPresetDraft([...DEFAULT_PRESET_COLORS])} accessibilityRole="button">
-                    <Text style={styles.linkMuted}>Reset</Text>
+                    <Text style={styles.linkMuted}>{t('lights.reset')}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity onPress={cancelEditPresets} accessibilityRole="button">
-                    <Text style={styles.linkMuted}>Cancel</Text>
+                    <Text style={styles.linkMuted}>{t('common.cancel')}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity onPress={saveEditPresets} accessibilityRole="button">
-                    <Text style={styles.link}>Done</Text>
+                    <Text style={styles.link}>{t('common.done')}</Text>
                   </TouchableOpacity>
                 </>
               ) : (
-                <TouchableOpacity onPress={startEditPresets} accessibilityRole="button" accessibilityLabel="Edit colour presets">
-                  <Text style={styles.link}>Edit presets</Text>
+                <TouchableOpacity onPress={startEditPresets} accessibilityRole="button" accessibilityLabel={t('lights.editPresetsA11y')}>
+                  <Text style={styles.link}>{t('lights.editPresets')}</Text>
                 </TouchableOpacity>
               )}
             </View>
@@ -1044,14 +1047,14 @@ export default function HomeLightsScreen({ route }) {
                 return (
                   <View style={[styles.colorPreview, { backgroundColor: shown }]}>
                     <Text style={[styles.colorHex, { color: isLightColor(shown) ? '#333' : '#fff' }]}>
-                      {editingPresets ? `Preset ${editSlot + 1} · ${shown}` : shown}
+                      {editingPresets ? t('lights.presetLabel', { number: editSlot + 1, color: shown }) : shown}
                     </Text>
                   </View>
                 );
               })()}
 
               {editingPresets && (
-                <Text style={styles.colorHint}>Tap a preset, then pick its new colour.</Text>
+                <Text style={styles.colorHint}>{t('lights.presetHint')}</Text>
               )}
               <View style={styles.colorGrid}>
                 {(editingPresets ? presetDraft : presets).map((c, i) => {
@@ -1066,7 +1069,7 @@ export default function HomeLightsScreen({ route }) {
                       ]}
                       onPress={() => (editingPresets ? setEditSlot(i) : handleColorChange(c))}
                       accessibilityRole="button"
-                      accessibilityLabel={editingPresets ? `Edit preset ${i + 1}` : `Select color ${c}`}
+                      accessibilityLabel={editingPresets ? t('lights.editPreset', { number: i + 1 }) : t('lights.selectColor', { color: c })}
                     />
                   );
                 })}
@@ -1089,7 +1092,7 @@ export default function HomeLightsScreen({ route }) {
                   accessibilityState={{ expanded: pickerOpen }}
                 >
                   <Ionicons name="color-palette-outline" size={18} color={colors.accent} />
-                  <Text style={styles.customToggleLabel}>Custom colour</Text>
+                  <Text style={styles.customToggleLabel}>{t('lights.customColour')}</Text>
                   <Ionicons name={pickerOpen ? 'chevron-up' : 'chevron-down'} size={16} color={colors.textTertiary} />
                 </TouchableOpacity>
               )}
@@ -1112,7 +1115,7 @@ export default function HomeLightsScreen({ route }) {
         {/* Color Temperature */}
         {supports('colorTem') && (
           <>
-            <Text style={styles.sectionLabel}>COLOR TEMPERATURE</Text>
+            <Text style={styles.sectionLabel}>{t('lights.colorTemperature')}</Text>
             <View style={[styles.card, !selectedOnline && styles.offline]}>
               <View style={styles.controlCol}>
                 <View style={styles.controlRowLeft}>
@@ -1135,7 +1138,7 @@ export default function HomeLightsScreen({ route }) {
                   maximumTrackTintColor={colors.muted}
                   thumbTintColor="#FFD580"
                   disabled={!selectedOnline}
-                  accessibilityLabel="Color temperature slider"
+                  accessibilityLabel={t('lights.colorTemperatureSlider')}
                 />
                 <View style={styles.colorTemRow}>
                   <Text style={styles.colorTemHint}>Warm ({colorTemMin}K)</Text>
@@ -1150,13 +1153,13 @@ export default function HomeLightsScreen({ route }) {
         {(allScenes.length > 0 || scenesLoading) && (
           <>
             <View style={styles.sectionHeaderRow}>
-              <Text style={styles.sectionLabel}>SCENES</Text>
+              <Text style={styles.sectionLabel}>{t('lights.scenes')}</Text>
               {scenesLoading && <ActivityIndicator size="small" color={colors.accent} />}
             </View>
 
             {sceneSources.length > 1 && (
               <View style={styles.chipRow}>
-                {[{ id: 'all', label: 'All' }, ...sceneSources].map((src) => {
+                {[{ id: 'all', label: 'lights.all' }, ...sceneSources].map((src) => {
                   const active = sceneSource === src.id;
                   return (
                     <TouchableOpacity
@@ -1167,7 +1170,7 @@ export default function HomeLightsScreen({ route }) {
                       accessibilityState={{ selected: active }}
                     >
                       <Text style={[styles.sceneChipLabel, active && { color: colors.accent }]}>
-                        {src.label}
+                        {t(src.label)}
                       </Text>
                     </TouchableOpacity>
                   );
@@ -1180,10 +1183,10 @@ export default function HomeLightsScreen({ route }) {
                 style={styles.sceneSearch}
                 value={sceneQuery}
                 onChangeText={setSceneQuery}
-                placeholder="Search scenes…"
+                placeholder={t('lights.searchScenes')}
                 placeholderTextColor={colors.textTertiary}
                 autoCorrect={false}
-                accessibilityLabel="Search scenes"
+                accessibilityLabel={t('lights.searchScenesA11y')}
               />
             )}
 
@@ -1197,7 +1200,7 @@ export default function HomeLightsScreen({ route }) {
                     style={[styles.sceneCard, active && styles.sceneCardActive]}
                     onPress={() => handleSceneSelect(scene)}
                     accessibilityRole="button"
-                    accessibilityLabel={`${scene.name} scene`}
+                    accessibilityLabel={t('lights.sceneA11y', { name: scene.name })}
                     accessibilityState={{ selected: active }}
                   >
                     <View style={[styles.sceneIcon, { backgroundColor: visual.color + '33' }]}>
@@ -1237,7 +1240,7 @@ export default function HomeLightsScreen({ route }) {
         {/* Music Mode */}
         {supports('musicMode') && (
           <>
-            <Text style={styles.sectionLabel}>MUSIC MODE</Text>
+            <Text style={styles.sectionLabel}>{t('lights.musicMode')}</Text>
             <View style={[styles.card, !selectedOnline && styles.offline]}>
               <View style={styles.musicHeader}>
                 <View style={styles.controlRowLeft}>
@@ -1248,7 +1251,7 @@ export default function HomeLightsScreen({ route }) {
                       color={selected.musicMode !== null ? colors.accent : colors.textTertiary}
                     />
                   </View>
-                  <Text style={styles.controlLabel}>Sync to Music</Text>
+                  <Text style={styles.controlLabel}>{t('lights.syncToMusic')}</Text>
                 </View>
                 <Switch
                   value={selected.musicMode !== null}
@@ -1270,7 +1273,7 @@ export default function HomeLightsScreen({ route }) {
                           style={[styles.musicModeBtn, active && styles.musicModeBtnActive]}
                           onPress={() => handleMusicModeSelect(mode.id)}
                           accessibilityRole="button"
-                          accessibilityLabel={`${mode.name} music mode`}
+                          accessibilityLabel={t('lights.musicModeA11y', { name: mode.name })}
                         >
                           <Ionicons name={mode.icon} size={16} color={active ? colors.accent : colors.textTertiary} />
                           <Text style={[styles.musicModeLabel, active && { color: colors.accent }]}>
@@ -1289,7 +1292,7 @@ export default function HomeLightsScreen({ route }) {
         {/* Segment Control */}
         {segmentCount > 0 && (
           <>
-            <Text style={styles.sectionLabel}>SEGMENT CONTROL</Text>
+            <Text style={styles.sectionLabel}>{t('lights.segmentControl')}</Text>
             <View style={[styles.card, !selectedOnline && styles.offline]}>
               {gradientToggleRow && (
                 <>
@@ -1312,7 +1315,7 @@ export default function HomeLightsScreen({ route }) {
                   accessibilityRole="button"
                 >
                   <Text style={styles.segmentAction}>
-                    {selectedSegments.length === segmentCount ? 'Clear' : 'Select all'}
+                    {selectedSegments.length === segmentCount ? t('lights.clear') : t('lights.selectAll')}
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -1331,7 +1334,7 @@ export default function HomeLightsScreen({ route }) {
                       ]}
                       onPress={() => toggleSegment(seg)}
                       accessibilityRole="button"
-                      accessibilityLabel={`Segment ${seg + 1}`}
+                      accessibilityLabel={t('lights.segment', { number: seg + 1 })}
                       accessibilityState={{ selected: active }}
                     >
                       <Text style={[styles.segmentLabel, !segColor && { color: colors.textTertiary }]}>
@@ -1345,7 +1348,7 @@ export default function HomeLightsScreen({ route }) {
               <View style={styles.divider} />
 
               <View style={[styles.segmentedRow, styles.segModeRow]}>
-                {[{ id: 'solid', label: 'Solid' }, { id: 'gradient', label: 'Gradient' }].map((m) => {
+                {[{ id: 'solid', label: t('lights.solid') }, { id: 'gradient', label: t('lights.gradient') }].map((m) => {
                   const active = segMode === m.id;
                   return (
                     <TouchableOpacity
@@ -1368,7 +1371,7 @@ export default function HomeLightsScreen({ route }) {
                   onSelect={setGradStop}
                   onStopsChange={setGradStops}
                   previewCount={selectedSegments.length}
-                  previewHint="Select 2 or more segments to spread the gradient across."
+                  previewHint={t('lights.gradientHint')}
                 />
               )}
 
@@ -1383,7 +1386,7 @@ export default function HomeLightsScreen({ route }) {
                       onPress={() => (gradient ? setGradStopColor(hex) : handleSegmentColor(hex))}
                       disabled={!gradient && selectedSegments.length === 0}
                       accessibilityRole="button"
-                      accessibilityLabel={gradient ? `Set gradient stop to ${hex}` : `Set selected segments to ${hex}`}
+                      accessibilityLabel={gradient ? t('lights.setGradientStop', { color: hex }) : t('lights.setSegments', { color: hex })}
                     />
                   );
                 })}
@@ -1403,7 +1406,7 @@ export default function HomeLightsScreen({ route }) {
                 accessibilityState={{ expanded: segPickerOpen }}
               >
                 <Ionicons name="color-palette-outline" size={18} color={colors.accent} />
-                <Text style={styles.customToggleLabel}>Custom colour</Text>
+                <Text style={styles.customToggleLabel}>{t('lights.customColour')}</Text>
                 <Ionicons name={segPickerOpen ? 'chevron-up' : 'chevron-down'} size={16} color={colors.textTertiary} />
               </TouchableOpacity>
 
@@ -1452,7 +1455,7 @@ export default function HomeLightsScreen({ route }) {
               <View style={styles.divider} />
 
               <View style={styles.controlRow}>
-                <Text style={styles.controlLabel}>Brightness</Text>
+                <Text style={styles.controlLabel}>{t('lights.brightness')}</Text>
                 <Text style={styles.colorHex}>{segBrightness}%</Text>
               </View>
               <Slider
@@ -1467,7 +1470,7 @@ export default function HomeLightsScreen({ route }) {
               />
 
               {selectedSegments.length === 0 && (
-                <Text style={styles.timerHint}>Select one or more segments to change them</Text>
+                <Text style={styles.timerHint}>{t('lights.selectSegmentsHint')}</Text>
               )}
             </View>
           </>
@@ -1476,7 +1479,7 @@ export default function HomeLightsScreen({ route }) {
         {/* Timer */}
         {selectedDevice && (
           <>
-            <Text style={styles.sectionLabel}>TIMER</Text>
+            <Text style={styles.sectionLabel}>{t('lights.timer')}</Text>
             <View style={[styles.card, !selectedOnline && styles.offline]}>
               <View style={styles.timerRow}>
                 {['15 min', '30 min', '1 hr', '2 hr'].map((label) => {
@@ -1493,7 +1496,7 @@ export default function HomeLightsScreen({ route }) {
                         }
                       }}
                       accessibilityRole="button"
-                      accessibilityLabel={`Set timer for ${label}`}
+                      accessibilityLabel={t('lights.setTimer', { duration: t(`lights.timerLabels.${label}`) })}
                       accessibilityState={{ selected: active }}
                     >
                       <Ionicons
@@ -1502,7 +1505,7 @@ export default function HomeLightsScreen({ route }) {
                         color={active ? colors.accent : colors.textSecondary}
                       />
                       <Text style={[styles.timerBtnLabel, active && styles.timerBtnLabelActive]}>
-                        {label}
+                        {t(`lights.timerLabels.${label}`)}
                       </Text>
                     </TouchableOpacity>
                   );
@@ -1545,12 +1548,12 @@ export default function HomeLightsScreen({ route }) {
 
             <View style={styles.sheetHeader}>
               <Text style={styles.sheetTitle}>
-                {editingShortcutId ? 'Edit Shortcut' : 'New Shortcut'}
+                {editingShortcutId ? t('lights.editShortcut') : t('lights.newShortcut')}
               </Text>
               <TouchableOpacity
                 onPress={() => setShortcutModalVisible(false)}
                 accessibilityRole="button"
-                accessibilityLabel="Close"
+                accessibilityLabel={t('common.close')}
               >
                 <Ionicons name="close" size={22} color={colors.textSecondary} />
               </TouchableOpacity>
@@ -1562,16 +1565,16 @@ export default function HomeLightsScreen({ route }) {
               keyboardShouldPersistTaps="handled"
               scrollEnabled={!wheelDragging}
             >
-              <Text style={styles.fieldLabel}>Name *</Text>
+              <Text style={styles.fieldLabel}>{t('lights.name')}</Text>
               <TextInput
                 style={styles.input}
-                placeholder="e.g. Movie Night"
+                placeholder={t('lights.namePlaceholder')}
                 placeholderTextColor={colors.textTertiary}
                 value={shortcutForm.name}
                 onChangeText={(v) => setShortcutForm((f) => ({ ...f, name: v }))}
               />
 
-              <Text style={styles.fieldLabel}>Icon</Text>
+              <Text style={styles.fieldLabel}>{t('lights.icon')}</Text>
               <View style={styles.visualRow}>
                 {SHORTCUT_VISUALS.map((visual, i) => (
                   <TouchableOpacity
@@ -1583,14 +1586,14 @@ export default function HomeLightsScreen({ route }) {
                     ]}
                     onPress={() => setShortcutForm((f) => ({ ...f, visual: i }))}
                     accessibilityRole="button"
-                    accessibilityLabel={`${visual.icon} icon`}
+                    accessibilityLabel={t('lights.iconA11y', { icon: visual.icon })}
                   >
                     <Ionicons name={visual.icon} size={18} color={visual.color} />
                   </TouchableOpacity>
                 ))}
               </View>
 
-              <Text style={styles.fieldLabel}>Lights *</Text>
+              <Text style={styles.fieldLabel}>{t('lights.lightsField')}</Text>
               {devices.map((device) => {
                 const included = shortcutForm.deviceIds.includes(device.device);
                 return (
@@ -1600,7 +1603,7 @@ export default function HomeLightsScreen({ route }) {
                     onPress={() => toggleFormDevice(device.device)}
                     accessibilityRole="checkbox"
                     accessibilityState={{ checked: included }}
-                    accessibilityLabel={`Include ${device.deviceName}`}
+                    accessibilityLabel={t('lights.include', { name: device.deviceName })}
                   >
                     <Ionicons
                       name={included ? 'checkbox' : 'square-outline'}
@@ -1615,12 +1618,12 @@ export default function HomeLightsScreen({ route }) {
                 );
               })}
 
-              <Text style={styles.fieldLabel}>Power</Text>
+              <Text style={styles.fieldLabel}>{t('lights.power')}</Text>
               <View style={styles.segmentedRow}>
                 {[
-                  { label: 'Turn on', value: true },
-                  { label: 'Turn off', value: false },
-                  { label: 'No change', value: null },
+                  { label: t('lights.turnOn'), value: true },
+                  { label: t('lights.turnOff'), value: false },
+                  { label: t('lights.noChange'), value: null },
                 ].map((opt) => {
                   const active = shortcutForm.power === opt.value;
                   return (
@@ -1642,7 +1645,7 @@ export default function HomeLightsScreen({ route }) {
               {shortcutForm.power !== false && (
                 <>
                   <View style={styles.formToggleRow}>
-                    <Text style={styles.fieldLabel}>Set brightness</Text>
+                    <Text style={styles.fieldLabel}>{t('lights.setBrightness')}</Text>
                     <Switch
                       value={shortcutForm.brightnessEnabled}
                       onValueChange={(v) => setShortcutForm((f) => ({ ...f, brightnessEnabled: v }))}
@@ -1664,20 +1667,20 @@ export default function HomeLightsScreen({ route }) {
                         minimumTrackTintColor={colors.accent}
                         maximumTrackTintColor={colors.muted}
                         thumbTintColor={colors.accent}
-                        accessibilityLabel="Shortcut brightness slider"
+                        accessibilityLabel={t('lights.shortcutBrightnessSlider')}
                       />
                     </View>
                   )}
 
-                  <Text style={styles.fieldLabel}>Color</Text>
+                  <Text style={styles.fieldLabel}>{t('lights.colorField')}</Text>
                   <View style={styles.segmentedRow}>
                     {[
-                      { label: 'No change', value: null },
-                      { label: 'Color', value: 'color' },
-                      { label: 'White', value: 'colorTem' },
-                      { label: 'Scene', value: 'scene' },
+                      { label: t('lights.noChange'), value: null },
+                      { label: t('lights.colorOption'), value: 'color' },
+                      { label: t('lights.white'), value: 'colorTem' },
+                      { label: t('lights.scene'), value: 'scene' },
                       ...(formSegmentCount > 0 || shortcutForm.colorMode === 'gradient'
-                        ? [{ label: 'Gradient', value: 'gradient' }] : []),
+                        ? [{ label: t('lights.gradient'), value: 'gradient' }] : []),
                     ].map((opt) => {
                       const active = shortcutForm.colorMode === opt.value;
                       return (
@@ -1711,7 +1714,7 @@ export default function HomeLightsScreen({ route }) {
                               previewCount={formSegmentCount || 7}
                             />
                             {formDevices.some((d) => getSegmentCount(d) === 0) && (
-                              <Text style={styles.colorHint}>Lights without segments get the start colour.</Text>
+                              <Text style={styles.colorHint}>{t('lights.startColourHint')}</Text>
                             )}
                           </>
                         )}
@@ -1723,7 +1726,7 @@ export default function HomeLightsScreen({ route }) {
                               style={[styles.colorSwatch, { backgroundColor: c }, current === c && styles.colorSwatchSelected]}
                               onPress={() => setFormColor(c)}
                               accessibilityRole="button"
-                              accessibilityLabel={gradient ? `Set gradient stop to ${c}` : `Select color ${c}`}
+                              accessibilityLabel={gradient ? t('lights.setGradientStop', { color: c }) : t('lights.selectColor', { color: c })}
                             />
                           ))}
                         </View>
@@ -1735,7 +1738,7 @@ export default function HomeLightsScreen({ route }) {
                           accessibilityState={{ expanded: formPickerOpen }}
                         >
                           <Ionicons name="color-palette-outline" size={18} color={colors.accent} />
-                          <Text style={styles.customToggleLabel}>Custom colour</Text>
+                          <Text style={styles.customToggleLabel}>{t('lights.customColour')}</Text>
                           {!formPickerOpen && !presets.includes(current) && (
                             <View style={[styles.customDot, { backgroundColor: current }]} />
                           )}
@@ -1754,12 +1757,12 @@ export default function HomeLightsScreen({ route }) {
 
                         {gradient && formHasBlend && (
                           <>
-                            <Text style={[styles.fieldLabel, styles.formSubLabel]}>Smooth blending</Text>
+                            <Text style={[styles.fieldLabel, styles.formSubLabel]}>{t('lights.smoothBlending')}</Text>
                             <View style={styles.segmentedRow}>
                               {[
-                                { label: 'No change', value: null },
-                                { label: 'On', value: true },
-                                { label: 'Off', value: false },
+                                { label: t('lights.noChange'), value: null },
+                                { label: t('lights.on'), value: true },
+                                { label: t('lights.off'), value: false },
                               ].map((opt) => {
                                 const active = shortcutForm.gradientBlend === opt.value;
                                 return (
@@ -1796,7 +1799,7 @@ export default function HomeLightsScreen({ route }) {
                         minimumTrackTintColor="#FFD580"
                         maximumTrackTintColor={colors.muted}
                         thumbTintColor="#FFD580"
-                        accessibilityLabel="Shortcut color temperature slider"
+                        accessibilityLabel={t('lights.shortcutColorTemSlider')}
                       />
                     </View>
                   )}
@@ -1841,10 +1844,10 @@ export default function HomeLightsScreen({ route }) {
                 onPress={handleSaveShortcut}
                 disabled={savingShortcut}
                 accessibilityRole="button"
-                accessibilityLabel="Save shortcut"
+                accessibilityLabel={t('lights.saveShortcut')}
               >
                 <Text style={styles.saveBtnLabel}>
-                  {savingShortcut ? 'Saving…' : editingShortcutId ? 'Save Changes' : 'Create Shortcut'}
+                  {savingShortcut ? t('common.saving') : editingShortcutId ? t('grocery.saveChanges') : t('lights.createShortcut')}
                 </Text>
               </TouchableOpacity>
             </ScrollView>

@@ -11,10 +11,19 @@ import { subscribeEmergencyContacts } from '../../services/firestore';
 import { spacing, radius, type } from '../../theme/colors';
 import { useIsDesktop, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
 import { Rise, useEntranceReplay } from '../../components/Motion';
+import { t } from '../../i18n';
+
+const relationName = (rel) => {
+  const key = `relationships.${rel}`;
+  const text = t(key);
+  return text === key ? rel : text;
+};
+import { useLanguage } from '../../context/LanguageContext';
 
 export default function EmergencyContactsScreen() {
   const { householdId } = useAuth();
   const { colors } = useTheme();
+  useLanguage();
   const navScrollProps = useNavScrollProps();
   const isDesktop = useIsDesktop();
   const styles = useMemo(() => makeStyles(colors), [colors]);
@@ -50,16 +59,16 @@ export default function EmergencyContactsScreen() {
         <Rise index={0}>
         <View style={styles.header}>
           <View>
-            <Text style={styles.title}>Emergency Contacts</Text>
+            <Text style={styles.title}>{t('emergency.title')}</Text>
             <Text style={styles.subtitle}>
               {contacts.length === 0
-                ? 'Add contacts in household settings'
-                : `${contacts.length} contact${contacts.length !== 1 ? 's' : ''}`}
+                ? t('emergency.addInSettings')
+                : t('emergency.contacts', { count: contacts.length })}
             </Text>
           </View>
           <View style={styles.headerBadge}>
             <Ionicons name="alert-circle" size={13} color={colors.danger} />
-            <Text style={styles.headerBadgeText}>Emergency</Text>
+            <Text style={styles.headerBadgeText}>{t('emergency.badge')}</Text>
           </View>
         </View>
         </Rise>
@@ -67,9 +76,9 @@ export default function EmergencyContactsScreen() {
         {contacts.length === 0 ? (
           <View style={styles.emptyState}>
             <Ionicons name="people-outline" size={48} color={colors.textTertiary} />
-            <Text style={styles.emptyTitle}>No contacts yet</Text>
+            <Text style={styles.emptyTitle}>{t('emergency.noContacts')}</Text>
             <Text style={styles.emptySub}>
-              Add emergency contacts in your household settings.
+              {t('emergency.noContactsSub')}
             </Text>
           </View>
         ) : (
@@ -82,14 +91,14 @@ export default function EmergencyContactsScreen() {
                 <View style={styles.info}>
                   <Text style={styles.name}>{contact.name}</Text>
                   {!!contact.relationship && (
-                    <Text style={styles.relationship}>{contact.relationship}</Text>
+                    <Text style={styles.relationship}>{relationName(contact.relationship)}</Text>
                   )}
                   {!!contact.phone && (
                     <TouchableOpacity
                       onPress={() => handleCall(contact.phone)}
                       style={styles.phoneRow}
                       accessibilityRole="link"
-                      accessibilityLabel={`Call ${contact.name}`}
+                      accessibilityLabel={t('emergency.call', { name: contact.name })}
                     >
                       <Ionicons name="call-outline" size={13} color={colors.accent} />
                       <Text style={styles.phone}>{contact.phone}</Text>
@@ -104,7 +113,7 @@ export default function EmergencyContactsScreen() {
                     style={styles.callBtn}
                     onPress={() => handleCall(contact.phone)}
                     accessibilityRole="button"
-                    accessibilityLabel={`Call ${contact.name}`}
+                    accessibilityLabel={t('emergency.call', { name: contact.name })}
                   >
                     <Ionicons name="call" size={18} color="#fff" />
                   </TouchableOpacity>

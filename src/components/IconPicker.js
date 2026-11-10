@@ -2,11 +2,14 @@ import React from 'react';
 import { Text, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
 import { spacing, radius, type } from '../theme/colors';
+import { t } from '../i18n';
+import { useLanguage } from '../context/LanguageContext';
 
 // Horizontal emoji-icon picker used by the household edit modals (category,
 // finance category, emergency contact). Reuses the same look those modals had.
-export default function IconPicker({ icons, value, onChange, label = 'Icon' }) {
+export default function IconPicker({ icons, value, onChange, label = t('components.icon') }) {
   const { colors } = useTheme();
+  useLanguage();
   const styles = React.useMemo(() => makeStyles(colors), [colors]);
 
   return (
@@ -27,7 +30,7 @@ export default function IconPicker({ icons, value, onChange, label = 'Icon' }) {
               onPress={() => onChange(ic)}
               accessibilityRole="button"
               accessibilityState={{ selected }}
-              accessibilityLabel={`Select icon ${ic}`}
+              accessibilityLabel={t('components.selectIcon', { icon: ic })}
             >
               <Text style={styles.optionText}>{ic}</Text>
             </TouchableOpacity>

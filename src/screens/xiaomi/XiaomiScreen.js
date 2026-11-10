@@ -25,6 +25,8 @@ import {
   getVacuumState, startCleaning, pauseCleaning, resumeCleaning, returnToDock,
   findVacuum, setVacuumSuction, resetVacuumPart, getScenes, runScene,
 } from '../../services/xiaomi';
+import { t } from '../../i18n';
+import { useLanguage } from '../../context/LanguageContext';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -38,16 +40,16 @@ const DEFAULT_VACUUM  = { status: 'idle', error: 0, suction: 1, battery: 100, cl
 const FAN_LEVELS = [1, 2, 3, 4];
 
 const FAN_MODES = [
-  { id: 0, label: 'Normal', icon: 'thermometer-outline' },
-  { id: 1, label: 'Nature', icon: 'leaf-outline'        },
-  { id: 2, label: 'Sleep',  icon: 'moon-outline'        },
+  { id: 0, get label() { return xl('Normal'); }, icon: 'thermometer-outline' },
+  { id: 1, get label() { return xl('Nature'); }, icon: 'leaf-outline'        },
+  { id: 2, get label() { return xl('Sleep'); },  icon: 'moon-outline'        },
 ];
 
 const HEATER_MODES = [
-  { id: 0, label: 'Constant', icon: 'thermometer-outline' },
-  { id: 1, label: 'Heat',     icon: 'flame-outline'       },
-  { id: 2, label: 'Warm',     icon: 'sunny-outline'       },
-  { id: 3, label: 'Fan',      icon: 'leaf-outline'        },
+  { id: 0, get label() { return xl('Constant'); }, icon: 'thermometer-outline' },
+  { id: 1, get label() { return xl('Heat'); },     icon: 'flame-outline'       },
+  { id: 2, get label() { return xl('Warm'); },     icon: 'sunny-outline'       },
+  { id: 3, get label() { return xl('Fan'); },      icon: 'leaf-outline'        },
 ];
 
 const HEATER_FAULTS = {
@@ -59,18 +61,18 @@ const HEATER_FAULTS = {
 
 // Off-timer presets, minutes (device max 480)
 const TIMER_PRESETS = [
-  { minutes: 0,   label: 'Off' },
-  { minutes: 60,  label: '1h'  },
-  { minutes: 120, label: '2h'  },
-  { minutes: 240, label: '4h'  },
-  { minutes: 480, label: '8h'  },
+  { minutes: 0,   get label() { return xl('Off'); } },
+  { minutes: 60,  get label() { return xl('1h'); }  },
+  { minutes: 120, get label() { return xl('2h'); }  },
+  { minutes: 240, get label() { return xl('4h'); }  },
+  { minutes: 480, get label() { return xl('8h'); }  },
 ];
 
 // Shown only for keys the model's spec supports.
 const DEVICE_SETTINGS = [
-  { key: 'childLock', label: 'Child lock', on: 'lock-closed',  off: 'lock-open-outline' },
-  { key: 'display',   label: 'Display',    on: 'bulb',         off: 'bulb-outline'      },
-  { key: 'beep',      label: 'Beep',       on: 'volume-high',  off: 'volume-mute-outline' },
+  { key: 'childLock', get label() { return xl('Child lock'); }, on: 'lock-closed',  off: 'lock-open-outline' },
+  { key: 'display',   get label() { return xl('Display'); },    on: 'bulb',         off: 'bulb-outline'      },
+  { key: 'beep',      get label() { return xl('Beep'); },       on: 'volume-high',  off: 'volume-mute-outline' },
 ];
 
 const FAN_SETTERS    = { timer: setFanTimer, childLock: setFanChildLock, display: setFanDisplay, beep: setFanBeep };
@@ -78,52 +80,59 @@ const HEATER_SETTERS = { childLock: setHeaterChildLock, display: setHeaterDispla
 
 const TEMP_DEBOUNCE_MS = 500;
 
+// Xiaomi mode/status/part/region names are keyed by English; show them translated.
+const xl = (label) => {
+  const key = `xiaomi.labels.${label}`;
+  const text = t(key);
+  return text === key ? label : text;   // durations like '1h' stay as they are
+};
+
 const formatCountdown = (min) =>
   min >= 60 ? `${Math.floor(min / 60)}h ${min % 60 ? `${min % 60}m` : ''}`.trim() : `${min}m`;
 
 const SUCTION_LEVELS = [
-  { id: 0, label: 'Quiet',    icon: 'volume-low-outline'    },
-  { id: 1, label: 'Standard', icon: 'volume-medium-outline' },
-  { id: 2, label: 'Turbo',    icon: 'volume-high-outline'   },
-  { id: 3, label: 'Max',      icon: 'flash-outline'         },
+  { id: 0, get label() { return xl('Quiet'); },    icon: 'volume-low-outline'    },
+  { id: 1, get label() { return xl('Standard'); }, icon: 'volume-medium-outline' },
+  { id: 2, get label() { return xl('Turbo'); },    icon: 'volume-high-outline'   },
+  { id: 3, get label() { return xl('Max'); },      icon: 'flash-outline'         },
 ];
 
 // Keyed by part key from the vacuum spec.
 const VACUUM_PARTS = {
-  mainBrush: { label: 'Main brush', icon: 'sync-outline'   },
-  sideBrush: { label: 'Side brush', icon: 'flower-outline' },
-  filter:    { label: 'Filter',     icon: 'funnel-outline' },
-  mop:       { label: 'Mop pads',   icon: 'water-outline'  },
-  dustBag:   { label: 'Dust bag',   icon: 'trash-outline'  },
-  detergent: { label: 'Detergent',  icon: 'flask-outline'  },
+  mainBrush: { get label() { return xl('Main brush'); }, icon: 'sync-outline'   },
+  sideBrush: { get label() { return xl('Side brush'); }, icon: 'flower-outline' },
+  filter:    { get label() { return xl('Filter'); },     icon: 'funnel-outline' },
+  mop:       { get label() { return xl('Mop pads'); },   icon: 'water-outline'  },
+  dustBag:   { get label() { return xl('Dust bag'); },   icon: 'trash-outline'  },
+  detergent: { get label() { return xl('Detergent'); },  icon: 'flask-outline'  },
 };
 
 const partColor = (life, colors) => (life <= 10 ? colors.danger : life <= 25 ? colors.warning : colors.sage);
 
 // Keyed by the normalised status from vacuumStateFromProps; color is a theme token.
 const VACUUM_STATUS_MAP = {
-  cleaning:  { label: 'Cleaning',  icon: 'refresh',          color: 'sage'         },
-  idle:      { label: 'Idle',      icon: 'ellipse-outline',  color: 'textTertiary' },
-  paused:    { label: 'Paused',    icon: 'pause-circle',     color: 'amber'        },
-  charging:  { label: 'Charging',  icon: 'battery-charging', color: 'accent'       },
-  charged:   { label: 'Charged',   icon: 'battery-full',     color: 'success'      },
-  returning: { label: 'Returning', icon: 'home',             color: 'accent'       },
-  washing:   { label: 'Washing',   icon: 'water-outline',    color: 'accent'       },
-  mapping:   { label: 'Mapping',   icon: 'map-outline',      color: 'accent'       },
-  updating:  { label: 'Updating',  icon: 'cloud-download',   color: 'warning'      },
-  remote:    { label: 'Remote',    icon: 'game-controller',  color: 'accent'       },
-  error:     { label: 'Error',     icon: 'alert-circle',     color: 'danger'       },
+  cleaning:  { get label() { return xl('Cleaning'); },  icon: 'refresh',          color: 'sage'         },
+  idle:      { get label() { return xl('Idle'); },      icon: 'ellipse-outline',  color: 'textTertiary' },
+  paused:    { get label() { return xl('Paused'); },    icon: 'pause-circle',     color: 'amber'        },
+  charging:  { get label() { return xl('Charging'); },  icon: 'battery-charging', color: 'accent'       },
+  charged:   { get label() { return xl('Charged'); },   icon: 'battery-full',     color: 'success'      },
+  returning: { get label() { return xl('Returning'); }, icon: 'home',             color: 'accent'       },
+  washing:   { get label() { return xl('Washing'); },   icon: 'water-outline',    color: 'accent'       },
+  mapping:   { get label() { return xl('Mapping'); },   icon: 'map-outline',      color: 'accent'       },
+  updating:  { get label() { return xl('Updating'); },  icon: 'cloud-download',   color: 'warning'      },
+  remote:    { get label() { return xl('Remote'); },    icon: 'game-controller',  color: 'accent'       },
+  error:     { get label() { return xl('Error'); },     icon: 'alert-circle',     color: 'danger'       },
 };
 
 const REGIONS = [
-  { key: 'cn', label: 'China'         },
-  { key: 'us', label: 'United States' },
-  { key: 'eu', label: 'Europe'        },
-  { key: 'ru', label: 'Russia'        },
-  { key: 'sg', label: 'Singapore'     },
-  { key: 'in', label: 'India'         },
-  { key: 'de', label: 'Germany'       },
-  { key: 'tw', label: 'Taiwan'        },
+  { key: 'cn', get label() { return xl('China'); }         },
+  { key: 'us', get label() { return xl('United States'); } },
+  { key: 'eu', get label() { return xl('Europe'); }        },
+  { key: 'ru', get label() { return xl('Russia'); }        },
+  { key: 'sg', get label() { return xl('Singapore'); }     },
+  { key: 'in', get label() { return xl('India'); }         },
+  { key: 'de', get label() { return xl('Germany'); }       },
+  { key: 'tw', get label() { return xl('Taiwan'); }        },
 ];
 
 // ── CredentialsModal ──────────────────────────────────────────────────────────
@@ -165,8 +174,8 @@ function CredentialsModal({ visible, onClose, onSaved, colors, householdId }) {
           <View style={styles.modalSheet}>
             <View style={styles.modalHeader}>
               <View>
-                <Text style={styles.modalTitle}>Mi Home Setup</Text>
-                <Text style={styles.modalSubtitle}>Paste your Mi Home tokens below</Text>
+                <Text style={styles.modalTitle}>{t('xiaomi.setupTitle')}</Text>
+                <Text style={styles.modalSubtitle}>{t('xiaomi.setupSubtitle')}</Text>
               </View>
               <TouchableOpacity onPress={onClose} style={styles.modalCloseBtn}>
                 <Ionicons name="close" size={20} color={colors.textSecondary} />
@@ -176,11 +185,11 @@ function CredentialsModal({ visible, onClose, onSaved, colors, householdId }) {
             <View style={styles.modalHint}>
               <Ionicons name="information-circle-outline" size={14} color={colors.amber} />
               <Text style={styles.modalHintText}>
-                Get your User ID, Service Token, and ssecurity from the Mi Home app using a token extractor tool (e.g. xiaomi-cloud-tokens-extractor).
+                {t('xiaomi.setupHint')}
               </Text>
             </View>
 
-            <Text style={styles.fieldLabel}>User ID</Text>
+            <Text style={styles.fieldLabel}>{t('xiaomi.userId')}</Text>
             <TextInput
               style={styles.input}
               value={form.userId}
@@ -191,7 +200,7 @@ function CredentialsModal({ visible, onClose, onSaved, colors, householdId }) {
               autoCapitalize="none"
             />
 
-            <Text style={styles.fieldLabel}>Service Token</Text>
+            <Text style={styles.fieldLabel}>{t('xiaomi.serviceToken')}</Text>
             <TextInput
               style={styles.input}
               value={form.serviceToken}
@@ -202,18 +211,18 @@ function CredentialsModal({ visible, onClose, onSaved, colors, householdId }) {
               secureTextEntry
             />
 
-            <Text style={styles.fieldLabel}>Security Key (ssecurity)</Text>
+            <Text style={styles.fieldLabel}>{t('xiaomi.securityKey')}</Text>
             <TextInput
               style={styles.input}
               value={form.ssecurity}
               onChangeText={set('ssecurity')}
-              placeholder="base64-encoded key"
+              placeholder={t('xiaomi.securityKeyPlaceholder')}
               placeholderTextColor={colors.textTertiary}
               autoCapitalize="none"
               secureTextEntry
             />
 
-            <Text style={styles.fieldLabel}>Region</Text>
+            <Text style={styles.fieldLabel}>{t('xiaomi.region')}</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: spacing.lg }}>
               <View style={{ flexDirection: 'row', gap: 8 }}>
                 {REGIONS.map(r => (
@@ -237,7 +246,7 @@ function CredentialsModal({ visible, onClose, onSaved, colors, householdId }) {
             >
               {saving
                 ? <ActivityIndicator color="#fff" size="small" />
-                : <Text style={styles.saveBtnLabel}>Save & Connect</Text>
+                : <Text style={styles.saveBtnLabel}>{t('xiaomi.saveConnect')}</Text>
               }
             </TouchableOpacity>
           </View>
@@ -257,7 +266,7 @@ function FanDeviceCard({ device, isSelected, isOn, onSelect, onToggle, icon = 'a
       style={[styles.deviceCard, isSelected && styles.deviceCardSelected]}
       onPress={onSelect}
       accessibilityRole="button"
-      accessibilityLabel={`Select ${device.name}`}
+      accessibilityLabel={t('xiaomi.selectDevice', { name: device.name })}
     >
       <View style={[styles.deviceIconWrap, isOn && { backgroundColor: colors.accentSoft }]}>
         <Ionicons
@@ -292,24 +301,24 @@ function OffTimer({ minutes, onSet, colors }) {
   return (
     <View style={{ gap: 10 }}>
       <View style={styles.controlRow}>
-        <Text style={styles.controlLabel}>Off Timer</Text>
+        <Text style={styles.controlLabel}>{t('xiaomi.offTimer')}</Text>
         {minutes > 0 && (
-          <Text style={styles.controlValue}>Off in {formatCountdown(minutes)}</Text>
+          <Text style={styles.controlValue}>{t('xiaomi.offIn', { time: formatCountdown(minutes) })}</Text>
         )}
       </View>
       <View style={styles.btnRow}>
-        {TIMER_PRESETS.map(t => {
-          const active = minutes === t.minutes;
+        {TIMER_PRESETS.map(preset => {
+          const active = minutes === preset.minutes;
           return (
             <TouchableOpacity
-              key={t.minutes}
+              key={preset.minutes}
               style={[styles.optionBtn, active && styles.optionBtnActive]}
-              onPress={() => onSet(t.minutes)}
+              onPress={() => onSet(preset.minutes)}
               accessibilityRole="button"
-              accessibilityLabel={t.minutes ? `Turn off in ${t.label}` : 'Cancel off timer'}
+              accessibilityLabel={preset.minutes ? t('xiaomi.turnOffIn', { time: preset.label }) : t('xiaomi.cancelOffTimer')}
             >
               <Text style={[styles.optionBtnLabel, active && styles.optionBtnLabelActive]}>
-                {t.label}
+                {preset.label}
               </Text>
             </TouchableOpacity>
           );
@@ -368,8 +377,8 @@ function FanControls({ device, state, onTogglePower, onSetLevel, onSetMode, onSe
             />
           </View>
           <View>
-            <Text style={styles.controlLabel}>Power</Text>
-            <Text style={styles.controlValue}>{state.on ? 'On' : 'Off'}</Text>
+            <Text style={styles.controlLabel}>{t('xiaomi.power')}</Text>
+            <Text style={styles.controlValue}>{state.on ? t('xiaomi.on') : t('xiaomi.off')}</Text>
           </View>
         </View>
         <Switch
@@ -393,7 +402,7 @@ function FanControls({ device, state, onTogglePower, onSetLevel, onSetMode, onSe
               color={state.oscillate ? colors.accent : colors.textTertiary}
             />
           </View>
-          <Text style={styles.controlLabel}>Oscillation</Text>
+          <Text style={styles.controlLabel}>{t('xiaomi.oscillation')}</Text>
         </View>
         <Switch
           value={state.oscillate}
@@ -408,7 +417,7 @@ function FanControls({ device, state, onTogglePower, onSetLevel, onSetMode, onSe
 
       {/* Speed levels */}
       <View style={{ gap: 10 }}>
-        <Text style={styles.controlLabel}>Speed Level</Text>
+        <Text style={styles.controlLabel}>{t('xiaomi.speedLevel')}</Text>
         <View style={styles.btnRow}>
           {FAN_LEVELS.map(lvl => {
             const active = state.level === lvl;
@@ -418,7 +427,7 @@ function FanControls({ device, state, onTogglePower, onSetLevel, onSetMode, onSe
                 style={[styles.optionBtn, active && styles.optionBtnActive]}
                 onPress={() => onSetLevel(lvl)}
                 accessibilityRole="button"
-                accessibilityLabel={`Fan level ${lvl}`}
+                accessibilityLabel={t('xiaomi.fanLevel', { level: lvl })}
               >
                 <Text style={[styles.optionBtnLabel, active && styles.optionBtnLabelActive]}>
                   {lvl}
@@ -433,7 +442,7 @@ function FanControls({ device, state, onTogglePower, onSetLevel, onSetMode, onSe
 
       {/* Mode */}
       <View style={{ gap: 10 }}>
-        <Text style={styles.controlLabel}>Mode</Text>
+        <Text style={styles.controlLabel}>{t('xiaomi.mode')}</Text>
         <View style={styles.btnRow}>
           {modes.map(m => {
             const active = state.mode === m.id;
@@ -443,7 +452,7 @@ function FanControls({ device, state, onTogglePower, onSetLevel, onSetMode, onSe
                 style={[styles.optionBtn, active && styles.optionBtnActive]}
                 onPress={() => onSetMode(m.id)}
                 accessibilityRole="button"
-                accessibilityLabel={`Fan mode ${m.label}`}
+                accessibilityLabel={t('xiaomi.fanMode', { mode: m.label })}
               >
                 <Ionicons
                   name={m.icon}
@@ -479,7 +488,7 @@ function HeaterControls({ device, state, onTogglePower, onStepTemp, onSetMode, o
   const has    = (key) => !!spec.props[key];
   const modes  = HEATER_MODES.filter(m => spec.modes.includes(m.id));
   const [minTemp, maxTemp] = spec.tempRange ?? [null, null];
-  const fault  = state.fault ? (HEATER_FAULTS[state.fault] ?? `Fault ${state.fault}`) : null;
+  const fault  = state.fault ? (HEATER_FAULTS[state.fault] ? xl(HEATER_FAULTS[state.fault]) : t('xiaomi.fault', { code: state.fault })) : null;
 
   return (
     <View style={styles.card}>
@@ -504,10 +513,10 @@ function HeaterControls({ device, state, onTogglePower, onStepTemp, onSetMode, o
             />
           </View>
           <View>
-            <Text style={styles.controlLabel}>Power</Text>
+            <Text style={styles.controlLabel}>{t('xiaomi.power')}</Text>
             <Text style={styles.controlValue}>
-              {state.on ? 'On' : 'Off'}
-              {state.temperature != null ? ` · Room ${state.temperature}°C` : ''}
+              {state.on ? t('xiaomi.on') : t('xiaomi.off')}
+              {state.temperature != null ? t('xiaomi.room', { temp: state.temperature }) : ''}
             </Text>
           </View>
         </View>
@@ -529,7 +538,7 @@ function HeaterControls({ device, state, onTogglePower, onStepTemp, onSetMode, o
               <View style={[styles.controlIcon, state.on && styles.controlIconActive]}>
                 <Ionicons name="thermometer-outline" size={18} color={state.on ? colors.accent : colors.textTertiary} />
               </View>
-              <Text style={styles.controlLabel}>Target</Text>
+              <Text style={styles.controlLabel}>{t('xiaomi.target')}</Text>
             </View>
             <View style={styles.stepper}>
               <TouchableOpacity
@@ -537,7 +546,7 @@ function HeaterControls({ device, state, onTogglePower, onStepTemp, onSetMode, o
                 onPress={() => onStepTemp(-1)}
                 disabled={state.targetTemp != null && state.targetTemp <= minTemp}
                 accessibilityRole="button"
-                accessibilityLabel="Lower target temperature"
+                accessibilityLabel={t('xiaomi.lowerTarget')}
               >
                 <Ionicons name="remove" size={18} color={colors.textSecondary} />
               </TouchableOpacity>
@@ -549,7 +558,7 @@ function HeaterControls({ device, state, onTogglePower, onStepTemp, onSetMode, o
                 onPress={() => onStepTemp(1)}
                 disabled={state.targetTemp != null && state.targetTemp >= maxTemp}
                 accessibilityRole="button"
-                accessibilityLabel="Raise target temperature"
+                accessibilityLabel={t('xiaomi.raiseTarget')}
               >
                 <Ionicons name="add" size={18} color={colors.textSecondary} />
               </TouchableOpacity>
@@ -571,7 +580,7 @@ function HeaterControls({ device, state, onTogglePower, onStepTemp, onSetMode, o
                   color={state.oscillate ? colors.accent : colors.textTertiary}
                 />
               </View>
-              <Text style={styles.controlLabel}>Oscillation</Text>
+              <Text style={styles.controlLabel}>{t('xiaomi.oscillation')}</Text>
             </View>
             <Switch
               value={state.oscillate}
@@ -589,7 +598,7 @@ function HeaterControls({ device, state, onTogglePower, onStepTemp, onSetMode, o
         <>
           <View style={styles.divider} />
           <View style={{ gap: 10 }}>
-            <Text style={styles.controlLabel}>Mode</Text>
+            <Text style={styles.controlLabel}>{t('xiaomi.mode')}</Text>
             <View style={styles.btnRow}>
               {modes.map(m => {
                 const active = state.mode === m.id;
@@ -599,7 +608,7 @@ function HeaterControls({ device, state, onTogglePower, onStepTemp, onSetMode, o
                     style={[styles.optionBtn, active && styles.optionBtnActive]}
                     onPress={() => onSetMode(m.id)}
                     accessibilityRole="button"
-                    accessibilityLabel={`Heater mode ${m.label}`}
+                    accessibilityLabel={t('xiaomi.heaterMode', { mode: m.label })}
                   >
                     <Ionicons name={m.icon} size={14} color={active ? colors.accent : colors.textTertiary} />
                     <Text style={[styles.optionBtnLabel, active && styles.optionBtnLabelActive]}>
@@ -633,7 +642,7 @@ function VacuumCard({ device, state, onStart, onPause, onDock, onFind, onSetSuct
   const known = VACUUM_STATUS_MAP[state.status];
   const info = known
     ? { ...known, color: colors[known.color] }
-    : { label: `Status ${state.rawStatus ?? '?'}`, icon: 'ellipse-outline', color: colors.textTertiary };
+    : { label: t('xiaomi.status', { code: state.rawStatus ?? '?' }), icon: 'ellipse-outline', color: colors.textTertiary };
   const isCleaning = state.status === 'cleaning';
   const isPaused   = state.status === 'paused';
   const stats = [
@@ -674,7 +683,7 @@ function VacuumCard({ device, state, onStart, onPause, onDock, onFind, onSetSuct
           <View style={styles.vacuumStatsRow}>
             <Ionicons name="stats-chart-outline" size={13} color={colors.textTertiary} />
             <Text style={styles.vacuumStatsText}>
-              {isCleaning ? 'This run' : 'Last run'} · {stats.join(' · ')}
+              {isCleaning ? t('xiaomi.thisRun') : t('xiaomi.lastRun')} · {stats.join(' · ')}
             </Text>
           </View>
         )}
@@ -687,7 +696,7 @@ function VacuumCard({ device, state, onStart, onPause, onDock, onFind, onSetSuct
             style={[styles.vacuumActionBtn, isCleaning && styles.vacuumActionBtnActive]}
             onPress={isCleaning ? onPause : onStart}
             accessibilityRole="button"
-            accessibilityLabel={isCleaning ? 'Pause cleaning' : 'Start cleaning'}
+            accessibilityLabel={isCleaning ? t('xiaomi.pauseCleaning') : t('xiaomi.startCleaning')}
           >
             <Ionicons
               name={isCleaning ? 'pause' : 'play'}
@@ -695,7 +704,7 @@ function VacuumCard({ device, state, onStart, onPause, onDock, onFind, onSetSuct
               color={isCleaning ? colors.accent : colors.textSecondary}
             />
             <Text style={[styles.vacuumActionLabel, isCleaning && { color: colors.accent }]}>
-              {isCleaning ? 'Pause' : isPaused ? 'Resume' : 'Clean'}
+              {isCleaning ? t('xiaomi.pause') : isPaused ? t('xiaomi.resume') : t('xiaomi.clean')}
             </Text>
           </TouchableOpacity>
 
@@ -703,26 +712,26 @@ function VacuumCard({ device, state, onStart, onPause, onDock, onFind, onSetSuct
             style={styles.vacuumActionBtn}
             onPress={onDock}
             accessibilityRole="button"
-            accessibilityLabel="Return to dock"
+            accessibilityLabel={t('xiaomi.returnToDock')}
           >
             <Ionicons name="home-outline" size={18} color={colors.textSecondary} />
-            <Text style={styles.vacuumActionLabel}>Dock</Text>
+            <Text style={styles.vacuumActionLabel}>{t('xiaomi.dock')}</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
             style={styles.vacuumActionBtn}
             onPress={onFind}
             accessibilityRole="button"
-            accessibilityLabel="Find robot"
+            accessibilityLabel={t('xiaomi.findRobot')}
           >
             <Ionicons name="locate-outline" size={18} color={colors.textSecondary} />
-            <Text style={styles.vacuumActionLabel}>Find</Text>
+            <Text style={styles.vacuumActionLabel}>{t('xiaomi.find')}</Text>
           </TouchableOpacity>
         </View>
       </View>
 
       {/* Suction */}
-      <Text style={styles.sectionLabel}>SUCTION POWER</Text>
+      <Text style={styles.sectionLabel}>{t('xiaomi.suctionPower')}</Text>
       <View style={styles.card}>
         <View style={styles.btnRow}>
           {SUCTION_LEVELS.map(s => {
@@ -733,7 +742,7 @@ function VacuumCard({ device, state, onStart, onPause, onDock, onFind, onSetSuct
                 style={[styles.optionBtn, active && styles.optionBtnActive]}
                 onPress={() => onSetSuction(s.id)}
                 accessibilityRole="button"
-                accessibilityLabel={`Suction ${s.label}`}
+                accessibilityLabel={t('xiaomi.suction', { level: s.label })}
               >
                 <Ionicons
                   name={s.icon}
@@ -752,7 +761,7 @@ function VacuumCard({ device, state, onStart, onPause, onDock, onFind, onSetSuct
       {/* Maintenance */}
       {state.parts.length > 0 && (
         <>
-          <Text style={styles.sectionLabel}>MAINTENANCE</Text>
+          <Text style={styles.sectionLabel}>{t('xiaomi.maintenance')}</Text>
           <View style={styles.card}>
             {state.parts.map((part, i) => {
               const meta  = VACUUM_PARTS[part.key] ?? { label: part.key, icon: 'construct-outline' };
@@ -777,9 +786,9 @@ function VacuumCard({ device, state, onStart, onPause, onDock, onFind, onSetSuct
                       style={styles.partResetBtn}
                       onPress={() => onResetPart(part.key, meta.label)}
                       accessibilityRole="button"
-                      accessibilityLabel={`Reset ${meta.label}`}
+                      accessibilityLabel={t('xiaomi.resetPart', { part: meta.label })}
                     >
-                      <Text style={styles.partResetLabel}>Reset</Text>
+                      <Text style={styles.partResetLabel}>{t('xiaomi.reset')}</Text>
                     </TouchableOpacity>
                   </View>
                   {i < state.parts.length - 1 && <View style={styles.divider} />}
@@ -797,6 +806,7 @@ function VacuumCard({ device, state, onStart, onPause, onDock, onFind, onSetSuct
 
 export default function XiaomiScreen() {
   const { colors } = useTheme();
+  useLanguage();
   const navScrollProps = useNavScrollProps();
   const { householdId } = useAuth();
   const { showAlert, showConfirm } = useAlert();
@@ -1042,9 +1052,9 @@ export default function XiaomiScreen() {
     setRunningScene(scene.id);
     try {
       await runScene(scene);
-      notify('Scene started', scene.name, { type: 'success' });
+      notify(t('xiaomi.sceneStarted'), scene.name, { type: 'success' });
     } catch (e) {
-      showAlert({ title: `Couldn't run ${scene.name}`, message: e.message, type: 'error' });
+      showAlert({ title: t('xiaomi.couldNotRunScene', { name: scene.name }), message: e.message, type: 'error' });
     } finally {
       setRunningScene(null);
     }
@@ -1054,10 +1064,10 @@ export default function XiaomiScreen() {
     const device = selectedVacuumDevice;
     if (!device) return;
     const ok = await showConfirm({
-      title: `Reset ${label.toLowerCase()}?`,
-      message: 'Do this after replacing or cleaning it. Its life goes back to 100%.',
+      title: t('xiaomi.resetPartTitle', { part: label.toLowerCase() }),
+      message: t('xiaomi.resetPartMessage'),
       type: 'warning',
-      confirmLabel: 'Reset',
+      confirmLabel: t('xiaomi.reset'),
     });
     if (!ok) return;
     try {
@@ -1065,7 +1075,7 @@ export default function XiaomiScreen() {
       const props = await getVacuumState(device);
       updateVacuum(device.did, vacuumStateFromProps(Array.isArray(props) ? props : [], device.model));
     } catch (e) {
-      showAlert({ title: 'Reset failed', message: e.message, type: 'error' });
+      showAlert({ title: t('xiaomi.resetFailed'), message: e.message, type: 'error' });
     }
   }, [selectedVacuumDevice, showConfirm, showAlert, updateVacuum]);
 
@@ -1078,14 +1088,13 @@ export default function XiaomiScreen() {
   const selectedFanState     = fanStates[selectedFan]    ?? DEFAULT_FAN;
   const selectedHeaterState  = heaterStates[selectedHeater] ?? DEFAULT_HEATER;
   const deviceCount          = fans.length + heaters.length + vacuums.length;
-  const plural = (n, word) => `${n} ${word}${n !== 1 ? 's' : ''}`;
   const selectedVacuumState  = vacuumStates[selectedVacuum] ?? DEFAULT_VACUUM;
 
   if (loading) {
     return (
       <SafeAreaView style={[styles.root, { justifyContent: 'center', alignItems: 'center' }]}>
         <ActivityIndicator size="large" color={colors.accent} />
-        <Text style={[styles.subtitle, { marginTop: 12 }]}>Connecting to Mi Home…</Text>
+        <Text style={[styles.subtitle, { marginTop: 12 }]}>{t('xiaomi.connecting')}</Text>
       </SafeAreaView>
     );
   }
@@ -1114,8 +1123,8 @@ export default function XiaomiScreen() {
             <Text style={styles.title}>Xiaomi</Text>
             <Text style={styles.subtitle}>
               {deviceCount === 0 && configured
-                ? 'No devices found'
-                : [plural(fans.length, 'fan'), plural(heaters.length, 'heater'), plural(vacuums.length, 'vacuum')].join(' · ')
+                ? t('xiaomi.noDevices')
+                : [t('xiaomi.fans', { count: fans.length }), t('xiaomi.heaters', { count: heaters.length }), t('xiaomi.vacuums', { count: vacuums.length })].join(' · ')
               }
             </Text>
           </View>
@@ -1125,7 +1134,7 @@ export default function XiaomiScreen() {
                 style={styles.iconBtn}
                 onPress={handleRefresh}
                 accessibilityRole="button"
-                accessibilityLabel="Refresh devices"
+                accessibilityLabel={t('xiaomi.refresh')}
               >
                 <Ionicons
                   name={refreshing ? 'sync' : 'refresh-outline'}
@@ -1138,7 +1147,7 @@ export default function XiaomiScreen() {
               style={styles.iconBtn}
               onPress={() => setShowSetup(true)}
               accessibilityRole="button"
-              accessibilityLabel="Open settings"
+              accessibilityLabel={t('xiaomi.openSettings')}
             >
               <Ionicons name="settings-outline" size={18} color={colors.textSecondary} />
             </TouchableOpacity>
@@ -1155,8 +1164,8 @@ export default function XiaomiScreen() {
           <TouchableOpacity style={styles.setupBanner} onPress={() => setShowSetup(true)}>
             <Ionicons name="key-outline" size={20} color={colors.amber} />
             <View style={{ flex: 1, marginLeft: 12 }}>
-              <Text style={styles.setupBannerTitle}>Connect Mi Home</Text>
-              <Text style={styles.setupBannerBody}>Tap to enter your Mi Home tokens and start controlling devices.</Text>
+              <Text style={styles.setupBannerTitle}>{t('xiaomi.connect')}</Text>
+              <Text style={styles.setupBannerBody}>{t('xiaomi.connectBody')}</Text>
             </View>
             <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
           </TouchableOpacity>
@@ -1175,7 +1184,7 @@ export default function XiaomiScreen() {
           <>
           <Rise index={1}>
             <View style={styles.sectionLabelRow}>
-              <Text style={[styles.sectionLabel, { marginTop: 0, marginBottom: 0 }]}>FANS</Text>
+              <Text style={[styles.sectionLabel, { marginTop: 0, marginBottom: 0 }]}>{t('xiaomi.fansSection')}</Text>
               {fans.filter(f => fanStates[f.did]?.on).length > 0 && (
                 <View style={styles.activeBadge}>
                   <View style={styles.activeDot} />
@@ -1204,7 +1213,7 @@ export default function XiaomiScreen() {
             {selectedFanDevice && (
               <>
                 <View style={styles.controlsHeader}>
-                  <Text style={styles.sectionLabel}>CONTROLS</Text>
+                  <Text style={styles.sectionLabel}>{t('xiaomi.controls')}</Text>
                   <Text style={styles.selectedLabel}>{selectedFanDevice.name}</Text>
                 </View>
                 <FanControls
@@ -1228,7 +1237,7 @@ export default function XiaomiScreen() {
           <>
           <Rise index={2}>
             <View style={[styles.sectionLabelRow, { marginTop: fans.length > 0 ? spacing.xl : 0 }]}>
-              <Text style={[styles.sectionLabel, { marginTop: 0, marginBottom: 0 }]}>HEATERS</Text>
+              <Text style={[styles.sectionLabel, { marginTop: 0, marginBottom: 0 }]}>{t('xiaomi.heatersSection')}</Text>
               {heaters.filter(h => heaterStates[h.did]?.on).length > 0 && (
                 <View style={styles.activeBadge}>
                   <View style={styles.activeDot} />
@@ -1258,7 +1267,7 @@ export default function XiaomiScreen() {
             {selectedHeaterDevice && (
               <>
                 <View style={styles.controlsHeader}>
-                  <Text style={styles.sectionLabel}>CONTROLS</Text>
+                  <Text style={styles.sectionLabel}>{t('xiaomi.controls')}</Text>
                   <Text style={styles.selectedLabel}>{selectedHeaterDevice.name}</Text>
                 </View>
                 <HeaterControls
@@ -1283,11 +1292,11 @@ export default function XiaomiScreen() {
           <>
           <Rise index={3}>
             <View style={[styles.sectionLabelRow, { marginTop: fans.length + heaters.length > 0 ? spacing.xl : 0 }]}>
-              <Text style={[styles.sectionLabel, { marginTop: 0, marginBottom: 0 }]}>VACUUM</Text>
+              <Text style={[styles.sectionLabel, { marginTop: 0, marginBottom: 0 }]}>{t('xiaomi.vacuumSection')}</Text>
               {selectedVacuumState.status === 'cleaning' && (
                 <View style={styles.activeBadge}>
                   <View style={[styles.activeDot, { backgroundColor: colors.sage }]} />
-                  <Text style={styles.activeBadgeText}>Cleaning</Text>
+                  <Text style={styles.activeBadgeText}>{xl('Cleaning')}</Text>
                 </View>
               )}
             </View>
@@ -1335,7 +1344,7 @@ export default function XiaomiScreen() {
         {scenes.length > 0 && (
           <Rise index={4}>
             <View style={[styles.sectionLabelRow, { marginTop: deviceCount > 0 ? spacing.xl : 0 }]}>
-              <Text style={[styles.sectionLabel, { marginTop: 0, marginBottom: 0 }]}>SCENES</Text>
+              <Text style={[styles.sectionLabel, { marginTop: 0, marginBottom: 0 }]}>{t('xiaomi.scenes')}</Text>
             </View>
             <View style={[styles.card, styles.sceneGrid]}>
               {scenes.map(scene => {
@@ -1347,7 +1356,7 @@ export default function XiaomiScreen() {
                     onPress={() => handleRunScene(scene)}
                     disabled={running}
                     accessibilityRole="button"
-                    accessibilityLabel={`Run scene ${scene.name}`}
+                    accessibilityLabel={t('xiaomi.runScene', { name: scene.name })}
                   >
                     {running
                       ? <ActivityIndicator size="small" color={colors.accent} />
@@ -1364,9 +1373,9 @@ export default function XiaomiScreen() {
         {configured && deviceCount === 0 && !error && (
           <View style={styles.emptyState}>
             <Ionicons name="home-outline" size={48} color={colors.textTertiary} />
-            <Text style={[styles.title, { marginTop: 16, textAlign: 'center', fontSize: 18 }]}>No devices found</Text>
+            <Text style={[styles.title, { marginTop: 16, textAlign: 'center', fontSize: 18 }]}>{t('xiaomi.noDevices')}</Text>
             <Text style={[styles.subtitle, { textAlign: 'center', marginTop: 8 }]}>
-              Make sure your fans, heaters and vacuum are linked in Mi Home and try refreshing.
+              {t('xiaomi.noDevicesHint')}
             </Text>
           </View>
         )}

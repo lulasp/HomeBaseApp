@@ -15,6 +15,9 @@ import { saveRecipe, deleteRecipe, getRecipe, getPantryItems, getGroceryItems, a
 import { spacing, radius, type } from '../../theme/colors';
 import { useIsDesktop, useMobileNavClearance, MOBILE_NAV_COMPACT_SHIFT, SIDEBAR_WIDTH, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
 import { Rise, useEntranceReplay } from '../../components/Motion';
+import { t } from '../../i18n';
+import { useLanguage } from '../../context/LanguageContext';
+import { unitName } from '../../utils/categories';
 
 // Compact action bar: 40px pill + vertical padding + top border (see buttonCompact)
 const COMPACT_ACTION_BAR_HEIGHT = 40 + spacing.sm * 2 + 1;
@@ -35,6 +38,7 @@ export default function RecipeDetailScreen({ route, navigation }) {
   );
   const { colors } = useTheme();
   const { showAlert, showConfirm } = useAlert();
+  useLanguage();
   const { notify } = useNotification();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const contentKey = useEntranceReplay();
@@ -84,7 +88,7 @@ export default function RecipeDetailScreen({ route, navigation }) {
       setGroceryCovered(covered);
       setGroceryModal(true);
     } catch (e) {
-      showAlert({ title: 'Error', message: e.message, type: 'error' });
+      showAlert({ title: t('common.error'), message: e.message, type: 'error' });
     } finally {
       setGroceryLoading(false);
     }
@@ -103,36 +107,36 @@ export default function RecipeDetailScreen({ route, navigation }) {
         }),
       ));
       notify(
-        'Added to grocery list',
-        `${groceryToAdd.length} ingredient${groceryToAdd.length !== 1 ? 's' : ''} added.`,
+        t('recipe.addedToGrocery'),
+        t('recipe.ingredientsAdded', { count: groceryToAdd.length }),
         { type: 'success' },
       );
       setGroceryModal(false);
     } catch (e) {
-      showAlert({ title: 'Error', message: e.message, type: 'error' });
+      showAlert({ title: t('common.error'), message: e.message, type: 'error' });
     }
   };
 
   const handleSave = async () => {
     await saveRecipe(householdId, recipe);
-    await notify('Saved!', `"${recipe.title}" added to your recipes.`, { type: 'success' });
+    await notify(t('recipe.savedBang'), t('recipes.addedToRecipes', { name: recipe.title }), { type: 'success' });
     navigation.goBack();
   };
 
   const handleDelete = async () => {
     const confirmed = await showConfirm({
-      title: 'Delete recipe',
-      message: `Remove "${recipe.title}"?`,
+      title: t('recipes.deleteRecipe'),
+      message: t('recipes.removeConfirm', { name: recipe.title }),
       type: 'danger',
-      confirmLabel: 'Delete',
+      confirmLabel: t('common.delete'),
     });
     if (!confirmed) return;
     try {
       await deleteRecipe(householdId, recipe.id);
-      notify('Recipe deleted', `"${recipe.title}" has been removed.`, { type: 'info' });
+      notify(t('recipes.recipeDeleted'), t('recipes.recipeRemoved', { name: recipe.title }), { type: 'info' });
       navigation.goBack();
     } catch (e) {
-      showAlert({ title: 'Delete failed', message: e.message, type: 'error' });
+      showAlert({ title: t('recipes.deleteFailed'), message: e.message, type: 'error' });
     }
   };
 
@@ -157,7 +161,7 @@ export default function RecipeDetailScreen({ route, navigation }) {
             style={styles.backBtn}
             onPress={() => navigation.goBack()}
             accessibilityRole="button"
-            accessibilityLabel="Go back"
+            accessibilityLabel={t('recipe.goBack')}
           >
             <Ionicons name="arrow-back" size={20} color={colors.textPrimary} />
           </TouchableOpacity>
@@ -179,10 +183,10 @@ export default function RecipeDetailScreen({ route, navigation }) {
 
           <Rise index={2} style={styles.statsRow}>
             {[
-              recipe.prepTime > 0  && { icon: 'cut-outline',         value: `${recipe.prepTime}m`,  label: 'Prep',   color: colors.accent },
-              recipe.cookTime > 0  && { icon: 'flame-outline',       value: `${recipe.cookTime}m`,  label: 'Cook',   color: colors.amber  },
-              recipe.servings > 0  && { icon: 'people-outline',      value: recipe.servings,         label: 'Serves', color: colors.accent },
-              recipe.calories > 0  && { icon: 'stats-chart-outline', value: recipe.calories,         label: 'Cal',    color: colors.amber  },
+              recipe.prepTime > 0  && { icon: 'cut-outline',         value: `${recipe.prepTime}m`,  label: t('recipe.prep'),   color: colors.accent },
+              recipe.cookTime > 0  && { icon: 'flame-outline',       value: `${recipe.cookTime}m`,  label: t('recipe.cook'),   color: colors.amber  },
+              recipe.servings > 0  && { icon: 'people-outline',      value: recipe.servings,         label: t('recipe.serves'), color: colors.accent },
+              recipe.calories > 0  && { icon: 'stats-chart-outline', value: recipe.calories,         label: t('recipe.cal'),    color: colors.amber  },
             ].filter(Boolean).map((stat) => (
               <View key={stat.label} style={styles.statCard}>
                 <Ionicons name={stat.icon} size={18} color={stat.color} />
@@ -194,20 +198,20 @@ export default function RecipeDetailScreen({ route, navigation }) {
 
           {recipe.summary ? (
             <Rise index={3} style={styles.recipeSection}>
-              <Text style={styles.recipeSectionTitle}>About</Text>
+              <Text style={styles.recipeSectionTitle}>{t('recipe.about')}</Text>
               <Text style={styles.recipeSummaryText}>{recipe.summary}</Text>
             </Rise>
           ) : null}
 
           {recipe.ingredients?.length > 0 && (
             <Rise index={4} style={styles.recipeSection}>
-              <Text style={styles.recipeSectionTitle}>Ingredients</Text>
+              <Text style={styles.recipeSectionTitle}>{t('recipe.ingredients')}</Text>
               <View style={styles.ingredientList}>
                 {recipe.ingredients.map((ingredient, index) => (
                   <View key={index} style={styles.ingredientRow}>
                     <View style={styles.ingredientBullet} />
                     <Text style={styles.ingredientText}>
-                      <Text style={styles.ingredientAmount}>{ingredient.amount} {ingredient.unit} </Text>
+                      <Text style={styles.ingredientAmount}>{ingredient.amount} {unitName(ingredient.unit)} </Text>
                       {ingredient.name}
                     </Text>
                   </View>
@@ -218,7 +222,7 @@ export default function RecipeDetailScreen({ route, navigation }) {
 
           {recipe.instructions?.length > 0 && (
             <Rise index={5} style={styles.recipeSection}>
-              <Text style={styles.recipeSectionTitle}>Instructions</Text>
+              <Text style={styles.recipeSectionTitle}>{t('recipe.instructions')}</Text>
               <View style={styles.instructionList}>
                 {recipe.instructions.map((step, index) => (
                   <View key={index} style={styles.instructionStep}>
@@ -250,7 +254,7 @@ export default function RecipeDetailScreen({ route, navigation }) {
             accessibilityRole="button"
           >
             <Ionicons name="bookmark" size={compactActions ? 16 : 18} color="#fff" />
-            <Text style={styles.saveButtonLabel}>Save to My Recipes</Text>
+            <Text style={styles.saveButtonLabel}>{t('recipe.saveToMine')}</Text>
           </TouchableOpacity>
         ) : compactActions ? (
           // Compact: one row of icon-only pills, matching the nav dropping its labels
@@ -261,7 +265,7 @@ export default function RecipeDetailScreen({ route, navigation }) {
                 onPress={handleAddToGrocery}
                 disabled={groceryLoading}
                 accessibilityRole="button"
-                accessibilityLabel="Add ingredients to grocery list"
+                accessibilityLabel={t('recipe.addIngredientsA11y')}
               >
                 {groceryLoading
                   ? <ActivityIndicator size="small" color={colors.accent} />
@@ -274,7 +278,7 @@ export default function RecipeDetailScreen({ route, navigation }) {
                 style={[styles.editButton, styles.buttonCompact]}
                 onPress={() => navigation.navigate('AddRecipe', { recipe })}
                 accessibilityRole="button"
-                accessibilityLabel="Edit recipe"
+                accessibilityLabel={t('recipe.editRecipeA11y')}
               >
                 <Ionicons name="pencil-outline" size={16} color={colors.accent} />
               </TouchableOpacity>
@@ -283,7 +287,7 @@ export default function RecipeDetailScreen({ route, navigation }) {
               style={[styles.deleteButton, styles.buttonCompact]}
               onPress={handleDelete}
               accessibilityRole="button"
-              accessibilityLabel="Delete recipe"
+              accessibilityLabel={t('recipes.deleteRecipeA11y')}
             >
               <Ionicons name="trash-outline" size={16} color={colors.danger} />
             </TouchableOpacity>
@@ -296,13 +300,13 @@ export default function RecipeDetailScreen({ route, navigation }) {
                 onPress={handleAddToGrocery}
                 disabled={groceryLoading}
                 accessibilityRole="button"
-                accessibilityLabel="Add ingredients to grocery list"
+                accessibilityLabel={t('recipe.addIngredientsA11y')}
               >
                 {groceryLoading
                   ? <ActivityIndicator size="small" color={colors.accent} />
                   : <Ionicons name="cart-outline" size={16} color={colors.accent} />
                 }
-                <Text style={styles.addToGroceryButtonLabel}>Add to Grocery List</Text>
+                <Text style={styles.addToGroceryButtonLabel}>{t('recipe.addToGrocery')}</Text>
               </TouchableOpacity>
             )}
             <View style={styles.actionRow}>
@@ -313,12 +317,12 @@ export default function RecipeDetailScreen({ route, navigation }) {
                   accessibilityRole="button"
                 >
                   <Ionicons name="pencil-outline" size={18} color={colors.accent} />
-                  <Text style={styles.editButtonLabel}>Edit Recipe</Text>
+                  <Text style={styles.editButtonLabel}>{t('recipe.editRecipe')}</Text>
                 </TouchableOpacity>
               )}
               <TouchableOpacity style={[styles.deleteButton, isOwnCustomRecipe && { flex: 1 }]} onPress={handleDelete} accessibilityRole="button">
                 <Ionicons name="trash-outline" size={18} color={colors.danger} />
-                <Text style={styles.deleteButtonLabel}>Delete</Text>
+                <Text style={styles.deleteButtonLabel}>{t('common.delete')}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -331,15 +335,15 @@ export default function RecipeDetailScreen({ route, navigation }) {
             <View style={styles.grocerySheetHandle} />
             <Text style={styles.grocerySheetTitle}>
               {groceryToAdd.length > 0
-                ? `Add ${groceryToAdd.length} ingredient${groceryToAdd.length !== 1 ? 's' : ''}`
-                : 'Nothing to add'}
+                ? t('recipe.addIngredients', { count: groceryToAdd.length })
+                : t('recipe.nothingToAdd')}
             </Text>
 
             {groceryCovered > 0 && (
               <View style={styles.groceryCoveredNote}>
                 <Ionicons name="checkmark-circle-outline" size={14} color={colors.sage} />
                 <Text style={styles.groceryCoveredText}>
-                  {groceryCovered} already in pantry or on your list
+                  {t('recipe.alreadyCovered', { count: groceryCovered })}
                 </Text>
               </View>
             )}
@@ -359,18 +363,18 @@ export default function RecipeDetailScreen({ route, navigation }) {
                 </ScrollView>
                 <View style={styles.groceryActions}>
                   <TouchableOpacity style={[styles.groceryCancelBtn, { flex: 1 }]} onPress={() => setGroceryModal(false)}>
-                    <Text style={styles.groceryCancelLabel}>Cancel</Text>
+                    <Text style={styles.groceryCancelLabel}>{t('common.cancel')}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity style={[styles.groceryConfirmBtn, { flex: 2 }]} onPress={handleConfirmGrocery}>
                     <Ionicons name="cart" size={16} color="#fff" />
-                    <Text style={styles.groceryConfirmLabel}>Add to Grocery List</Text>
+                    <Text style={styles.groceryConfirmLabel}>{t('recipe.addToGrocery')}</Text>
                   </TouchableOpacity>
                 </View>
               </>
             ) : (
               <View style={styles.groceryActions}>
                 <TouchableOpacity style={[styles.groceryCancelBtn, { flex: 1 }]} onPress={() => setGroceryModal(false)}>
-                  <Text style={styles.groceryCancelLabel}>Done</Text>
+                  <Text style={styles.groceryCancelLabel}>{t('common.done')}</Text>
                 </TouchableOpacity>
               </View>
             )}

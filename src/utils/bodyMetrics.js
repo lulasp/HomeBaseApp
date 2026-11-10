@@ -1,18 +1,20 @@
+import { t } from '../i18n';
+
 // Body metrics — BMR / TDEE / calorie target / BMI / goal progress.
 // Metric units only (kg, cm). See docs/weight-tracker.md.
 
 export const ACTIVITY_LEVELS = [
-  { key: 'sedentary',  label: 'Sedentary',   hint: 'Little or no exercise',    factor: 1.2 },
-  { key: 'light',      label: 'Light',       hint: 'Exercise 1–3 days/week',   factor: 1.375 },
-  { key: 'moderate',   label: 'Moderate',    hint: 'Exercise 3–5 days/week',   factor: 1.55 },
-  { key: 'active',     label: 'Active',      hint: 'Exercise 6–7 days/week',   factor: 1.725 },
-  { key: 'veryActive', label: 'Very active', hint: 'Physical job or 2×/day',   factor: 1.9 },
+  { key: 'sedentary',  get label() { return t('body.activity.sedentary'); },   get hint() { return t('body.activity.sedentaryHint'); },    factor: 1.2 },
+  { key: 'light',      get label() { return t('body.activity.light'); },       get hint() { return t('body.activity.lightHint'); },   factor: 1.375 },
+  { key: 'moderate',   get label() { return t('body.activity.moderate'); },    get hint() { return t('body.activity.moderateHint'); },   factor: 1.55 },
+  { key: 'active',     get label() { return t('body.activity.active'); },      get hint() { return t('body.activity.activeHint'); },   factor: 1.725 },
+  { key: 'veryActive', get label() { return t('body.activity.veryActive'); }, get hint() { return t('body.activity.veryActiveHint'); },   factor: 1.9 },
 ];
 
 export const GOALS = [
-  { key: 'lose',     label: 'Lose' },
-  { key: 'maintain', label: 'Maintain' },
-  { key: 'gain',     label: 'Gain' },
+  { key: 'lose',     get label() { return t('body.goalLose'); } },
+  { key: 'maintain', get label() { return t('body.goalMaintain'); } },
+  { key: 'gain',     get label() { return t('body.goalGain'); } },
 ];
 
 export const WEEKLY_RATES = [0.25, 0.5, 0.75];
@@ -84,10 +86,10 @@ export const calcBMI = (weightKg, heightCm) => {
 // WHO adult bands. `tone` maps to a theme token.
 export const bmiCategory = (bmi) => {
   if (bmi == null) return null;
-  if (bmi < 18.5) return { label: 'Underweight', tone: 'warning' };
-  if (bmi < 25)   return { label: 'Healthy',     tone: 'success' };
-  if (bmi < 30)   return { label: 'Overweight',  tone: 'warning' };
-  return            { label: 'Obese',       tone: 'danger' };
+  if (bmi < 18.5) return { label: t('body.underweight'), tone: 'warning' };
+  if (bmi < 25)   return { label: t('body.healthy'),     tone: 'success' };
+  if (bmi < 30)   return { label: t('body.overweight'),  tone: 'warning' };
+  return            { label: t('body.obese'),       tone: 'danger' };
 };
 
 // Logs sorted oldest → newest, invalid entries dropped.

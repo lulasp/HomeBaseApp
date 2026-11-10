@@ -5,23 +5,7 @@ when work begins.
 
 ## 1. Language: English or Portuguese
 
-Let each user choose to see the app in English or Portuguese.
-
-- Today every string is hardcoded in English and no i18n library is installed.
-  Covers every screen in `src/screens/` plus the shared components, alerts and
-  toasts.
-- Open questions:
-  - Is the language per user or per household? Per user seems right.
-  - European or Brazilian Portuguese?
-  - Should the first launch default to the phone's language
-    (`expo-localization`)?
-  - Should dates and currency format follow the language? `date-fns` has
-    locales for this.
-  - Should the AI assistant reply in the chosen language?
-- Likely approach: `i18next` + `react-i18next`, with one file of strings per
-  language, a language picker in settings, and the choice saved on the user's
-  profile. Install with `npx expo install`.
-- Large but mechanical: do it one screen at a time.
+Built on branch `appTranslations`. See `docs/translations.md`.
 
 ## 2. Finances: select several items and delete them together
 

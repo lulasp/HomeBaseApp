@@ -18,6 +18,12 @@ import { Rise, useEntranceReplay } from '../../components/Motion';
 import AddRecipeScreen from '../recipes/AddRecipeScreen';
 import useBodyGoals from '../../hooks/useBodyGoals';
 import useVisualViewportHeight from '../../hooks/useVisualViewportHeight';
+import { t } from '../../i18n';
+import { useLanguage } from '../../context/LanguageContext';
+import { unitName } from '../../utils/categories';
+
+// Meal types are stored in English ('Breakfast'); show them translated.
+const mealLabel = (mealType) => t(`home.meals.${mealType}`);
 
 const getWeekKey = (date) => format(startOfWeek(date, { weekStartsOn: 1 }), 'yyyy-MM-dd');
 
@@ -26,6 +32,7 @@ const MEAL_HOURS   = { Breakfast: 10, Lunch: 13, Dinner: 20, Snack: 23 };
 const AUTO_COOK_H  = 4;
 
 const MealTimerBadge = memo(({ status, colors, small }) => {
+  useLanguage();
   if (!status) return null;
 
   const base = { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 3 };
@@ -35,7 +42,7 @@ const MealTimerBadge = memo(({ status, colors, small }) => {
     return (
       <View style={base}>
         <Ionicons name="checkmark-circle" size={small ? 10 : 12} color={colors.sage} />
-        {!small && <Text style={txt(colors.sage)}>Cooked</Text>}
+        {!small && <Text style={txt(colors.sage)}>{t('nutrition.cooked')}</Text>}
       </View>
     );
 
@@ -61,7 +68,7 @@ const MealTimerBadge = memo(({ status, colors, small }) => {
     return (
       <View style={base}>
         <Ionicons name="alert-circle-outline" size={small ? 10 : 12} color={colors.danger} />
-        {!small && <Text style={txt(colors.danger)}>Missed</Text>}
+        {!small && <Text style={txt(colors.danger)}>{t('nutrition.missed')}</Text>}
       </View>
     );
 
@@ -71,6 +78,7 @@ const MealTimerBadge = memo(({ status, colors, small }) => {
 export default function NutritionScreen({ navigation }) {
   const { householdId, user } = useAuth();
   const { colors } = useTheme();
+  useLanguage();
   const navScrollProps = useNavScrollProps();
   const { showOptions, showConfirm, showAlert } = useAlert();
   const { notify } = useNotification();
@@ -159,16 +167,16 @@ export default function NutritionScreen({ navigation }) {
     if (existingMeal) {
       const cookOption = existingMeal.cooked
         ? null
-        : { label: existingMeal.pantryItemId ? 'Mark as Eaten' : 'Mark as Cooked', value: 'cook' };
+        : { label: existingMeal.pantryItemId ? t('nutrition.markEaten') : t('nutrition.markCooked'), value: 'cook' };
 
       const action = await showOptions({
         title: existingMeal.name,
         type: 'warning',
         options: [
           ...(cookOption ? [cookOption] : []),
-          { label: 'Replace', value: 'replace' },
-          { label: 'Remove', value: 'remove', style: 'destructive' },
-          { label: 'Cancel', value: null, style: 'cancel' },
+          { label: t('nutrition.replace'), value: 'replace' },
+          { label: t('nutrition.remove'), value: 'remove', style: 'destructive' },
+          { label: t('common.cancel'), value: null, style: 'cancel' },
         ],
       });
       if (action === 'cook') {
@@ -182,7 +190,7 @@ export default function NutritionScreen({ navigation }) {
             const item   = pantryItems.find((p) => p.id === existingMeal.pantryItemId) ?? null;
             if (item && amount > 0) {
               deductions.push({ pantryItemId: item.id, amount });
-              confirmMessage = `Deduct ${amount} ${existingMeal.unit || item.unit || 'pcs'} of "${item.name}" from the pantry?`;
+              confirmMessage = t('nutrition.deductOne', { amount: `${amount} ${unitName(existingMeal.unit || item.unit || 'pcs')}`, name: item.name });
             }
           } else {
             const recipe = existingMeal.recipeId
@@ -210,16 +218,16 @@ export default function NutritionScreen({ navigation }) {
                   match = byName[0];
                 } else if (byName.length > 1) {
                   const chosen = await showOptions({
-                    title: `Which "${ing.name}"?`,
-                    message: `Multiple pantry items match "${ing.name}" (${ing.amount} ${ing.unit}). Pick one or skip.`,
+                    title: t('nutrition.whichItem', { name: ing.name }),
+                    message: t('nutrition.multipleMatch', { name: ing.name, amount: `${ing.amount} ${unitName(ing.unit)}` }),
                     type: 'info',
                     options: [
                       ...byName.map((p) => ({
-                        label: `${p.name}  ·  ${p.quantity} ${p.unit}`,
+                        label: `${p.name}  ·  ${p.quantity} ${unitName(p.unit)}`,
                         value: p.id,
                       })),
-                      { label: 'Skip this ingredient', value: 'skip' },
-                      { label: 'Cancel', value: null, style: 'cancel' },
+                      { label: t('nutrition.skipIngredient'), value: 'skip' },
+                      { label: t('common.cancel'), value: null, style: 'cancel' },
                     ],
                   });
                   if (chosen === null) return;
@@ -232,14 +240,14 @@ export default function NutritionScreen({ navigation }) {
               if (match) deductions.push({ pantryItemId: match.id, amount: ing.amount });
             }
 
-            confirmMessage = `Deduct ${deductions.length} pantry item${deductions.length !== 1 ? 's' : ''} used in "${existingMeal.name}"?`;
+            confirmMessage = t('nutrition.deductMany', { count: deductions.length, name: existingMeal.name });
           }
 
           if (deductions.length > 0) {
             const confirmed = await showConfirm({
-              title: 'Mark as Cooked',
+              title: t('nutrition.markCooked'),
               message: confirmMessage,
-              confirmLabel: existingMeal.pantryItemId ? 'Eat' : 'Cook',
+              confirmLabel: existingMeal.pantryItemId ? t('nutrition.eat') : t('nutrition.cook'),
               type: 'info',
             });
             if (!confirmed) return;
@@ -248,25 +256,25 @@ export default function NutritionScreen({ navigation }) {
 
           await setMealSlot(householdId, weekKey, day, mealType, { ...existingMeal, cooked: true });
           notify(
-            existingMeal.pantryItemId ? 'Eaten!' : 'Cooked!',
+            existingMeal.pantryItemId ? t('nutrition.eatenBang') : t('nutrition.cookedBang'),
             deductions.length > 0
-              ? `${deductions.length} pantry item${deductions.length !== 1 ? 's' : ''} deducted.`
-              : `"${existingMeal.name}" marked as done.`,
+              ? t('nutrition.deducted', { count: deductions.length })
+              : t('nutrition.markedDone', { name: existingMeal.name }),
             { type: 'success' },
           );
         } catch (e) {
-          showAlert({ title: 'Error', message: e.message, type: 'error' });
+          showAlert({ title: t('common.error'), message: e.message, type: 'error' });
         }
       } else if (action === 'remove') {
         const confirmed = await showConfirm({
-          title: 'Remove meal',
-          message: `Remove "${existingMeal.name}" from ${day} ${mealType}?`,
+          title: t('nutrition.removeMeal'),
+          message: t('nutrition.removeMealConfirm', { name: existingMeal.name, day, meal: mealLabel(mealType) }),
           type: 'danger',
-          confirmLabel: 'Remove',
+          confirmLabel: t('nutrition.remove'),
         });
         if (!confirmed) return;
         await clearMealSlot(householdId, weekKey, day, mealType);
-        notify('Meal removed', `${existingMeal.name} removed.`, { type: 'info' });
+        notify(t('nutrition.mealRemoved'), t('nutrition.mealRemovedMessage', { name: existingMeal.name }), { type: 'info' });
       } else if (action === 'replace') {
         setIsReplacing(true);
         setSelectedSlot({ day, mealType });
@@ -301,8 +309,8 @@ export default function NutritionScreen({ navigation }) {
       name: recipe.title, recipeId: recipe.id, calories: recipe.calories || 0,
     });
     notify(
-      isReplacing ? 'Meal updated' : 'Meal added',
-      `${recipe.title} added to ${selectedSlot.day} ${selectedSlot.mealType}.`,
+      isReplacing ? t('nutrition.mealUpdated') : t('nutrition.mealAdded'),
+      t('nutrition.addedTo', { name: recipe.title, day: selectedSlot.day, meal: mealLabel(selectedSlot.mealType) }),
       { type: 'success' },
     );
     closeModal();
@@ -322,8 +330,8 @@ export default function NutritionScreen({ navigation }) {
     const mealData = buildPantryMeal();
     await setMealSlot(householdId, weekKey, selectedSlot.day, selectedSlot.mealType, mealData);
     notify(
-      'Meal added',
-      `${mealData.amount} ${mealData.unit} of ${mealData.name} added to ${selectedSlot.day} ${selectedSlot.mealType}.`,
+      t('nutrition.mealAdded'),
+      t('nutrition.portionAddedTo', { amount: `${mealData.amount} ${unitName(mealData.unit)}`, name: mealData.name, day: selectedSlot.day, meal: mealLabel(selectedSlot.mealType) }),
       { type: 'success' },
     );
     closeModal();
@@ -355,10 +363,10 @@ export default function NutritionScreen({ navigation }) {
 
     const movedType = originalSlot.mealType !== selectedSlot.mealType;
     notify(
-      'Meal updated',
+      t('nutrition.mealUpdated'),
       movedType
-        ? `${mealData.name} moved to ${selectedSlot.mealType}.`
-        : `${mealData.name} updated in ${selectedSlot.day} ${selectedSlot.mealType}.`,
+        ? t('nutrition.movedTo', { name: mealData.name, meal: mealLabel(selectedSlot.mealType) })
+        : t('nutrition.updatedIn', { name: mealData.name, day: selectedSlot.day, meal: mealLabel(selectedSlot.mealType) }),
       { type: 'success' },
     );
     closeModal();
@@ -390,7 +398,7 @@ export default function NutritionScreen({ navigation }) {
       });
 
       if (recipeIds.size === 0 && singleProducts.length === 0) {
-        showAlert({ title: 'Nothing planned', message: 'Add meals with saved recipes or pantry products to this week first.', type: 'info' });
+        showAlert({ title: t('nutrition.nothingPlanned'), message: t('nutrition.nothingPlannedMessage'), type: 'info' });
         return;
       }
 
@@ -413,7 +421,7 @@ export default function NutritionScreen({ navigation }) {
       }
 
       if (allIngredients.length === 0) {
-        showAlert({ title: 'No ingredients', message: 'The planned recipes have no ingredients listed.', type: 'info' });
+        showAlert({ title: t('nutrition.noIngredients'), message: t('nutrition.noIngredientsMessage'), type: 'info' });
         return;
       }
 
@@ -434,7 +442,7 @@ export default function NutritionScreen({ navigation }) {
       setShopCoveredCount(covered);
       setShopModalVisible(true);
     } catch (e) {
-      showAlert({ title: 'Error', message: e.message, type: 'error' });
+      showAlert({ title: t('common.error'), message: e.message, type: 'error' });
     } finally {
       setShopLoading(false);
     }
@@ -453,13 +461,13 @@ export default function NutritionScreen({ navigation }) {
         }),
       ));
       notify(
-        'Added to grocery list',
-        `${shopItems.length} ingredient${shopItems.length !== 1 ? 's' : ''} added.`,
+        t('recipe.addedToGrocery'),
+        t('recipe.ingredientsAdded', { count: shopItems.length }),
         { type: 'success' },
       );
       setShopModalVisible(false);
     } catch (e) {
-      showAlert({ title: 'Error', message: e.message, type: 'error' });
+      showAlert({ title: t('common.error'), message: e.message, type: 'error' });
     }
   };
 
@@ -485,8 +493,8 @@ export default function NutritionScreen({ navigation }) {
   // Planned vs the signed-in member's target, e.g. "1,850 / 2,100 cal".
   const isOverTarget = (cal) => calorieTarget != null && cal > calorieTarget;
   const fmtDayCalories = (cal, compact = false) => {
-    if (calorieTarget == null) return `${cal} cal`;
-    return compact ? `${cal}/${calorieTarget}` : `${cal.toLocaleString()} / ${calorieTarget.toLocaleString()} cal`;
+    if (calorieTarget == null) return t('nutrition.calories', { cal });
+    return compact ? `${cal}/${calorieTarget}` : t('nutrition.caloriesOfTarget', { cal: cal.toLocaleString(), target: calorieTarget.toLocaleString() });
   };
 
   const getMealTimerStatus = (dayIndex, mealType, meal) => {
@@ -568,7 +576,7 @@ export default function NutritionScreen({ navigation }) {
         autoCookedRef.current.add(key);
         try {
           await cookMeal(day, mealType, meal);
-          notify('Auto-cooked', `"${meal.name}" was marked as cooked automatically.`, { type: 'info' });
+          notify(t('nutrition.autoCooked'), t('nutrition.autoCookedMessage', { name: meal.name }), { type: 'info' });
         } catch { autoCookedRef.current.delete(key); }
       });
     });
@@ -588,16 +596,16 @@ export default function NutritionScreen({ navigation }) {
   const header = (
     <>
       <View style={styles.headerSection}>
-        <Text style={styles.screenTitle}>Nutrition</Text>
+        <Text style={styles.screenTitle}>{t('nutrition.title')}</Text>
         <View style={styles.weekNavigator}>
           {!isCurrentWeek && (
             <TouchableOpacity
               onPress={() => setCurrentWeek(new Date())}
               style={styles.todayButton}
               accessibilityRole="button"
-              accessibilityLabel="Go to current week"
+              accessibilityLabel={t('nutrition.goToCurrentWeek')}
             >
-              <Text style={styles.todayButtonLabel}>Today</Text>
+              <Text style={styles.todayButtonLabel}>{t('nutrition.today')}</Text>
             </TouchableOpacity>
           )}
           <TouchableOpacity
@@ -605,7 +613,7 @@ export default function NutritionScreen({ navigation }) {
             style={styles.weekArrowButton}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             accessibilityRole="button"
-            accessibilityLabel="Previous week"
+            accessibilityLabel={t('home.previousWeek')}
           >
             <Ionicons name="chevron-back" size={18} color={colors.textPrimary} />
           </TouchableOpacity>
@@ -640,7 +648,7 @@ export default function NutritionScreen({ navigation }) {
             style={styles.weekArrowButton}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             accessibilityRole="button"
-            accessibilityLabel="Next week"
+            accessibilityLabel={t('home.nextWeek')}
           >
             <Ionicons name="chevron-forward" size={18} color={colors.textPrimary} />
           </TouchableOpacity>
@@ -652,7 +660,7 @@ export default function NutritionScreen({ navigation }) {
           <Text style={styles.summaryStatValue}>
             {totalMealsPlanned > 0 ? `${weekProgress.done}/${totalMealsPlanned}` : '—'}
           </Text>
-          <Text style={styles.summaryStatLabel}>Meals done</Text>
+          <Text style={styles.summaryStatLabel}>{t('nutrition.mealsDone')}</Text>
           {totalMealsPlanned > 0 && (
             <View style={styles.progressTrack}>
               <View style={[
@@ -664,11 +672,11 @@ export default function NutritionScreen({ navigation }) {
         </View>
         <View style={styles.summaryStatCard}>
           <Text style={styles.summaryStatValue}>{totalWeekCalories > 0 ? totalWeekCalories.toLocaleString() : '—'}</Text>
-          <Text style={styles.summaryStatLabel}>Cal this week</Text>
+          <Text style={styles.summaryStatLabel}>{t('nutrition.calThisWeek')}</Text>
         </View>
         <View style={styles.summaryStatCard}>
           <Text style={styles.summaryStatValue}>{totalWeekCalories > 0 ? Math.round(totalWeekCalories / 7) : '—'}</Text>
-          <Text style={styles.summaryStatLabel}>Cal / day avg</Text>
+          <Text style={styles.summaryStatLabel}>{t('nutrition.calPerDay')}</Text>
         </View>
       </View>
 
@@ -677,26 +685,26 @@ export default function NutritionScreen({ navigation }) {
           style={styles.targetCard}
           onPress={() => navigation.navigate('BodyGoals')}
           accessibilityRole="button"
-          accessibilityLabel="Open body and goals"
+          accessibilityLabel={t('nutrition.openBodyGoals')}
         >
           <View style={styles.targetIcon}>
             <Ionicons name="body-outline" size={18} color={colors.accent} />
           </View>
           {calorieTarget != null ? (
             <View style={{ flex: 1 }}>
-              <Text style={styles.targetValue}>{calorieTarget.toLocaleString()} kcal / day</Text>
+              <Text style={styles.targetValue}>{t('nutrition.kcalPerDay', { kcal: calorieTarget.toLocaleString() })}</Text>
               <Text style={styles.targetMeta}>
-                Your target · {Math.round(body.currentWeight * 10) / 10} kg
+                {t('nutrition.yourTarget', { weight: Math.round(body.currentWeight * 10) / 10 })}
                 {body.profile?.goal && body.profile.goal !== 'maintain'
-                  ? ` · ${body.profile.goal === 'lose' ? 'losing' : 'gaining'} ${body.profile.weeklyRateKg} kg/wk`
-                  : ' · maintaining'}
+                  ? t(body.profile.goal === 'lose' ? 'nutrition.losing' : 'nutrition.gaining', { rate: body.profile.weeklyRateKg })
+                  : t('nutrition.maintaining')}
               </Text>
             </View>
           ) : (
             <View style={{ flex: 1 }}>
-              <Text style={styles.targetValue}>Body & goals</Text>
+              <Text style={styles.targetValue}>{t('nutrition.bodyGoals')}</Text>
               <Text style={styles.targetMeta}>
-                {body.profile ? 'Log your weight' : 'Add your height, weight and goal'} to get a daily calorie target
+                {body.profile ? t('nutrition.logWeightHint') : t('nutrition.addBodyHint')}
               </Text>
             </View>
           )}
@@ -709,18 +717,18 @@ export default function NutritionScreen({ navigation }) {
         onPress={handleGenerateGroceryList}
         disabled={shopLoading}
         accessibilityRole="button"
-        accessibilityLabel="Add week's ingredients to grocery list"
+        accessibilityLabel={t('nutrition.addWeekToGrocery')}
       >
         {shopLoading
           ? <ActivityIndicator size="small" color={colors.accent} />
           : <Ionicons name="cart-outline" size={15} color={colors.accent} />
         }
-        <Text style={styles.generateShopButtonLabel}>Add week's ingredients to grocery list</Text>
+        <Text style={styles.generateShopButtonLabel}>{t('nutrition.addWeekToGrocery')}</Text>
       </TouchableOpacity>
 
       {totalMealsPlanned > 0 && (
         <View style={styles.chartSection}>
-          <Text style={styles.chartHeading}>Calories / day</Text>
+          <Text style={styles.chartHeading}>{t('nutrition.caloriesPerDay')}</Text>
           <View style={styles.chartRow}>
             {FULL_DAYS.map((day, dayIndex) => {
               const date    = addDays(weekStart, dayIndex);
@@ -835,7 +843,7 @@ export default function NutritionScreen({ navigation }) {
                 ]}
                 onPress={() => handleSlotPress(day, mealType)}
                 accessibilityRole="button"
-                accessibilityLabel={`${day} ${mealType}: ${meal ? `${meal.name}${isCooked ? ', cooked' : isMissed ? ', missed' : ''}` : 'empty, tap to add'}`}
+                accessibilityLabel={t(meal ? (isCooked ? 'nutrition.slotA11yCooked' : isMissed ? 'nutrition.slotA11yMissed' : 'nutrition.slotA11y') : 'nutrition.slotA11yEmpty', { day, meal: mealLabel(mealType), name: meal?.name })}
               >
                 <Text style={[
                   styles.mealTypeLabel,
@@ -843,7 +851,7 @@ export default function NutritionScreen({ navigation }) {
                   isCooked && { color: colors.sage },
                   isMissed && { color: colors.danger },
                 ]}>
-                  {mealType}
+                  {mealLabel(mealType)}
                 </Text>
                 {meal ? (
                   <>
@@ -860,7 +868,7 @@ export default function NutritionScreen({ navigation }) {
                     </Text>
                     {meal.pantryItemId && (
                       <Text style={styles.mealPortion} numberOfLines={1}>
-                        {meal.amount ?? 1} {meal.unit || 'pcs'}
+                        {meal.amount ?? 1} {unitName(meal.unit || 'pcs')}
                       </Text>
                     )}
                     <MealTimerBadge status={timerStatus} colors={colors} />
@@ -868,7 +876,7 @@ export default function NutritionScreen({ navigation }) {
                 ) : (
                   <View style={styles.mealEmptyRow}>
                     <Ionicons name="add" size={12} color={colors.textTertiary} />
-                    <Text style={styles.mealEmptyLabel}>Add</Text>
+                    <Text style={styles.mealEmptyLabel}>{t('nutrition.add')}</Text>
                   </View>
                 )}
               </TouchableOpacity>
@@ -948,7 +956,7 @@ export default function NutritionScreen({ navigation }) {
               return (
                 <View key={mealType} style={styles.desktopGridRow}>
                   <View style={[styles.desktopMealLabelCell, { backgroundColor: mealColor.bg }]}>
-                    <Text style={[styles.desktopMealLabel, { color: mealColor.text }]}>{mealType}</Text>
+                    <Text style={[styles.desktopMealLabel, { color: mealColor.text }]}>{mealLabel(mealType)}</Text>
                   </View>
                   {FULL_DAYS.map((day, dayIndex) => {
                     const date        = addDays(weekStart, dayIndex);
@@ -970,7 +978,7 @@ export default function NutritionScreen({ navigation }) {
                         ]}
                         onPress={() => handleSlotPress(day, mealType)}
                         accessibilityRole="button"
-                        accessibilityLabel={`${day} ${mealType}: ${meal ? `${meal.name}${isCooked ? ', cooked' : isMissed ? ', missed' : ''}` : 'empty, tap to add'}`}
+                        accessibilityLabel={t(meal ? (isCooked ? 'nutrition.slotA11yCooked' : isMissed ? 'nutrition.slotA11yMissed' : 'nutrition.slotA11y') : 'nutrition.slotA11yEmpty', { day, meal: mealLabel(mealType), name: meal?.name })}
                       >
                         {meal ? (
                           <>
@@ -1015,15 +1023,15 @@ export default function NutritionScreen({ navigation }) {
             <View style={styles.sheetDragHandle} />
             <Text style={styles.sheetTitle}>
               {shopItems.length > 0
-                ? `Add ${shopItems.length} ingredient${shopItems.length !== 1 ? 's' : ''}`
-                : 'Nothing to add'}
+                ? t('recipe.addIngredients', { count: shopItems.length })
+                : t('recipe.nothingToAdd')}
             </Text>
 
             {shopCoveredCount > 0 && (
               <View style={styles.shopCoveredNote}>
                 <Ionicons name="checkmark-circle-outline" size={14} color={colors.sage} />
                 <Text style={styles.shopCoveredNoteText}>
-                  {shopCoveredCount} already in pantry or on your list
+                  {t('recipe.alreadyCovered', { count: shopCoveredCount })}
                 </Text>
               </View>
             )}
@@ -1046,14 +1054,14 @@ export default function NutritionScreen({ navigation }) {
                     style={[styles.cancelButton, { flex: 1 }]}
                     onPress={() => setShopModalVisible(false)}
                   >
-                    <Text style={styles.cancelButtonLabel}>Cancel</Text>
+                    <Text style={styles.cancelButtonLabel}>{t('common.cancel')}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={[styles.updateButton, { flex: 2 }]}
                     onPress={handleConfirmShop}
                   >
                     <Ionicons name="cart" size={16} color="#fff" />
-                    <Text style={styles.updateButtonLabel}>Add to Grocery List</Text>
+                    <Text style={styles.updateButtonLabel}>{t('recipe.addToGrocery')}</Text>
                   </TouchableOpacity>
                 </View>
               </>
@@ -1063,7 +1071,7 @@ export default function NutritionScreen({ navigation }) {
                   style={[styles.cancelButton, { flex: 1 }]}
                   onPress={() => setShopModalVisible(false)}
                 >
-                  <Text style={styles.cancelButtonLabel}>Done</Text>
+                  <Text style={styles.cancelButtonLabel}>{t('common.done')}</Text>
                 </TouchableOpacity>
               </View>
             )}
@@ -1097,7 +1105,7 @@ export default function NutritionScreen({ navigation }) {
                     accessibilityState={{ selected: isActive }}
                   >
                     <Text style={[styles.mealTypeChipLabel, isActive && { color: mtColor.text }]}>
-                      {mt}
+                      {mealLabel(mt)}
                     </Text>
                   </TouchableOpacity>
                 );
@@ -1118,7 +1126,7 @@ export default function NutritionScreen({ navigation }) {
                   }}
                   activeOpacity={0.8}
                   accessibilityRole="button"
-                  accessibilityLabel="Pick a recipe"
+                  accessibilityLabel={t('nutrition.pickRecipe')}
                   accessibilityState={{ expanded: recipeDropdownOpen }}
                 >
                   <View style={styles.dropdownTriggerLeft}>
@@ -1128,7 +1136,7 @@ export default function NutritionScreen({ navigation }) {
                       color={pendingRecipe ? colors.accent : colors.textSecondary}
                     />
                     <Text style={[styles.dropdownTriggerLabel, pendingRecipe && { color: colors.accent }]} numberOfLines={1}>
-                      {pendingRecipe ? pendingRecipe.title : 'Pick a recipe'}
+                      {pendingRecipe ? pendingRecipe.title : t('nutrition.pickRecipe')}
                     </Text>
                   </View>
                   <View style={styles.dropdownTriggerRight}>
@@ -1148,7 +1156,7 @@ export default function NutritionScreen({ navigation }) {
                       <Ionicons name="search-outline" size={14} color={colors.textTertiary} />
                       <TextInput
                         style={[styles.dropdownSearchInput, { color: colors.textPrimary }]}
-                        placeholder="Search recipes…"
+                        placeholder={t('recipes.searchPlaceholder')}
                         placeholderTextColor={colors.textTertiary}
                         value={recipeSearch}
                         onChangeText={setRecipeSearch}
@@ -1172,7 +1180,7 @@ export default function NutritionScreen({ navigation }) {
                       keyboardShouldPersistTaps="handled"
                       ListEmptyComponent={
                         <Text style={[styles.dropdownEmpty, { color: colors.textTertiary }]}>
-                          No recipes match "{recipeSearch}"
+                          {t('nutrition.noRecipesMatch', { query: recipeSearch })}
                         </Text>
                       }
                       renderItem={({ item: recipe, index }) => {
@@ -1196,7 +1204,7 @@ export default function NutritionScreen({ navigation }) {
                               }
                             }}
                             accessibilityRole="button"
-                            accessibilityLabel={`Select ${recipe.title}`}
+                            accessibilityLabel={t('nutrition.select', { name: recipe.title })}
                             accessibilityState={{ selected: isSelected }}
                           >
                             <Text style={[styles.dropdownItemTitle, { color: isSelected ? colors.accent : colors.textPrimary }]} numberOfLines={1}>
@@ -1225,7 +1233,7 @@ export default function NutritionScreen({ navigation }) {
                 {savedRecipes.length > 0 && (
                   <View style={[styles.dividerRow, { marginBottom: 12 }]}>
                     <View style={styles.dividerLine} />
-                    <Text style={styles.dividerLabel}>or</Text>
+                    <Text style={styles.dividerLabel}>{t('nutrition.or')}</Text>
                     <View style={styles.dividerLine} />
                   </View>
                 )}
@@ -1240,7 +1248,7 @@ export default function NutritionScreen({ navigation }) {
                   }}
                   activeOpacity={0.8}
                   accessibilityRole="button"
-                  accessibilityLabel="Pick a product from the pantry"
+                  accessibilityLabel={t('nutrition.pickPantryA11y')}
                   accessibilityState={{ expanded: pantryDropdownOpen }}
                 >
                   <View style={styles.dropdownTriggerLeft}>
@@ -1250,7 +1258,7 @@ export default function NutritionScreen({ navigation }) {
                       color={pendingPantryItem ? colors.accent : colors.textSecondary}
                     />
                     <Text style={[styles.dropdownTriggerLabel, pendingPantryItem && { color: colors.accent }]} numberOfLines={1}>
-                      {pendingPantryItem ? pendingPantryItem.name : 'Pick from pantry'}
+                      {pendingPantryItem ? pendingPantryItem.name : t('nutrition.pickFromPantry')}
                     </Text>
                   </View>
                   <View style={styles.dropdownTriggerRight}>
@@ -1269,7 +1277,7 @@ export default function NutritionScreen({ navigation }) {
                       <Ionicons name="search-outline" size={14} color={colors.textTertiary} />
                       <TextInput
                         style={[styles.dropdownSearchInput, { color: colors.textPrimary }]}
-                        placeholder="Search pantry…"
+                        placeholder={t('pantry.searchPlaceholder')}
                         placeholderTextColor={colors.textTertiary}
                         value={pantrySearch}
                         onChangeText={setPantrySearch}
@@ -1293,7 +1301,7 @@ export default function NutritionScreen({ navigation }) {
                       keyboardShouldPersistTaps="handled"
                       ListEmptyComponent={
                         <Text style={[styles.dropdownEmpty, { color: colors.textTertiary }]}>
-                          No pantry items match "{pantrySearch}"
+                          {t('nutrition.noPantryMatch', { query: pantrySearch })}
                         </Text>
                       }
                       renderItem={({ item, index }) => {
@@ -1315,14 +1323,14 @@ export default function NutritionScreen({ navigation }) {
                               setPantrySearch('');
                             }}
                             accessibilityRole="button"
-                            accessibilityLabel={`Select ${item.name}`}
+                            accessibilityLabel={t('nutrition.select', { name: item.name })}
                             accessibilityState={{ selected: isSelected }}
                           >
                             <Text style={[styles.dropdownItemTitle, { color: isSelected ? colors.accent : colors.textPrimary }]} numberOfLines={1}>
                               {item.name}
                             </Text>
                             <Text style={[styles.dropdownItemCalories, { color: colors.textSecondary }]}>
-                              {item.quantity} {item.unit}
+                              {item.quantity} {unitName(item.unit)}
                             </Text>
                             {isSelected && (
                               <Ionicons name="checkmark" size={16} color={colors.accent} style={{ marginLeft: 6 }} />
@@ -1337,7 +1345,7 @@ export default function NutritionScreen({ navigation }) {
                 {pendingPantryItem && !pantryDropdownOpen && (
                   <View style={styles.pantryFieldsRow}>
                     <View style={styles.pantryField}>
-                      <Text style={styles.pantryFieldLabel}>Amount ({pendingPantryItem.unit || 'pcs'})</Text>
+                      <Text style={styles.pantryFieldLabel}>{t('nutrition.amountWithUnit', { unit: unitName(pendingPantryItem.unit || 'pcs') })}</Text>
                       <TextInput
                         style={styles.pantryFieldInput}
                         value={pantryAmount}
@@ -1345,11 +1353,11 @@ export default function NutritionScreen({ navigation }) {
                         keyboardType="numeric"
                         placeholder="1"
                         placeholderTextColor={colors.textTertiary}
-                        accessibilityLabel="Amount"
+                        accessibilityLabel={t('nutrition.amount')}
                       />
                     </View>
                     <View style={styles.pantryField}>
-                      <Text style={styles.pantryFieldLabel}>Calories (optional)</Text>
+                      <Text style={styles.pantryFieldLabel}>{t('nutrition.caloriesOptional')}</Text>
                       <TextInput
                         style={styles.pantryFieldInput}
                         value={pantryCalories}
@@ -1357,7 +1365,7 @@ export default function NutritionScreen({ navigation }) {
                         keyboardType="numeric"
                         placeholder="—"
                         placeholderTextColor={colors.textTertiary}
-                        accessibilityLabel="Calories"
+                        accessibilityLabel={t('nutrition.caloriesA11y')}
                       />
                     </View>
                   </View>
@@ -1368,17 +1376,17 @@ export default function NutritionScreen({ navigation }) {
             {/* Add new recipe — navigates to full recipe creation */}
             <View style={styles.dividerRow}>
               <View style={styles.dividerLine} />
-              <Text style={styles.dividerLabel}>or</Text>
+              <Text style={styles.dividerLabel}>{t('nutrition.or')}</Text>
               <View style={styles.dividerLine} />
             </View>
             <TouchableOpacity
               style={styles.newRecipeButton}
               onPress={handleAddNewRecipe}
               accessibilityRole="button"
-              accessibilityLabel="Add a new recipe"
+              accessibilityLabel={t('nutrition.addNewRecipe')}
             >
               <Ionicons name="add-circle-outline" size={18} color={colors.accent} />
-              <Text style={styles.newRecipeButtonLabel}>Add a new recipe</Text>
+              <Text style={styles.newRecipeButtonLabel}>{t('nutrition.addNewRecipe')}</Text>
             </TouchableOpacity>
 
             <View style={styles.modalActions}>
@@ -1387,7 +1395,7 @@ export default function NutritionScreen({ navigation }) {
                 onPress={closeModal}
                 accessibilityRole="button"
               >
-                <Text style={styles.cancelButtonLabel}>Cancel</Text>
+                <Text style={styles.cancelButtonLabel}>{t('common.cancel')}</Text>
               </TouchableOpacity>
 
               {isReplacing ? (
@@ -1396,18 +1404,18 @@ export default function NutritionScreen({ navigation }) {
                   onPress={handleConfirmUpdate}
                   disabled={!canUpdate}
                   accessibilityRole="button"
-                  accessibilityLabel="Update meal"
+                  accessibilityLabel={t('nutrition.updateMeal')}
                 >
-                  <Text style={styles.updateButtonLabel}>Update</Text>
+                  <Text style={styles.updateButtonLabel}>{t('nutrition.update')}</Text>
                 </TouchableOpacity>
               ) : pendingPantryItem ? (
                 <TouchableOpacity
                   style={[styles.updateButton, { flex: 1 }]}
                   onPress={handleAddPantryMeal}
                   accessibilityRole="button"
-                  accessibilityLabel={`Add ${pendingPantryItem.name} to the meal plan`}
+                  accessibilityLabel={t('nutrition.addToPlanA11y', { name: pendingPantryItem.name })}
                 >
-                  <Text style={styles.updateButtonLabel}>Add</Text>
+                  <Text style={styles.updateButtonLabel}>{t('common.add')}</Text>
                 </TouchableOpacity>
               ) : null}
             </View>

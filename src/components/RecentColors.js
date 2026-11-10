@@ -3,6 +3,8 @@ import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../context/ThemeContext';
 import { spacing, radius, type } from '../theme/colors';
+import { t } from '../i18n';
+import { useLanguage } from '../context/LanguageContext';
 
 const SIZE = 28;
 const BADGE = 18;
@@ -11,6 +13,7 @@ const BADGE = 18;
 // each; "Done" hides them again. Renders nothing when the list is empty.
 export default function RecentColors({ colors: recents, selected, onSelect, onRemove }) {
   const { colors } = useTheme();
+  useLanguage();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const [removing, setRemoving] = useState(false);
 
@@ -23,13 +26,13 @@ export default function RecentColors({ colors: recents, selected, onSelect, onRe
   return (
     <View>
       <View style={styles.header}>
-        <Text style={styles.label}>RECENT</Text>
+        <Text style={styles.label}>{t('components.recent')}</Text>
         {removing ? (
           <TouchableOpacity onPress={() => setRemoving(false)} accessibilityRole="button" hitSlop={8}>
-            <Text style={styles.done}>Done</Text>
+            <Text style={styles.done}>{t('components.done')}</Text>
           </TouchableOpacity>
         ) : (
-          <Text style={styles.hint}>Long-press to remove</Text>
+          <Text style={styles.hint}>{t('components.longPressRemove')}</Text>
         )}
       </View>
       <View style={styles.row}>
@@ -42,7 +45,7 @@ export default function RecentColors({ colors: recents, selected, onSelect, onRe
               onPress={() => (removing ? onRemove(c) : onSelect(c))}
               onLongPress={() => setRemoving(true)}
               accessibilityRole="button"
-              accessibilityLabel={removing ? `Remove recent color ${c}` : `Select recent color ${c}`}
+              accessibilityLabel={removing ? t('components.removeRecentColour', { color: c }) : t('components.selectRecentColour', { color: c })}
             />
             {removing && (
               <TouchableOpacity
@@ -50,7 +53,7 @@ export default function RecentColors({ colors: recents, selected, onSelect, onRe
                 onPress={() => onRemove(c)}
                 hitSlop={6}
                 accessibilityRole="button"
-                accessibilityLabel={`Remove recent color ${c}`}
+                accessibilityLabel={t('components.removeRecentColour', { color: c })}
               >
                 <Ionicons name="close" size={12} color={colors.accentForeground} />
               </TouchableOpacity>

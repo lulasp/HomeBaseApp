@@ -20,7 +20,7 @@ import {
   getHousehold, subscribePriceEntries, addPriceEntry,
 } from '../../services/firestore';
 import { spacing, radius, type } from '../../theme/colors';
-import { PANTRY_CATEGORIES, NON_FOOD_CATEGORIES, UNITS, withOverrides } from '../../utils/categories';
+import { PANTRY_CATEGORIES, NON_FOOD_CATEGORIES, UNITS, withOverrides, categoryName, unitName } from '../../utils/categories';
 import {
   buildPriceEntry, lastEntryFor, recentStores, computeTrend, sortEntries,
   itemKeyOf, formatPrice, trendPresentation, formatPercent, summarizeBasket,
@@ -29,6 +29,8 @@ import DatePickerInput from '../../components/DatePickerInput';
 import DragScrollView from '../../components/DragScrollView';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useIsDesktop, useMobileNavClearance, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
+import { t } from '../../i18n';
+import { useLanguage } from '../../context/LanguageContext';
 
 const applyOrder = (all, order) => {
   if (!order.length) return all;
@@ -38,6 +40,7 @@ const applyOrder = (all, order) => {
 
 const GroceryItemRow = memo(({ item, priceInfo, onToggle, onEdit, onDelete, onOpenPrice }) => {
   const { colors } = useTheme();
+  useLanguage();   // memo: re-render on a language switch
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const trendStyle = priceInfo ? trendPresentation(priceInfo.direction) : null;
   return (
@@ -48,7 +51,7 @@ const GroceryItemRow = memo(({ item, priceInfo, onToggle, onEdit, onDelete, onOp
         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         accessibilityRole="checkbox"
         accessibilityState={{ checked: item.checked }}
-        accessibilityLabel={`${item.name}, ${item.checked ? 'checked' : 'unchecked'}`}
+        accessibilityLabel={`${item.name}, ${item.checked ? t('grocery.checked') : t('grocery.unchecked')}`}
       >
         <View style={[styles.checkbox, item.checked && styles.checkboxChecked]}>
           {item.checked && <Ionicons name="checkmark" size={13} color="#fff" />}
@@ -59,14 +62,14 @@ const GroceryItemRow = memo(({ item, priceInfo, onToggle, onEdit, onDelete, onOp
           {item.name}
         </Text>
         <View style={styles.itemMetaRow}>
-          {item.quantity ? <Text style={styles.itemQuantity}>{item.quantity}{item.unit ? ` ${item.unit}` : ''}</Text> : null}
+          {item.quantity ? <Text style={styles.itemQuantity}>{item.quantity}{item.unit ? ` ${unitName(item.unit)}` : ''}</Text> : null}
           {priceInfo && (
             <TouchableOpacity
               style={styles.priceTag}
               onPress={onOpenPrice}
               hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
               accessibilityRole="button"
-              accessibilityLabel={`${item.name} last paid ${formatPrice(priceInfo.price)}. ${trendStyle.label}. View price history`}
+              accessibilityLabel={t('grocery.lastPaidA11y', { name: item.name, price: formatPrice(priceInfo.price), trend: trendStyle.label })}
             >
               <Text style={styles.priceTagValue}>{formatPrice(priceInfo.price)}</Text>
               {priceInfo.direction !== 'new' && priceInfo.direction !== 'same' && (
@@ -86,7 +89,7 @@ const GroceryItemRow = memo(({ item, priceInfo, onToggle, onEdit, onDelete, onOp
           onPress={onEdit}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           accessibilityRole="button"
-          accessibilityLabel={`Edit ${item.name}`}
+          accessibilityLabel={t('grocery.editItem', { name: item.name })}
         >
           <Ionicons name="pencil-outline" size={15} color={colors.textTertiary} />
         </TouchableOpacity>
@@ -94,7 +97,7 @@ const GroceryItemRow = memo(({ item, priceInfo, onToggle, onEdit, onDelete, onOp
           onPress={onDelete}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           accessibilityRole="button"
-          accessibilityLabel={`Remove ${item.name}`}
+          accessibilityLabel={t('grocery.removeItemA11y', { name: item.name })}
         >
           <Ionicons name="close" size={16} color={colors.textTertiary} />
         </TouchableOpacity>
@@ -106,6 +109,7 @@ const GroceryItemRow = memo(({ item, priceInfo, onToggle, onEdit, onDelete, onOp
 export default function GroceryListScreen() {
   const { householdId, user } = useAuth();
   const { colors } = useTheme();
+  useLanguage();
   const { animationsEnabled } = useHousehold();
   const navScrollProps = useNavScrollProps();
   const { showAlert, showConfirm } = useAlert();
@@ -210,7 +214,7 @@ export default function GroceryListScreen() {
       if (!checkedCount) return;
       try {
         await clearCheckedItems(householdId, current);
-        notify('Grocery list cleared', `${checkedCount} done item${checkedCount !== 1 ? 's' : ''} cleared at midnight.`, { type: 'info' });
+        notify(t('grocery.listCleared'), t('grocery.clearedAtMidnight', { count: checkedCount }), { type: 'info' });
       } catch { /* silent */ }
     }, ms);
     return () => clearTimeout(timer);
@@ -242,11 +246,11 @@ export default function GroceryListScreen() {
 
     const result = [];
     if (foodGroups.length > 0) {
-      result.push({ type: 'section-header', id: 'food-header', title: 'Food' });
+      result.push({ type: 'section-header', id: 'food-header', title: t('grocery.food') });
       result.push(...foodGroups);
     }
     if (nonFoodGroups.length > 0) {
-      result.push({ type: 'section-header', id: 'non-food-header', title: 'Non-Food & Household' });
+      result.push({ type: 'section-header', id: 'non-food-header', title: t('grocery.nonFood') });
       result.push(...nonFoodGroups);
     }
     return result;
@@ -297,7 +301,7 @@ export default function GroceryListScreen() {
         await removePantryItemByGroceryId(householdId, item.id);
       }
     } catch (e) {
-      showAlert({ title: 'Error', message: e.message, type: 'error' });
+      showAlert({ title: t('common.error'), message: e.message, type: 'error' });
     }
   }, [householdId, showAlert, priceEntries]);
 
@@ -332,17 +336,17 @@ export default function GroceryListScreen() {
         // rather than inferred from dates.
         await addPriceEntry(householdId, { ...entry, groceryItemId: item.id });
         notify(
-          'Added to pantry',
+          t('grocery.addedToPantry'),
           previous
-            ? `${item.name} · ${formatPrice(entry.price)} (last ${formatPrice(previous.price)})`
-            : `${item.name} · ${formatPrice(entry.price)} — first price logged.`,
+            ? t('grocery.priceWithLast', { name: item.name, price: formatPrice(entry.price), last: formatPrice(previous.price) })
+            : t('grocery.firstPrice', { name: item.name, price: formatPrice(entry.price) }),
           { type: 'success' },
         );
       } else {
-        notify('Added to pantry', `${item.name} added to your pantry.`, { type: 'success' });
+        notify(t('grocery.addedToPantry'), t('grocery.addedToPantryMessage', { name: item.name }), { type: 'success' });
       }
     } catch (e) {
-      showAlert({ title: 'Error', message: e.message, type: 'error' });
+      showAlert({ title: t('common.error'), message: e.message, type: 'error' });
     }
   };
 
@@ -370,11 +374,11 @@ export default function GroceryListScreen() {
 
   const validate = () => {
     const e = {};
-    if (!newItemName.trim()) e.name = 'Required';
-    if (!newItemQuantity.trim()) e.quantity = 'Required';
+    if (!newItemName.trim()) e.name = t('common.required');
+    if (!newItemQuantity.trim()) e.quantity = t('common.required');
     const isNonFood = visibleNonFoodCategories.some((c) => c.label === selectedCategory);
     if (!isNonFood && newItemExpiry.trim() && !/^\d{4}-\d{2}-\d{2}$/.test(newItemExpiry.trim()))
-      e.expiry = 'Use YYYY-MM-DD format';
+      e.expiry = t('grocery.useDateFormat');
     setErrors(e);
     return Object.keys(e).length === 0;
   };
@@ -389,7 +393,7 @@ export default function GroceryListScreen() {
       expiryDate: newItemExpiry.trim() || null,
       addedBy: user.uid,
     });
-    notify('Added to list', `${newItemName.trim()} added.`, { type: 'success' });
+    notify(t('grocery.addedToList'), t('grocery.addedMessage', { name: newItemName.trim() }), { type: 'success' });
     closeModal();
   };
 
@@ -403,10 +407,10 @@ export default function GroceryListScreen() {
         category: selectedCategory,
         expiryDate: newItemExpiry.trim() || null,
       });
-      notify('Item updated', `${newItemName.trim()} saved.`, { type: 'success' });
+      notify(t('grocery.itemUpdated'), t('grocery.savedMessage', { name: newItemName.trim() }), { type: 'success' });
       closeModal();
     } catch (e) {
-      showAlert({ title: 'Error', message: e.message, type: 'error' });
+      showAlert({ title: t('common.error'), message: e.message, type: 'error' });
     }
   };
 
@@ -414,17 +418,17 @@ export default function GroceryListScreen() {
     const checkedCount = items.filter((i) => i.checked).length;
     if (!checkedCount) return;
     const confirmed = await showConfirm({
-      title: 'Clear checked',
-      message: `Remove ${checkedCount} item${checkedCount > 1 ? 's' : ''}?`,
+      title: t('grocery.clearChecked'),
+      message: t('grocery.removeCount', { count: checkedCount }),
       type: 'danger',
-      confirmLabel: 'Clear',
+      confirmLabel: t('grocery.clear'),
     });
     if (!confirmed) return;
     try {
       await clearCheckedItems(householdId, items);
-      notify('List cleared', `${checkedCount} item${checkedCount > 1 ? 's' : ''} removed.`, { type: 'info' });
+      notify(t('grocery.listClearedShort'), t('grocery.itemsRemoved', { count: checkedCount }), { type: 'info' });
     } catch (e) {
-      showAlert({ title: 'Error', message: e.message, type: 'error' });
+      showAlert({ title: t('common.error'), message: e.message, type: 'error' });
     }
   };
 
@@ -491,9 +495,9 @@ export default function GroceryListScreen() {
         >
           <View style={styles.headerTopRow}>
             <View style={styles.headerTitleBlock}>
-              <Text style={styles.screenTitle}>Grocery List</Text>
+              <Text style={styles.screenTitle}>{t('grocery.title')}</Text>
               <Text style={styles.screenSubtitle}>
-                {pendingCount} remaining · {checkedCount} done
+                {t('grocery.remainingDone', { pending: pendingCount, done: checkedCount })}
               </Text>
             </View>
             <View style={styles.headerActions}>
@@ -502,29 +506,29 @@ export default function GroceryListScreen() {
                   style={styles.clearCheckedButton}
                   onPress={handleClearChecked}
                   accessibilityRole="button"
-                  accessibilityLabel="Clear checked items"
+                  accessibilityLabel={t('grocery.clearCheckedA11y')}
                 >
                   <Ionicons name="checkmark-done-outline" size={14} color={colors.accent} />
-                  <Text style={styles.clearCheckedLabel} numberOfLines={1}>Clear done</Text>
+                  <Text style={styles.clearCheckedLabel} numberOfLines={1}>{t('grocery.clearDone')}</Text>
                 </TouchableOpacity>
               )}
               <TouchableOpacity
                 style={styles.priceHistoryButton}
                 onPress={() => navigation.navigate('ReceiptImport')}
                 accessibilityRole="button"
-                accessibilityLabel="Scan a receipt"
+                accessibilityLabel={t('grocery.scanReceipt')}
               >
                 <Ionicons name="camera-outline" size={14} color={colors.textSecondary} />
-                <Text style={styles.priceHistoryLabel} numberOfLines={1}>Scan</Text>
+                <Text style={styles.priceHistoryLabel} numberOfLines={1}>{t('grocery.scan')}</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.priceHistoryButton}
                 onPress={() => navigation.navigate('PriceHistory')}
                 accessibilityRole="button"
-                accessibilityLabel="Price history"
+                accessibilityLabel={t('grocery.priceHistory')}
               >
                 <Ionicons name="pricetags-outline" size={14} color={colors.textSecondary} />
-                <Text style={styles.priceHistoryLabel} numberOfLines={1}>Prices</Text>
+                <Text style={styles.priceHistoryLabel} numberOfLines={1}>{t('grocery.prices')}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -536,26 +540,26 @@ export default function GroceryListScreen() {
               <View style={styles.basketMain}>
                 <View>
                   <Text style={styles.basketLabel}>
-                    {basket.loggedCount > 0 ? 'Projected total' : 'Estimated total'}
+                    {basket.loggedCount > 0 ? t('grocery.projectedTotal') : t('grocery.estimatedTotal')}
                   </Text>
                   <Text style={styles.basketTotal}>{formatPrice(basket.projected)}</Text>
                 </View>
                 {basket.loggedCount > 0 && (
                   <View style={styles.basketSplit}>
                     <Text style={styles.basketSplitValue}>{formatPrice(basket.actual)}</Text>
-                    <Text style={styles.basketSplitLabel}>in basket</Text>
+                    <Text style={styles.basketSplitLabel}>{t('grocery.inBasket')}</Text>
                   </View>
                 )}
                 {basket.remaining > 0 && (
                   <View style={styles.basketSplit}>
                     <Text style={styles.basketSplitValue}>{formatPrice(basket.remaining)}</Text>
-                    <Text style={styles.basketSplitLabel}>to go</Text>
+                    <Text style={styles.basketSplitLabel}>{t('grocery.toGo')}</Text>
                   </View>
                 )}
               </View>
               {basket.unpricedCount > 0 && (
                 <Text style={styles.basketNote}>
-                  {basket.unpricedCount} item{basket.unpricedCount !== 1 ? 's' : ''} with no price history yet
+                  {t('grocery.noPriceHistory', { count: basket.unpricedCount })}
                 </Text>
               )}
             </View>
@@ -575,9 +579,9 @@ export default function GroceryListScreen() {
 
           <View style={styles.filterRow}>
             {[
-              { id: 'all',       label: 'All'       },
-              { id: 'unchecked', label: 'Pending'   },
-              { id: 'checked',   label: 'Done'      },
+              { id: 'all',       label: t('grocery.filterAll') },
+              { id: 'unchecked', label: t('grocery.filterPending') },
+              { id: 'checked',   label: t('grocery.filterDone') },
             ].map((filter) => (
               <TouchableOpacity
                 key={filter.id}
@@ -614,8 +618,8 @@ export default function GroceryListScreen() {
               <View style={styles.emptyStateIcon}>
                 <Ionicons name="cart-outline" size={36} color={colors.textTertiary} />
               </View>
-              <Text style={styles.emptyStateTitle}>List is empty</Text>
-              <Text style={styles.emptyStateSubtitle}>Tap + to add your first item</Text>
+              <Text style={styles.emptyStateTitle}>{t('grocery.emptyTitle')}</Text>
+              <Text style={styles.emptyStateSubtitle}>{t('grocery.emptySub')}</Text>
             </View>
           }
           renderItem={({ item: row }) => {
@@ -632,7 +636,7 @@ export default function GroceryListScreen() {
               <View style={styles.categoryGroup}>
                 <View style={styles.categoryGroupHeader}>
                   <Text style={styles.categoryGroupIcon}>{row.icon}</Text>
-                  <Text style={styles.categoryGroupLabel}>{row.label}</Text>
+                  <Text style={styles.categoryGroupLabel}>{categoryName(row.label)}</Text>
                   <View style={styles.categoryGroupBadge}>
                     <Text style={styles.categoryGroupBadgeText}>{row.items.length}</Text>
                   </View>
@@ -647,18 +651,18 @@ export default function GroceryListScreen() {
                     onEdit={() => openEditModal(item)}
                     onDelete={async () => {
                       const confirmed = await showConfirm({
-                        title: 'Remove item',
-                        message: `Remove "${item.name}"?`,
+                        title: t('grocery.removeItem'),
+                        message: t('grocery.removeItemConfirm', { name: item.name }),
                         type: 'danger',
-                        confirmLabel: 'Remove',
+                        confirmLabel: t('grocery.remove'),
                       });
                       if (!confirmed) return;
                       try {
                         if (item.checked) await removePantryItemByGroceryId(householdId, item.id);
                         await deleteGroceryItem(householdId, item.id);
-                        notify('Removed', `${item.name} removed from list.`, { type: 'info' });
+                        notify(t('grocery.removed'), t('grocery.removedFromList', { name: item.name }), { type: 'info' });
                       } catch (e) {
-                        showAlert({ title: 'Error', message: e.message, type: 'error' });
+                        showAlert({ title: t('common.error'), message: e.message, type: 'error' });
                       }
                     }}
                   />
@@ -670,7 +674,7 @@ export default function GroceryListScreen() {
 
         <FloatingActionButton
           onPress={() => setModalVisible(true)}
-          accessibilityLabel="Add item"
+          accessibilityLabel={t('grocery.addItem')}
           enterAnim={fabAnim}
           hideAnim={fab.hideAnim}
           interactive={fab.interactive}
@@ -683,23 +687,23 @@ export default function GroceryListScreen() {
           <ScrollView style={styles.bottomSheetScroll} keyboardShouldPersistTaps="handled">
             <View style={styles.bottomSheetInner}>
               <View style={styles.sheetDragHandle} />
-              <Text style={styles.sheetTitle}>{editingItem ? 'Edit Item' : 'Add to List'}</Text>
+              <Text style={styles.sheetTitle}>{editingItem ? t('grocery.editItemTitle') : t('grocery.addToList')}</Text>
 
-              <Text style={styles.inputLabel}>Item Name *</Text>
+              <Text style={styles.inputLabel}>{t('grocery.itemName')}</Text>
               <TextInput
                 style={[styles.textInput, !!errors.name && styles.inputError]}
-                placeholder="e.g. Olive Oil"
+                placeholder={t('grocery.itemNamePlaceholder')}
                 value={newItemName}
                 onChangeText={(text) => { setNewItemName(text); if (errors.name) setErrors((e) => ({ ...e, name: null })); }}
                 placeholderTextColor={colors.textTertiary}
                 autoFocus
-                accessibilityLabel="Item name"
+                accessibilityLabel={t('grocery.itemNameA11y')}
               />
               {!!errors.name && <Text style={styles.errorText}>{errors.name}</Text>}
 
               <View style={styles.quantityRow}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.inputLabel}>Quantity *</Text>
+                  <Text style={styles.inputLabel}>{t('grocery.quantity')}</Text>
                   <TextInput
                     style={[styles.textInput, !!errors.quantity && styles.inputError]}
                     placeholder="1"
@@ -707,12 +711,12 @@ export default function GroceryListScreen() {
                     onChangeText={(text) => { setNewItemQuantity(text.replace(/[^0-9.]/g, '')); if (errors.quantity) setErrors((e) => ({ ...e, quantity: null })); }}
                     keyboardType="decimal-pad"
                     placeholderTextColor={colors.textTertiary}
-                    accessibilityLabel="Quantity"
+                    accessibilityLabel={t('grocery.quantityA11y')}
                   />
                   {!!errors.quantity && <Text style={styles.errorText}>{errors.quantity}</Text>}
                 </View>
                 <View style={{ flex: 1.4 }}>
-                  <Text style={styles.inputLabel}>Unit</Text>
+                  <Text style={styles.inputLabel}>{t('grocery.unit')}</Text>
                   <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                     {[...enabledUnits, ...customUnits].map((unit) => (
                       <TouchableOpacity
@@ -720,14 +724,14 @@ export default function GroceryListScreen() {
                         style={[styles.unitChip, newItemUnit === unit && styles.unitChipActive]}
                         onPress={() => setNewItemUnit(unit)}
                       >
-                        <Text style={[styles.unitChipLabel, newItemUnit === unit && styles.unitChipLabelActive]}>{unit}</Text>
+                        <Text style={[styles.unitChipLabel, newItemUnit === unit && styles.unitChipLabelActive]}>{unitName(unit)}</Text>
                       </TouchableOpacity>
                     ))}
                   </ScrollView>
                 </View>
               </View>
 
-              <Text style={styles.inputLabel}>Category</Text>
+              <Text style={styles.inputLabel}>{t('grocery.category')}</Text>
               <DragScrollView style={{ marginBottom: 4 }}>
                 {visibleFoodCategories.map((cat) => (
                   <TouchableOpacity
@@ -737,7 +741,7 @@ export default function GroceryListScreen() {
                   >
                     <Text style={styles.categoryChipIcon}>{cat.icon}</Text>
                     <Text style={[styles.categoryChipLabel, selectedCategory === cat.label && styles.categoryChipLabelActive]}>
-                      {cat.label}
+                      {categoryName(cat.label)}
                     </Text>
                   </TouchableOpacity>
                 ))}
@@ -752,7 +756,7 @@ export default function GroceryListScreen() {
                   >
                     <Text style={styles.categoryChipIcon}>{cat.icon}</Text>
                     <Text style={[styles.categoryChipLabel, selectedCategory === cat.label && styles.categoryChipLabelActive]}>
-                      {cat.label}
+                      {categoryName(cat.label)}
                     </Text>
                   </TouchableOpacity>
                 ))}
@@ -760,7 +764,7 @@ export default function GroceryListScreen() {
 
               {!visibleNonFoodCategories.some((c) => c.label === selectedCategory) && (
                 <>
-                  <Text style={styles.inputLabel}>Expiry Date</Text>
+                  <Text style={styles.inputLabel}>{t('grocery.expiryDate')}</Text>
                   <DatePickerInput
                     value={newItemExpiry}
                     onChange={(val) => { setNewItemExpiry(val); if (errors.expiry) setErrors((e) => ({ ...e, expiry: null })); }}
@@ -772,10 +776,10 @@ export default function GroceryListScreen() {
 
               <View style={styles.sheetActionRow}>
                 <TouchableOpacity style={styles.cancelButton} onPress={closeModal}>
-                  <Text style={styles.cancelButtonLabel}>Cancel</Text>
+                  <Text style={styles.cancelButtonLabel}>{t('common.cancel')}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.confirmButton} onPress={editingItem ? handleSaveEdit : handleAddItem}>
-                  <Text style={styles.confirmButtonLabel}>{editingItem ? 'Save Changes' : 'Add to List'}</Text>
+                  <Text style={styles.confirmButtonLabel}>{editingItem ? t('grocery.saveChanges') : t('grocery.addToList')}</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -795,14 +799,14 @@ export default function GroceryListScreen() {
                 <View style={{ flex: 1 }}>
                   <Text style={styles.expirySheetTitle} numberOfLines={1}>{checkoutItem?.name}</Text>
                   <Text style={styles.expirySheetSub}>
-                    Added to pantry — log what it cost?
+                    {t('grocery.logCost')}
                   </Text>
                 </View>
               </View>
 
               <View style={styles.quantityRow}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.inputLabel}>Price Paid</Text>
+                  <Text style={styles.inputLabel}>{t('grocery.pricePaid')}</Text>
                   <TextInput
                     style={styles.textInput}
                     placeholder="0.00"
@@ -810,18 +814,18 @@ export default function GroceryListScreen() {
                     onChangeText={(text) => setCheckoutPrice(text.replace(/[^0-9.]/g, ''))}
                     keyboardType="decimal-pad"
                     placeholderTextColor={colors.textTertiary}
-                    accessibilityLabel="Price paid"
+                    accessibilityLabel={t('grocery.pricePaidA11y')}
                   />
                 </View>
                 <View style={{ flex: 1.4 }}>
-                  <Text style={styles.inputLabel}>Store</Text>
+                  <Text style={styles.inputLabel}>{t('grocery.store')}</Text>
                   <TextInput
                     style={styles.textInput}
-                    placeholder="e.g. Lidl"
+                    placeholder={t('grocery.storePlaceholder')}
                     value={checkoutStore}
                     onChangeText={setCheckoutStore}
                     placeholderTextColor={colors.textTertiary}
-                    accessibilityLabel="Store"
+                    accessibilityLabel={t('grocery.store')}
                   />
                 </View>
               </View>
@@ -830,9 +834,11 @@ export default function GroceryListScreen() {
                   what the number covers when comparing per-unit later. */}
               {!!checkoutItem?.quantity && (
                 <Text style={styles.checkoutHint}>
-                  Total for {checkoutItem.quantity}{checkoutItem.unit ? ` ${checkoutItem.unit}` : ''}
+                  {t('grocery.totalFor', { quantity: `${checkoutItem.quantity}${checkoutItem.unit ? ` ${unitName(checkoutItem.unit)}` : ''}` })}
                   {checkoutLastEntry
-                    ? ` · last paid ${formatPrice(checkoutLastEntry.price)}${checkoutLastEntry.store ? ` at ${checkoutLastEntry.store}` : ''}`
+                    ? (checkoutLastEntry.store
+                      ? t('grocery.lastPaidAt', { price: formatPrice(checkoutLastEntry.price), store: checkoutLastEntry.store })
+                      : t('grocery.lastPaid', { price: formatPrice(checkoutLastEntry.price) }))
                     : ''}
                 </Text>
               )}
@@ -857,21 +863,21 @@ export default function GroceryListScreen() {
 
               {!visibleNonFoodCategories.some((c) => c.label === checkoutItem?.category) && (
                 <>
-                  <Text style={styles.inputLabel}>Expiry Date</Text>
+                  <Text style={styles.inputLabel}>{t('grocery.expiryDate')}</Text>
                   <DatePickerInput value={checkoutExpiry} onChange={setCheckoutExpiry} />
                 </>
               )}
 
               <View style={styles.sheetActionRow}>
                 <TouchableOpacity style={styles.cancelButton} onPress={() => handleCheckoutConfirm(false)}>
-                  <Text style={styles.cancelButtonLabel}>Skip</Text>
+                  <Text style={styles.cancelButtonLabel}>{t('grocery.skip')}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.confirmButton, !checkoutPrice && !checkoutExpiry && styles.confirmButtonDisabled]}
                   disabled={!checkoutPrice && !checkoutExpiry}
                   onPress={() => handleCheckoutConfirm(true)}
                 >
-                  <Text style={styles.confirmButtonLabel}>Save</Text>
+                  <Text style={styles.confirmButtonLabel}>{t('common.save')}</Text>
                 </TouchableOpacity>
               </View>
             </View>

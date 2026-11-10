@@ -1,6 +1,7 @@
 import { Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import { reminderDate, reminderSignature, shouldScheduleReminder } from '../utils/reminders';
+import { t } from '../i18n';
 
 // expo-notifications has no web implementation — every call here is a no-op on
 // web. Reminder times still round-trip through Firestore, so a time set on the
@@ -55,7 +56,7 @@ export async function scheduleTodoReminder(todo) {
   return Notifications.scheduleNotificationAsync({
     identifier: todo.id,
     content: {
-      title: 'Task reminder',
+      title: t('components.taskReminder'),
       body: todo.text,
       data: { todoId: todo.id, day: todo.day },
       ...(Platform.OS === 'android' ? { channelId: CHANNEL_ID } : null),
