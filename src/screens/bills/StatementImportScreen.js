@@ -32,10 +32,10 @@ import { t as translateNow } from '../../i18n';
 import { spacing, radius, type } from '../../theme/colors';
 import { useIsDesktop, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
 import { Rise, useEntranceReplay } from '../../components/Motion';
+import { formatMoney, formatDate } from '../../utils/format';
+import useFormat from '../../hooks/useFormat';
 
-function fmtCurrency(n) {
-  return `$${Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
+const fmtCurrency = (n) => formatMoney(n);
 
 // Persisted review draft — survives leaving the screen (and page reloads on web)
 // so an analyzed-but-not-imported statement isn't lost.
@@ -89,8 +89,9 @@ function CatChip({ cat, selected, onPress, colors }) {
 
 function ReviewRow({ row, index, onChange, expenseCats, billCats, bills, colors, styles }) {
   const { t } = useLanguage();
+  useFormat();
   const cats = row.type === 'bill' ? billCats : expenseCats;
-  const dateLabel = row.date ? format(new Date(row.date + 'T00:00:00'), 'MMM d') : t('statement.noDate');
+  const dateLabel = row.date ? formatDate(row.date, { short: true }) : t('statement.noDate');
   const isIncome = row.direction === 'in';
 
   const set = (patch) => onChange(index, patch);
@@ -216,6 +217,7 @@ export default function StatementImportScreen({ navigation }) {
   const { showAlert } = useAlert();
   const { notify } = useNotification();
   const { t, language } = useLanguage();
+  useFormat();
   const isDesktop = useIsDesktop();
   const windowHeight = useVisualViewportHeight();
   const styles = useMemo(() => makeStyles(colors), [colors]);

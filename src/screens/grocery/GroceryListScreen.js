@@ -31,6 +31,7 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useIsDesktop, useMobileNavClearance, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
 import { t } from '../../i18n';
 import { useLanguage } from '../../context/LanguageContext';
+import useFormat from '../../hooks/useFormat';
 
 const applyOrder = (all, order) => {
   if (!order.length) return all;
@@ -41,6 +42,7 @@ const applyOrder = (all, order) => {
 const GroceryItemRow = memo(({ item, priceInfo, onToggle, onEdit, onDelete, onOpenPrice }) => {
   const { colors } = useTheme();
   useLanguage();   // memo: re-render on a language switch
+  useFormat();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const trendStyle = priceInfo ? trendPresentation(priceInfo.direction) : null;
   return (
@@ -110,6 +112,7 @@ export default function GroceryListScreen() {
   const { householdId, user } = useAuth();
   const { colors } = useTheme();
   useLanguage();
+  useFormat();
   const { animationsEnabled } = useHousehold();
   const navScrollProps = useNavScrollProps();
   const { showAlert, showConfirm } = useAlert();

@@ -23,10 +23,24 @@ describe('week keys', () => {
     expect(dateOfDay('2026-10-19', 'Funday')).toBeNull();
   });
 
-  it('labels a week range', () => {
-    expect(weekRangeLabel('2026-10-12', 2026)).toBe('Oct 12–18');
-    expect(weekRangeLabel('2026-10-26', 2026)).toBe('Oct 26 – Nov 1');
-    expect(weekRangeLabel('2026-12-28', 2026)).toBe('Dec 28 – Jan 3 2027');
+  it('labels a week range in the household date format', () => {
+    expect(weekRangeLabel('2026-10-12', 2026)).toBe('12/10 – 18/10');
+    expect(weekRangeLabel('2026-10-26', 2026)).toBe('26/10 – 01/11');
+    expect(weekRangeLabel('2026-12-28', 2026)).toBe('28/12 – 03/01/2027');
+  });
+
+  it('follows the long date format and the language', () => {
+    const { setFormatSettings } = require('../utils/format');
+    const { setCurrentLanguage } = require('../i18n');
+    try {
+      setFormatSettings({ dateFormat: 'long' });
+      expect(weekRangeLabel('2026-10-26', 2026)).toBe('26 Oct – 1 Nov');
+      setCurrentLanguage('pt');
+      expect(weekRangeLabel('2026-10-26', 2026)).toBe('26 out – 1 nov');
+    } finally {
+      setFormatSettings({});
+      setCurrentLanguage('en');
+    }
   });
 });
 

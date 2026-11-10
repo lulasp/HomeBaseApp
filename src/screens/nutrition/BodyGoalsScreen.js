@@ -25,13 +25,15 @@ import { useIsDesktop, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
 import { Rise, useEntranceReplay } from '../../components/Motion';
 import { t } from '../../i18n';
 import { useLanguage } from '../../context/LanguageContext';
+import { formatDate, formatNumber } from '../../utils/format';
+import useFormat from '../../hooks/useFormat';
 
 const CHART_POINTS = 30;
 const CHART_HEIGHT = 110;
 const RECENT_LOGS  = 10;
 
 const fmtKg = (n) => (n == null ? '—' : `${Math.round(n * 10) / 10} kg`);
-const fmtDate = (d) => format(parseISO(d), 'MMM d, yyyy');
+const fmtDate = (d) => formatDate(d);
 
 const emptyForm = {
   sex: null, birthDate: '', heightCm: '', activityLevel: 'moderate',
@@ -50,6 +52,7 @@ const profileToForm = (p) => ({
 
 export default function BodyGoalsScreen({ navigation }) {
   useLanguage();
+  useFormat();
   const { householdId, user } = useAuth();
   const { colors } = useTheme();
   const navScrollProps = useNavScrollProps();
@@ -217,7 +220,7 @@ export default function BodyGoalsScreen({ navigation }) {
               </View>
               <View style={styles.statCard}>
                 <Text style={[styles.statValue, { color: colors.accent }]}>
-                  {calories ? calories.target.toLocaleString() : '—'}
+                  {calories ? formatNumber(calories.target, { decimals: 0 }) : '—'}
                 </Text>
                 <Text style={styles.statLabel}>{t('body.targetKcal')}</Text>
               </View>
@@ -229,8 +232,8 @@ export default function BodyGoalsScreen({ navigation }) {
                 <Text style={styles.cardTitle}>{t('body.suggestedIntake')}</Text>
                 {calories ? (
                   <>
-                    <BreakdownRow label={t('body.bmr')} value={`${calories.bmr.toLocaleString()} kcal`} styles={styles} />
-                    <BreakdownRow label={t('body.tdee')} value={`${calories.tdee.toLocaleString()} kcal`} styles={styles} />
+                    <BreakdownRow label={t('body.bmr')} value={`${formatNumber(calories.bmr, { decimals: 0 })} kcal`} styles={styles} />
+                    <BreakdownRow label={t('body.tdee')} value={`${formatNumber(calories.tdee, { decimals: 0 })} kcal`} styles={styles} />
                     {profile.goal !== 'maintain' && (
                       <BreakdownRow
                         label={t(profile.goal === 'lose' ? 'body.loseRate' : 'body.gainRate', { rate: profile.weeklyRateKg })}
@@ -239,7 +242,7 @@ export default function BodyGoalsScreen({ navigation }) {
                       />
                     )}
                     <View style={styles.divider} />
-                    <BreakdownRow label={t('body.dailyTarget')} value={`${calories.target.toLocaleString()} kcal`} styles={styles} strong />
+                    <BreakdownRow label={t('body.dailyTarget')} value={`${formatNumber(calories.target, { decimals: 0 })} kcal`} styles={styles} strong />
                     {calories.clamped && (
                       <View style={styles.noteRow}>
                         <Ionicons name="information-circle-outline" size={14} color={colors.warning} />
@@ -329,7 +332,7 @@ export default function BodyGoalsScreen({ navigation }) {
                     </View>
                     <Text style={styles.goalMeta}>
                       {t('body.startedAt', { weight: fmtKg(progress.start) })}
-                      {progress.eta && !progress.reached ? t('body.estimate', { date: format(progress.eta, 'MMM d, yyyy') }) : ''}
+                      {progress.eta && !progress.reached ? t('body.estimate', { date: formatDate(progress.eta) }) : ''}
                     </Text>
                   </View>
                 )}
@@ -552,14 +555,14 @@ function WeightChart({ logs, goalWeightKg, colors, styles }) {
         </View>
       </View>
       <View style={styles.chartFooter}>
-        <Text style={styles.chartAxisText}>{format(parseISO(logs[0].date), 'MMM d')}</Text>
+        <Text style={styles.chartAxisText}>{formatDate(logs[0].date, { short: true })}</Text>
         {goalWeightKg ? (
           <View style={styles.legendRow}>
             <View style={styles.legendSwatch} />
             <Text style={styles.chartAxisText}>{t('body.chartGoal')}</Text>
           </View>
         ) : null}
-        <Text style={styles.chartAxisText}>{format(parseISO(logs[lastIdx].date), 'MMM d')}</Text>
+        <Text style={styles.chartAxisText}>{formatDate(logs[lastIdx].date, { short: true })}</Text>
       </View>
     </View>
   );

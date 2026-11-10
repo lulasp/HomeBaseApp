@@ -63,3 +63,31 @@ describe('HouseholdContext integration flags', () => {
     expect(mockSubscribe).not.toHaveBeenCalled();
   });
 });
+
+describe('HouseholdContext date and currency', () => {
+  const { getFormatSettings, setFormatSettings } = require('../utils/format');
+  afterEach(() => setFormatSettings({}));
+
+  function FormatHarness() {
+    const { dateFormat, currency } = useHousehold();
+    return <Text testID="format">{`${dateFormat}:${currency}`}</Text>;
+  }
+
+  function renderFormat(priv) {
+    mockUseAuth.mockReturnValue({ householdId: 'hh1' });
+    mockSubscribe.mockImplementation((_id, cb) => { cb(priv); return jest.fn(); });
+    return render(<HouseholdProvider><FormatHarness /></HouseholdProvider>);
+  }
+
+  it('defaults to day/month dates and dollars', async () => {
+    await renderFormat({});
+    await waitFor(() => expect(screen.getByTestId('format').props.children).toBe('dmy:USD'));
+    expect(getFormatSettings()).toEqual({ dateFormat: 'dmy', currency: 'USD' });
+  });
+
+  it('exposes the saved settings and applies them to the formatters', async () => {
+    await renderFormat({ dateFormat: 'long', currency: 'EUR' });
+    await waitFor(() => expect(screen.getByTestId('format').props.children).toBe('long:EUR'));
+    expect(getFormatSettings()).toEqual({ dateFormat: 'long', currency: 'EUR' });
+  });
+});

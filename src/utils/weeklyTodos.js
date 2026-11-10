@@ -3,6 +3,7 @@
 import { addDays, addWeeks, format, parseISO, startOfWeek } from 'date-fns';
 import { FULL_DAYS } from './categories';
 import { t } from '../i18n';
+import { formatDate, dayName } from './format';
 
 export const MAX_TODOS_PER_DAY = 15;
 export const WEEK_NAV_RANGE = 8;   // arrows reach ±8 weeks from this one
@@ -23,13 +24,13 @@ export function dateOfDay(weekKey, fullDay) {
   return format(addDays(parseISO(weekKey), i), 'yyyy-MM-dd');
 }
 
-// "Sep 8–14", or "Sep 29 – Oct 5" across months, with the year when it isn't `currentYear`.
+// "08/09 – 14/09" in the household's date format, with the year on the end
+// date when it isn't `currentYear`.
 export function weekRangeLabel(weekKey, currentYear = new Date().getFullYear()) {
   const start = parseISO(weekKey);
   const end = addDays(start, 6);
-  const year = end.getFullYear() !== currentYear ? ` ${end.getFullYear()}` : '';
-  if (start.getMonth() === end.getMonth()) return `${format(start, 'MMM d')}–${format(end, 'd')}${year}`;
-  return `${format(start, 'MMM d')} – ${format(end, 'MMM d')}${year}`;
+  const endLabel = formatDate(end, { short: end.getFullYear() === currentYear });
+  return `${formatDate(start, { short: true })} – ${endLabel}`;
 }
 
 function countByDay(todos) {
@@ -94,5 +95,5 @@ export function formatRecurrenceDays(days) {
   if (ordered.length === 7) return t('components.everyDay');
   if (ordered.length === 5 && FULL_DAYS.slice(0, 5).every((d) => set.has(d))) return t('components.weekdays');
   if (ordered.length === 2 && set.has('Saturday') && set.has('Sunday')) return t('components.weekends');
-  return ordered.map((d) => d.slice(0, 3)).join(', ');
+  return ordered.map((d) => dayName(d, { short: true })).join(', ');
 }

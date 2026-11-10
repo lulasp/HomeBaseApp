@@ -16,6 +16,7 @@ import { useIsDesktop, SIDEBAR_WIDTH } from '../../navigation/TabBar';
 import { Rise, useEntranceReplay } from '../../components/Motion';
 import { t } from '../../i18n';
 import { useLanguage } from '../../context/LanguageContext';
+import { dayName } from '../../utils/format';
 
 // ── Ingredient row with pantry autocomplete ────────────────────────────────────
 const IngredientInput = memo(({ ingredient, index, pantryItems, colors, onUpdate, onRemove, showRemove }) => {
@@ -229,7 +230,7 @@ export default function AddRecipeScreen({ navigation, route, onClose }) {
           await setMealSlot(householdId, mealWeekKey, mealSlot.day, mealSlot.mealType, {
             name: data.title, recipeId: docRef.id, calories: data.calories || 0,
           });
-          notify(t('recipe.mealAdded'), t('recipe.mealAddedMessage', { name: data.title, day: mealSlot.day, meal: t(`home.meals.${mealSlot.mealType}`) }), { type: 'success' });
+          notify(t('recipe.mealAdded'), t('recipe.mealAddedMessage', { name: data.title, day: dayName(mealSlot.day), meal: t(`home.meals.${mealSlot.mealType}`) }), { type: 'success' });
           dismiss();
         } else {
           notify(t('recipe.added'), t('recipes.addedToRecipes', { name: data.title }), { type: 'success' });

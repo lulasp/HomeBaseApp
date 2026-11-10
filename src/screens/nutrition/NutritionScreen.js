@@ -21,6 +21,8 @@ import useVisualViewportHeight from '../../hooks/useVisualViewportHeight';
 import { t } from '../../i18n';
 import { useLanguage } from '../../context/LanguageContext';
 import { unitName } from '../../utils/categories';
+import { formatDate, dayName, formatNumber } from '../../utils/format';
+import useFormat from '../../hooks/useFormat';
 
 // Meal types are stored in English ('Breakfast'); show them translated.
 const mealLabel = (mealType) => t(`home.meals.${mealType}`);
@@ -33,6 +35,7 @@ const AUTO_COOK_H  = 4;
 
 const MealTimerBadge = memo(({ status, colors, small }) => {
   useLanguage();
+  useFormat();
   if (!status) return null;
 
   const base = { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 3 };
@@ -79,6 +82,7 @@ export default function NutritionScreen({ navigation }) {
   const { householdId, user } = useAuth();
   const { colors } = useTheme();
   useLanguage();
+  useFormat();
   const navScrollProps = useNavScrollProps();
   const { showOptions, showConfirm, showAlert } = useAlert();
   const { notify } = useNotification();
@@ -268,7 +272,7 @@ export default function NutritionScreen({ navigation }) {
       } else if (action === 'remove') {
         const confirmed = await showConfirm({
           title: t('nutrition.removeMeal'),
-          message: t('nutrition.removeMealConfirm', { name: existingMeal.name, day, meal: mealLabel(mealType) }),
+          message: t('nutrition.removeMealConfirm', { name: existingMeal.name, day: dayName(day), meal: mealLabel(mealType) }),
           type: 'danger',
           confirmLabel: t('nutrition.remove'),
         });
@@ -310,7 +314,7 @@ export default function NutritionScreen({ navigation }) {
     });
     notify(
       isReplacing ? t('nutrition.mealUpdated') : t('nutrition.mealAdded'),
-      t('nutrition.addedTo', { name: recipe.title, day: selectedSlot.day, meal: mealLabel(selectedSlot.mealType) }),
+      t('nutrition.addedTo', { name: recipe.title, day: dayName(selectedSlot.day), meal: mealLabel(selectedSlot.mealType) }),
       { type: 'success' },
     );
     closeModal();
@@ -331,7 +335,7 @@ export default function NutritionScreen({ navigation }) {
     await setMealSlot(householdId, weekKey, selectedSlot.day, selectedSlot.mealType, mealData);
     notify(
       t('nutrition.mealAdded'),
-      t('nutrition.portionAddedTo', { amount: `${mealData.amount} ${unitName(mealData.unit)}`, name: mealData.name, day: selectedSlot.day, meal: mealLabel(selectedSlot.mealType) }),
+      t('nutrition.portionAddedTo', { amount: `${mealData.amount} ${unitName(mealData.unit)}`, name: mealData.name, day: dayName(selectedSlot.day), meal: mealLabel(selectedSlot.mealType) }),
       { type: 'success' },
     );
     closeModal();
@@ -366,7 +370,7 @@ export default function NutritionScreen({ navigation }) {
       t('nutrition.mealUpdated'),
       movedType
         ? t('nutrition.movedTo', { name: mealData.name, meal: mealLabel(selectedSlot.mealType) })
-        : t('nutrition.updatedIn', { name: mealData.name, day: selectedSlot.day, meal: mealLabel(selectedSlot.mealType) }),
+        : t('nutrition.updatedIn', { name: mealData.name, day: dayName(selectedSlot.day), meal: mealLabel(selectedSlot.mealType) }),
       { type: 'success' },
     );
     closeModal();
@@ -494,7 +498,7 @@ export default function NutritionScreen({ navigation }) {
   const isOverTarget = (cal) => calorieTarget != null && cal > calorieTarget;
   const fmtDayCalories = (cal, compact = false) => {
     if (calorieTarget == null) return t('nutrition.calories', { cal });
-    return compact ? `${cal}/${calorieTarget}` : t('nutrition.caloriesOfTarget', { cal: cal.toLocaleString(), target: calorieTarget.toLocaleString() });
+    return compact ? `${cal}/${calorieTarget}` : t('nutrition.caloriesOfTarget', { cal: formatNumber(cal, { decimals: 0 }), target: formatNumber(calorieTarget, { decimals: 0 }) });
   };
 
   const getMealTimerStatus = (dayIndex, mealType, meal) => {
@@ -640,7 +644,7 @@ export default function NutritionScreen({ navigation }) {
             />
           ) : (
             <Text style={styles.weekRangeLabel}>
-              {format(weekStart, 'MMM d')} – {format(addDays(weekStart, 6), 'MMM d')}
+              {formatDate(weekStart, { short: true })} – {formatDate(addDays(weekStart, 6), { short: true })}
             </Text>
           )}
           <TouchableOpacity
@@ -671,7 +675,7 @@ export default function NutritionScreen({ navigation }) {
           )}
         </View>
         <View style={styles.summaryStatCard}>
-          <Text style={styles.summaryStatValue}>{totalWeekCalories > 0 ? totalWeekCalories.toLocaleString() : '—'}</Text>
+          <Text style={styles.summaryStatValue}>{totalWeekCalories > 0 ? formatNumber(totalWeekCalories, { decimals: 0 }) : '—'}</Text>
           <Text style={styles.summaryStatLabel}>{t('nutrition.calThisWeek')}</Text>
         </View>
         <View style={styles.summaryStatCard}>
@@ -692,7 +696,7 @@ export default function NutritionScreen({ navigation }) {
           </View>
           {calorieTarget != null ? (
             <View style={{ flex: 1 }}>
-              <Text style={styles.targetValue}>{t('nutrition.kcalPerDay', { kcal: calorieTarget.toLocaleString() })}</Text>
+              <Text style={styles.targetValue}>{t('nutrition.kcalPerDay', { kcal: formatNumber(calorieTarget, { decimals: 0 }) })}</Text>
               <Text style={styles.targetMeta}>
                 {t('nutrition.yourTarget', { weight: Math.round(body.currentWeight * 10) / 10 })}
                 {body.profile?.goal && body.profile.goal !== 'maintain'
@@ -750,7 +754,7 @@ export default function NutritionScreen({ navigation }) {
                     ]} />
                   </View>
                   <Text style={[styles.chartDayText, isToday && { color: colors.accent, fontWeight: '700' }]}>
-                    {DAYS_OF_WEEK[dayIndex]}
+                    {dayName(DAYS_OF_WEEK[dayIndex], { short: true })}
                   </Text>
                 </View>
               );
@@ -773,9 +777,9 @@ export default function NutritionScreen({ navigation }) {
         <View style={[styles.dayCardHeader, isToday && styles.dayCardHeaderToday]}>
           <View>
             <Text style={[styles.dayName, isToday && styles.dayNameToday]}>
-              {DAYS_OF_WEEK[dayIndex]}
+              {dayName(DAYS_OF_WEEK[dayIndex], { short: true })}
             </Text>
-            <Text style={styles.dayDateLabel}>{format(date, 'MMM d')}</Text>
+            <Text style={styles.dayDateLabel}>{formatDate(date, { short: true })}</Text>
           </View>
           <View style={styles.dayCardHeaderRight}>
             {dayProgress.total > 0 && (
@@ -843,7 +847,7 @@ export default function NutritionScreen({ navigation }) {
                 ]}
                 onPress={() => handleSlotPress(day, mealType)}
                 accessibilityRole="button"
-                accessibilityLabel={t(meal ? (isCooked ? 'nutrition.slotA11yCooked' : isMissed ? 'nutrition.slotA11yMissed' : 'nutrition.slotA11y') : 'nutrition.slotA11yEmpty', { day, meal: mealLabel(mealType), name: meal?.name })}
+                accessibilityLabel={t(meal ? (isCooked ? 'nutrition.slotA11yCooked' : isMissed ? 'nutrition.slotA11yMissed' : 'nutrition.slotA11y') : 'nutrition.slotA11yEmpty', { day: dayName(day), meal: mealLabel(mealType), name: meal?.name })}
               >
                 <Text style={[
                   styles.mealTypeLabel,
@@ -910,9 +914,9 @@ export default function NutritionScreen({ navigation }) {
                     isPast && styles.desktopDayHeaderCellPast,
                   ]}>
                     <Text style={[styles.desktopDayAbbr, isToday && styles.desktopDayAbbrToday]}>
-                      {DAYS_OF_WEEK[dayIndex]}
+                      {dayName(DAYS_OF_WEEK[dayIndex], { short: true })}
                     </Text>
-                    <Text style={styles.desktopDayDate}>{format(date, 'MMM d')}</Text>
+                    <Text style={styles.desktopDayDate}>{formatDate(date, { short: true })}</Text>
                     {dayProgress.total > 0 && (
                       <View style={styles.desktopDayProgressRow}>
                         <Ionicons
@@ -978,7 +982,7 @@ export default function NutritionScreen({ navigation }) {
                         ]}
                         onPress={() => handleSlotPress(day, mealType)}
                         accessibilityRole="button"
-                        accessibilityLabel={t(meal ? (isCooked ? 'nutrition.slotA11yCooked' : isMissed ? 'nutrition.slotA11yMissed' : 'nutrition.slotA11y') : 'nutrition.slotA11yEmpty', { day, meal: mealLabel(mealType), name: meal?.name })}
+                        accessibilityLabel={t(meal ? (isCooked ? 'nutrition.slotA11yCooked' : isMissed ? 'nutrition.slotA11yMissed' : 'nutrition.slotA11y') : 'nutrition.slotA11yEmpty', { day: dayName(day), meal: mealLabel(mealType), name: meal?.name })}
                       >
                         {meal ? (
                           <>
@@ -1085,7 +1089,7 @@ export default function NutritionScreen({ navigation }) {
           <View style={styles.bottomSheet}>
             <View style={styles.sheetDragHandle} />
             <Text style={styles.sheetTitle}>
-              {selectedSlot ? selectedSlot.day : ''}
+              {selectedSlot ? dayName(selectedSlot.day) : ''}
             </Text>
 
             {/* Meal type picker */}

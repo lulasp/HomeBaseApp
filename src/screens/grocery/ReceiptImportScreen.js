@@ -37,6 +37,7 @@ import { spacing, radius, type } from '../../theme/colors';
 import { useIsDesktop, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
 import { t } from '../../i18n';
 import { useLanguage } from '../../context/LanguageContext';
+import useFormat from '../../hooks/useFormat';
 
 // Read a picked file's bytes as base64. Works on web (blob: URI) and native
 // (file:// URI) — mirrors StatementImportScreen, avoiding expo-file-system,
@@ -304,6 +305,7 @@ export default function ReceiptImportScreen({ navigation }) {
   const { householdId, user } = useAuth();
   const { colors } = useTheme();
   useLanguage();
+  useFormat();
   const { showAlert } = useAlert();
   const { notify } = useNotification();
   const isDesktop = useIsDesktop();

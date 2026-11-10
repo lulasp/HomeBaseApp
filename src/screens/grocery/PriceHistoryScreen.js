@@ -26,6 +26,7 @@ import { spacing, radius, type } from '../../theme/colors';
 import { useIsDesktop, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
 import { t } from '../../i18n';
 import { useLanguage } from '../../context/LanguageContext';
+import useFormat from '../../hooks/useFormat';
 
 const SORTS = [
   { id: 'recent',  label: 'prices.sortRecent'  },
@@ -46,6 +47,7 @@ const PICKER_LIMIT = 6;
 const PriceRow = memo(({ item, icon, onPress }) => {
   const { colors } = useTheme();
   useLanguage();
+  useFormat();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const trend = trendPresentation(item.trend.direction);
   const trendColor = colors[trend.colorKey];
@@ -87,6 +89,7 @@ export default function PriceHistoryScreen() {
   const { householdId, user } = useAuth();
   const { colors } = useTheme();
   useLanguage();
+  useFormat();
   const { showAlert } = useAlert();
   const { notify } = useNotification();
   const navScrollProps = useNavScrollProps();
