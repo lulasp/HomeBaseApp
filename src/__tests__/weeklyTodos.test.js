@@ -132,3 +132,15 @@ describe('formatRecurrenceDays', () => {
     [[], ''],
   ])('%p → %p', (days, label) => expect(formatRecurrenceDays(days)).toBe(label));
 });
+
+describe('formatRecurrenceDays in Portuguese', () => {
+  const { setCurrentLanguage } = require('../i18n');
+  afterEach(() => setCurrentLanguage('en'));
+
+  it('translates the day-group names', () => {
+    setCurrentLanguage('pt');
+    expect(formatRecurrenceDays(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'])).toBe('Todos os dias');
+    expect(formatRecurrenceDays(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'])).toBe('Dias úteis');
+    expect(formatRecurrenceDays(['Saturday', 'Sunday'])).toBe('Fins de semana');
+  });
+});

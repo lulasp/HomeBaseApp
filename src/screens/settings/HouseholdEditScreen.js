@@ -24,7 +24,7 @@ import { saveCredentials as saveXiaomiCredentials } from '../../services/xiaomi'
 import { Rise, useAnimationsEnabled } from '../../components/Motion';
 import {
   PANTRY_CATEGORIES, NON_FOOD_CATEGORIES, UNITS, LOCKED_CATEGORY_LABELS,
-  withOverrides, overrideFor, addRename, renameInList,
+  withOverrides, overrideFor, addRename, renameInList, categoryName, unitName,
 } from '../../utils/categories';
 import { BILL_CATS, EXPENSE_CATS, withCustomCats } from '../../utils/financeCategories';
 import { AI_MODELS, DEFAULT_AI_MODEL } from '../../utils/aiModels';
@@ -34,6 +34,8 @@ import RepeatingTasksList from '../../components/RepeatingTasksList';
 import { spacing, radius, type } from '../../theme/colors';
 import { useIsDesktop, useMobileNavClearance, MOBILE_NAV_COMPACT_SHIFT, SIDEBAR_WIDTH, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
 import useVisualViewportHeight from '../../hooks/useVisualViewportHeight';
+import { t } from '../../i18n';
+import { useLanguage } from '../../context/LanguageContext';
 
 const CONTACT_ICONS  = ['🚑','🏥','👨‍⚕️','🚒','🚓','👮','💊','🧑‍🚒','👨‍👩‍👧','👴','🏠','🔑','🌐','📞','⚡','🐾'];
 const RELATIONSHIPS  = ['Doctor','Hospital','Police','Fire Dept','Family','Neighbor','Vet','Electrician','Plumber','Other'];
@@ -45,11 +47,18 @@ const SAVE_FAB_SIZE = 52;
 const BLANK_CONTACT = { icon: '📞', name: '', phone: '', relationship: '', notes: '' };
 const BLANK_CAT = { label: '', icon: '📦' };
 
+// `label` is the English name; shown through the Xiaomi label translations.
 const XIAOMI_REGIONS = [
-  { key: 'cn', label: 'China' }, { key: 'us', label: 'US' }, { key: 'eu', label: 'Europe' },
+  { key: 'cn', label: 'China' }, { key: 'us', label: 'United States' }, { key: 'eu', label: 'Europe' },
   { key: 'ru', label: 'Russia' }, { key: 'sg', label: 'Singapore' }, { key: 'in', label: 'India' },
   { key: 'de', label: 'Germany' }, { key: 'tw', label: 'Taiwan' },
 ];
+const regionName = (label) => t(`xiaomi.labels.${label}`);
+const relationName = (rel) => {
+  const key = `relationships.${rel}`;
+  const text = t(key);
+  return text === key ? rel : text;
+};
 const BLANK_XIAOMI = { userId: '', serviceToken: '', ssecurity: '', region: 'cn' };
 
 const applyOrder = (all, order) => {
@@ -83,7 +92,7 @@ function CollapsibleGroup({ title, icon, open, onToggle, action, styles, colors,
             onPress={onToggle}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             accessibilityRole="button"
-            accessibilityLabel={`${open ? 'Collapse' : 'Expand'} ${title}`}
+            accessibilityLabel={t(open ? 'household.collapse' : 'household.expand', { title })}
           >
             <Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={18} color={colors.textTertiary} />
           </TouchableOpacity>
@@ -98,6 +107,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
   const { householdId: hhId } = route.params;
   const { user, removeHousehold } = useAuth();
   const { colors, shadow } = useTheme();
+  useLanguage();
   const { showAlert, showConfirm, showOptions } = useAlert();
   const { notify } = useNotification();
 
@@ -209,7 +219,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
       }
       setContactModal(null);
     } catch (e) {
-      showAlert({ title: 'Error', message: e.message, type: 'error' });
+      showAlert({ title: t('common.error'), message: e.message, type: 'error' });
     } finally {
       setContactSaving(false);
     }
@@ -217,14 +227,14 @@ export default function HouseholdEditScreen({ route, navigation }) {
 
   const handleDeleteContact = async (contactId) => {
     const confirmed = await showConfirm({
-      title: 'Delete contact',
-      message: 'Remove this emergency contact?',
-      confirmLabel: 'Delete',
+      title: t('household.deleteContact'),
+      message: t('household.deleteContactMessage'),
+      confirmLabel: t('common.delete'),
       type: 'danger',
     });
     if (!confirmed) return;
     await deleteEmergencyContact(hhId, contactId).catch((e) =>
-      showAlert({ title: 'Error', message: e.message, type: 'error' })
+      showAlert({ title: t('common.error'), message: e.message, type: 'error' })
     );
   };
 
@@ -294,13 +304,13 @@ export default function HouseholdEditScreen({ route, navigation }) {
       e.preventDefault();
       const leave = () => { allowLeaveRef.current = true; navigation.dispatch(e.data.action); };
       showOptions({
-        title: 'Unsaved changes',
-        message: 'You have unsaved changes to this household.',
+        title: t('household.unsavedTitle'),
+        message: t('household.unsavedMessage'),
         type: 'warning',
         options: [
-          { label: 'Save changes', value: 'save' },
-          { label: 'Discard', value: 'discard', style: 'destructive' },
-          { label: 'Cancel', style: 'cancel' },
+          { label: t('household.saveChanges'), value: 'save' },
+          { label: t('household.discard'), value: 'discard', style: 'destructive' },
+          { label: t('common.cancel'), style: 'cancel' },
         ],
       }).then(async (choice) => {
         if (choice === 'discard') {
@@ -338,7 +348,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
   const openEditCategory = (type, cat) => {
     setCatModalType(type);
     setCatEditing({ label: cat.label, baseLabel: cat.baseLabel });
-    setCatForm({ label: cat.label, icon: cat.icon });
+    setCatForm({ label: categoryName(cat.label), icon: cat.icon });
     setCatError(null);
     setCatModal(true);
   };
@@ -357,15 +367,17 @@ export default function HouseholdEditScreen({ route, navigation }) {
 
   // Add a custom category, or edit any category (built-in → override, custom → in place).
   const handleSaveCategory = () => {
-    const label = catLocked ? catEditing.label : catForm.label.trim();
-    if (!label) { setCatError('Name is required'); return; }
+    let label = catLocked ? catEditing.label : catForm.label.trim();
+    // The form shows a built-in's translated name; left as is, it keeps the stored name.
+    if (catEditing && label === categoryName(catEditing.label)) label = catEditing.label;
+    if (!label) { setCatError(t('household.nameRequired')); return; }
     const isFood = catModalType === 'food';
     // Unique across food and non-food: both store items in the same collections.
     const taken = [...orderedFoodCats, ...orderedNonFoodCats]
       .map((c) => c.label)
       .filter((l) => l !== catEditing?.label);
     if (taken.some((l) => l.toLowerCase() === label.toLowerCase())) {
-      setCatError('A category with this name already exists');
+      setCatError(t('household.nameTaken'));
       return;
     }
 
@@ -512,10 +524,10 @@ export default function HouseholdEditScreen({ route, navigation }) {
           onPress={() => togglePantryCategory(cat.label)}
           accessibilityRole="switch"
           accessibilityState={{ checked: isOn }}
-          accessibilityLabel={cat.label}
+          accessibilityLabel={categoryName(cat.label)}
         >
           <Text style={styles.categoryRowIcon}>{cat.icon}</Text>
-          <Text style={[styles.categoryRowLabel, !isOn && { opacity: 0.4 }]}>{cat.label}</Text>
+          <Text style={[styles.categoryRowLabel, !isOn && { opacity: 0.4 }]}>{categoryName(cat.label)}</Text>
           <Ionicons
             name={isOn ? 'checkmark-circle' : 'ellipse-outline'}
             size={21}
@@ -526,7 +538,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
           onPress={() => openEditCategory('food', cat)}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           accessibilityRole="button"
-          accessibilityLabel={`Edit ${cat.label}`}
+          accessibilityLabel={t('household.editItem', { name: categoryName(cat.label) })}
           style={styles.categoryDeleteBtn}
         >
           <Ionicons name="create-outline" size={16} color={colors.textSecondary} />
@@ -536,7 +548,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
             onPress={() => handleDeleteCustomCategory(cat.label)}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             accessibilityRole="button"
-            accessibilityLabel={`Delete ${cat.label}`}
+            accessibilityLabel={t('household.deleteItem', { name: categoryName(cat.label) })}
             style={styles.categoryDeleteBtn}
           >
             <Ionicons name="trash-outline" size={16} color={colors.danger} />
@@ -556,10 +568,10 @@ export default function HouseholdEditScreen({ route, navigation }) {
           onPress={() => toggleNonFoodCategory(cat.label)}
           accessibilityRole="switch"
           accessibilityState={{ checked: isOn }}
-          accessibilityLabel={cat.label}
+          accessibilityLabel={categoryName(cat.label)}
         >
           <Text style={styles.categoryRowIcon}>{cat.icon}</Text>
-          <Text style={[styles.categoryRowLabel, !isOn && { opacity: 0.4 }]}>{cat.label}</Text>
+          <Text style={[styles.categoryRowLabel, !isOn && { opacity: 0.4 }]}>{categoryName(cat.label)}</Text>
           <Ionicons
             name={isOn ? 'checkmark-circle' : 'ellipse-outline'}
             size={21}
@@ -570,7 +582,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
           onPress={() => openEditCategory('non-food', cat)}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           accessibilityRole="button"
-          accessibilityLabel={`Edit ${cat.label}`}
+          accessibilityLabel={t('household.editItem', { name: categoryName(cat.label) })}
           style={styles.categoryDeleteBtn}
         >
           <Ionicons name="create-outline" size={16} color={colors.textSecondary} />
@@ -580,7 +592,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
             onPress={() => handleDeleteCustomNonFoodCategory(cat.label)}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             accessibilityRole="button"
-            accessibilityLabel={`Delete ${cat.label}`}
+            accessibilityLabel={t('household.deleteItem', { name: categoryName(cat.label) })}
             style={styles.categoryDeleteBtn}
           >
             <Ionicons name="trash-outline" size={16} color={colors.danger} />
@@ -590,7 +602,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
     );
   };
 
-  const matchesFilter = (cat, term) => cat.label.toLowerCase().includes(term.trim().toLowerCase());
+  const matchesFilter = (cat, term) => categoryName(cat.label).toLowerCase().includes(term.trim().toLowerCase());
 
   const openAddFinanceCat = (type) => {
     setFinanceCatType(type);
@@ -609,11 +621,11 @@ export default function HouseholdEditScreen({ route, navigation }) {
   // Finance items store the category key, so a rename here never touches bills/expenses.
   const handleSaveFinanceCat = () => {
     const label = financeCatForm.label.trim();
-    if (!label) { setFinanceCatError('Name is required'); return; }
+    if (!label) { setFinanceCatError(t('household.nameRequired')); return; }
     const isBill = financeCatType === 'bill';
     const all = isBill ? allBillCats : allExpenseCats;
     if (all.some((c) => c.key !== financeCatEditing?.key && c.label.toLowerCase() === label.toLowerCase())) {
-      setFinanceCatError('A category with this name already exists');
+      setFinanceCatError(t('household.nameTaken'));
       return;
     }
     if (!financeCatEditing) {
@@ -640,7 +652,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
         style={styles.categoryRowToggle}
         onPress={() => openEditFinanceCat(type, cat)}
         accessibilityRole="button"
-        accessibilityLabel={`Edit ${cat.label}`}
+        accessibilityLabel={t('household.editItem', { name: categoryName(cat.label) })}
       >
         {cat.emoji
           ? <Text style={styles.categoryRowIcon}>{cat.icon}</Text>
@@ -654,7 +666,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           style={styles.categoryDeleteBtn}
           accessibilityRole="button"
-          accessibilityLabel={`Delete ${cat.label}`}
+          accessibilityLabel={t('household.deleteItem', { name: categoryName(cat.label) })}
         >
           <Ionicons name="trash-outline" size={16} color={colors.danger} />
         </TouchableOpacity>
@@ -677,7 +689,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
     const value = newUnitInput.trim();
     if (!value) return;
     if ([...UNITS, ...customUnits].some((u) => u.toLowerCase() === value.toLowerCase())) {
-      setUnitError('Unit already exists');
+      setUnitError(t('household.unitExists'));
       return;
     }
     setCustomUnits((prev) => [...prev, value]);
@@ -687,7 +699,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
   // Persist staged changes without navigating. Returns true on success (incl. no-op),
   // false if validation or a write failed. The caller owns navigation.
   const persistChanges = async () => {
-    if (!nameInput.trim()) { setNameError('Required'); return false; }
+    if (!nameInput.trim()) { setNameError(t('common.required')); return false; }
 
     // Only write fields that actually changed — this is a shared household doc,
     // so blindly rewriting every field clobbers concurrent edits by other members.
@@ -757,10 +769,10 @@ export default function HouseholdEditScreen({ route, navigation }) {
       isDirtyRef.current = false;
       setCategoryRenames([]);
       setHousehold((h) => ({ ...h, name: snap.name }));
-      notify('Saved', 'Household updated.', { type: 'success' });
+      notify(t('household.saved'), t('household.householdUpdated'), { type: 'success' });
       return true;
     } catch (e) {
-      showAlert({ title: 'Error', message: e.message, type: 'error' });
+      showAlert({ title: t('common.error'), message: e.message, type: 'error' });
       return false;
     } finally {
       setSaving(false);
@@ -784,9 +796,9 @@ export default function HouseholdEditScreen({ route, navigation }) {
 
   const handleRegenerateCode = async () => {
     const confirmed = await showConfirm({
-      title: 'Regenerate invite code',
-      message: 'The current code will stop working immediately. Anyone using it will need the new code to join.',
-      confirmLabel: 'Regenerate',
+      title: t('household.regenerateTitle'),
+      message: t('household.regenerateMessage'),
+      confirmLabel: t('household.regenerate'),
       type: 'danger',
     });
     if (!confirmed) return;
@@ -794,9 +806,9 @@ export default function HouseholdEditScreen({ route, navigation }) {
     try {
       const code = await regenerateInviteCode(hhId);
       setHousehold((h) => (h ? { ...h, inviteCode: code } : h));
-      notify('Invite code updated', 'A new code is now active.', { type: 'success' });
+      notify(t('household.inviteUpdated'), t('household.inviteUpdatedMessage'), { type: 'success' });
     } catch (e) {
-      showAlert({ title: 'Error', message: e.message, type: 'error' });
+      showAlert({ title: t('common.error'), message: e.message, type: 'error' });
     } finally {
       setRegenerating(false);
     }
@@ -804,45 +816,45 @@ export default function HouseholdEditScreen({ route, navigation }) {
 
   const handleTransferOwnership = async (uid, label) => {
     const confirmed = await showConfirm({
-      title: 'Make owner',
-      message: `Make ${label} the owner of "${household?.name}"? You'll stay a member but lose owner controls.`,
-      confirmLabel: 'Make owner',
+      title: t('household.makeOwner'),
+      message: t('household.makeOwnerMessage', { name: label, household: household?.name }),
+      confirmLabel: t('household.makeOwner'),
       type: 'warning',
     });
     if (!confirmed) return;
     try {
       await transferHouseholdOwnership(hhId, uid);
       setHousehold((h) => (h ? { ...h, createdBy: uid } : h));
-      notify('Ownership transferred', `${label} is now the owner.`, { type: 'success' });
+      notify(t('household.ownershipTransferred'), t('household.ownershipTransferredMessage', { name: label }), { type: 'success' });
     } catch (e) {
-      showAlert({ title: 'Error', message: e.message, type: 'error' });
+      showAlert({ title: t('common.error'), message: e.message, type: 'error' });
     }
   };
 
   const handleLeave = async () => {
     const confirmed = await showConfirm({
-      title: 'Leave household',
-      message: `Leave "${household?.name}"? You can rejoin with the invite code.`,
-      confirmLabel: 'Leave',
+      title: t('household.leaveTitle'),
+      message: t('household.leaveMessage', { household: household?.name }),
+      confirmLabel: t('household.leave'),
       type: 'danger',
     });
     if (!confirmed) return;
     try {
       await leaveHousehold(hhId, user.uid);
       await removeHousehold(hhId);
-      notify('Left household', `You've left "${household?.name}".`, { type: 'info' });
+      notify(t('household.leftTitle'), t('household.leftMessage', { household: household?.name }), { type: 'info' });
       allowLeaveRef.current = true;
       navigation.goBack();
     } catch (e) {
-      showAlert({ title: 'Error', message: e.message, type: 'error' });
+      showAlert({ title: t('common.error'), message: e.message, type: 'error' });
     }
   };
 
   const handleRemoveMember = async (uid, label) => {
     const confirmed = await showConfirm({
-      title: 'Remove member',
-      message: `Remove ${label} from "${household?.name}"? They can rejoin with the invite code.`,
-      confirmLabel: 'Remove',
+      title: t('household.removeMember'),
+      message: t('household.removeMemberMessage', { name: label, household: household?.name }),
+      confirmLabel: t('household.remove'),
       type: 'danger',
     });
     if (!confirmed) return;
@@ -854,9 +866,9 @@ export default function HouseholdEditScreen({ route, navigation }) {
         delete profiles[uid];
         return { ...h, members: (h.members || []).filter((m) => m !== uid), memberProfiles: profiles };
       });
-      notify('Member removed', `${label} has been removed.`, { type: 'info' });
+      notify(t('household.memberRemoved'), t('household.memberRemovedMessage', { name: label }), { type: 'info' });
     } catch (e) {
-      showAlert({ title: 'Error', message: e.message, type: 'error' });
+      showAlert({ title: t('common.error'), message: e.message, type: 'error' });
     }
   };
 
@@ -880,11 +892,11 @@ export default function HouseholdEditScreen({ route, navigation }) {
           onPress={() => navigation.goBack()}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           accessibilityRole="button"
-          accessibilityLabel="Go back"
+          accessibilityLabel={t('household.goBack')}
         >
           <Ionicons name="arrow-back" size={22} color={colors.textPrimary} />
         </TouchableOpacity>
-        <Text style={styles.navTitle}>Edit Household</Text>
+        <Text style={styles.navTitle}>{t('household.title')}</Text>
         <View style={{ width: 22 }} />
       </View>
 
@@ -893,18 +905,18 @@ export default function HouseholdEditScreen({ route, navigation }) {
       ) : loadError ? (
         <View style={styles.errorState}>
           <Ionicons name="cloud-offline-outline" size={44} color={colors.textTertiary} />
-          <Text style={styles.errorStateTitle}>Couldn't load household</Text>
+          <Text style={styles.errorStateTitle}>{t('household.couldNotLoad')}</Text>
           <Text style={styles.errorStateMsg}>
-            {loadError?.message || 'Something went wrong. Check your connection and try again.'}
+            {loadError?.message || t('household.couldNotLoadMessage')}
           </Text>
           <TouchableOpacity
             style={styles.retryButton}
             onPress={loadHousehold}
             accessibilityRole="button"
-            accessibilityLabel="Retry loading household"
+            accessibilityLabel={t('household.retryA11y')}
           >
             <Ionicons name="refresh" size={16} color="#fff" />
-            <Text style={styles.retryButtonLabel}>Retry</Text>
+            <Text style={styles.retryButtonLabel}>{t('common.retry')}</Text>
           </TouchableOpacity>
         </View>
       ) : (
@@ -927,28 +939,28 @@ export default function HouseholdEditScreen({ route, navigation }) {
           {/* ═══ Household ═══ */}
           <Rise index={0}>
           <CollapsibleGroup
-            title="Household" icon="home-outline"
+            title={t('household.groupHousehold')} icon="home-outline"
             open={openGroups.household} onToggle={() => toggleGroup('household')}
             styles={styles} colors={colors}
           >
 
           {/* ── Name ── */}
-          <Text style={styles.sectionLabel}>Household Name</Text>
+          <Text style={styles.sectionLabel}>{t('household.householdName')}</Text>
           <View style={styles.card}>
             <TextInput
               style={[styles.textInput, !!nameError && styles.inputError]}
               value={nameInput}
               onChangeText={(t) => { setNameInput(t); if (nameError) setNameError(null); }}
               placeholderTextColor={colors.textTertiary}
-              placeholder="Household name *"
+              placeholder={t('household.householdNamePlaceholder')}
               returnKeyType="done"
-              accessibilityLabel="Household name"
+              accessibilityLabel={t('household.householdNameA11y')}
             />
             {!!nameError && <Text style={styles.errorText}>{nameError}</Text>}
           </View>
 
           {/* ── Invite code ── */}
-          <Text style={styles.sectionLabel}>Invite Code</Text>
+          <Text style={styles.sectionLabel}>{t('household.inviteCode')}</Text>
           <View style={styles.card}>
             <View style={styles.inviteRow}>
               <Text style={styles.inviteCode}>{household?.inviteCode ?? '—'}</Text>
@@ -956,7 +968,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
                 style={[styles.copyButton, copied && { backgroundColor: colors.successSoft, borderColor: colors.success }]}
                 onPress={handleCopyCode}
                 accessibilityRole="button"
-                accessibilityLabel="Copy invite code"
+                accessibilityLabel={t('household.copyInvite')}
               >
                 <Ionicons
                   name={copied ? 'checkmark' : 'copy-outline'}
@@ -964,37 +976,37 @@ export default function HouseholdEditScreen({ route, navigation }) {
                   color={copied ? colors.success : colors.accent}
                 />
                 <Text style={[styles.copyButtonLabel, copied && { color: colors.success }]}>
-                  {copied ? 'Copied!' : 'Copy'}
+                  {copied ? t('household.copied') : t('household.copy')}
                 </Text>
               </TouchableOpacity>
             </View>
-            <Text style={styles.inviteHint}>Share this code so others can join your household.</Text>
+            <Text style={styles.inviteHint}>{t('household.inviteHint')}</Text>
             {isCreator && (
               <TouchableOpacity
                 style={styles.regenerateBtn}
                 onPress={handleRegenerateCode}
                 disabled={regenerating}
                 accessibilityRole="button"
-                accessibilityLabel="Regenerate invite code"
+                accessibilityLabel={t('household.regenerateTitle')}
                 accessibilityState={{ disabled: regenerating }}
               >
                 <Ionicons name="refresh" size={14} color={regenerating ? colors.textTertiary : colors.danger} />
                 <Text style={[styles.regenerateBtnLabel, regenerating && { color: colors.textTertiary }]}>
-                  {regenerating ? 'Regenerating…' : 'Regenerate code'}
+                  {regenerating ? t('household.regenerating') : t('household.regenerateCode')}
                 </Text>
               </TouchableOpacity>
             )}
           </View>
 
           {/* ── Members ── */}
-          <Text style={styles.sectionLabel}>Members</Text>
+          <Text style={styles.sectionLabel}>{t('household.members')}</Text>
           <View style={styles.card}>
             {household?.members?.map((uid, i) => {
               const isYou = uid === user?.uid;
               const isOwner = uid === household?.createdBy;
               const profile = household?.memberProfiles?.[uid];
               const name = profile?.name?.trim();
-              const displayLabel = name || profile?.email || (isYou ? 'You' : 'Member');
+              const displayLabel = name || profile?.email || (isYou ? t('household.you') : t('household.member'));
               return (
                 <View key={uid} style={[styles.memberRow, i > 0 && styles.memberRowBorder]}>
                   <View style={styles.memberAvatar}>
@@ -1009,12 +1021,12 @@ export default function HouseholdEditScreen({ route, navigation }) {
                   <View style={styles.memberBadges}>
                     {isOwner && (
                       <View style={styles.ownerBadge}>
-                        <Text style={styles.ownerBadgeText}>Owner</Text>
+                        <Text style={styles.ownerBadgeText}>{t('household.owner')}</Text>
                       </View>
                     )}
                     {isYou && !isOwner && (
                       <View style={styles.youBadge}>
-                        <Text style={styles.youBadgeText}>You</Text>
+                        <Text style={styles.youBadgeText}>{t('household.you')}</Text>
                       </View>
                     )}
                     {isCreator && !isYou && !isOwner && (
@@ -1024,7 +1036,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
                           onPress={() => handleTransferOwnership(uid, displayLabel)}
                           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                           accessibilityRole="button"
-                          accessibilityLabel={`Make ${displayLabel} owner`}
+                          accessibilityLabel={t('household.makeOwnerA11y', { name: displayLabel })}
                         >
                           <Ionicons name="ribbon-outline" size={18} color={colors.accent} />
                         </TouchableOpacity>
@@ -1033,7 +1045,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
                           onPress={() => handleRemoveMember(uid, displayLabel)}
                           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                           accessibilityRole="button"
-                          accessibilityLabel={`Remove ${displayLabel}`}
+                          accessibilityLabel={t('household.removeA11y', { name: displayLabel })}
                         >
                           <Ionicons name="close-circle" size={20} color={colors.danger} />
                         </TouchableOpacity>
@@ -1046,13 +1058,13 @@ export default function HouseholdEditScreen({ route, navigation }) {
           </View>
 
           {/* ── Appearance ── */}
-          <Text style={styles.sectionLabel}>Appearance</Text>
+          <Text style={styles.sectionLabel}>{t('household.appearance')}</Text>
           <View style={styles.card}>
             <View style={styles.integrationToggleRow}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.integrationToggleTitle}>Reduce motion</Text>
+                <Text style={styles.integrationToggleTitle}>{t('household.reduceMotion')}</Text>
                 <Text style={styles.inviteHint}>
-                  Turns off entrance, chart and list animations across the app. Applies to everyone in the household.
+                  {t('household.reduceMotionHint')}
                 </Text>
               </View>
               <Switch
@@ -1061,13 +1073,13 @@ export default function HouseholdEditScreen({ route, navigation }) {
                 trackColor={{ false: colors.muted, true: colors.accent }}
                 thumbColor="#fff"
                 ios_backgroundColor={colors.muted}
-                accessibilityLabel="Reduce motion"
+                accessibilityLabel={t('household.reduceMotion')}
               />
             </View>
           </View>
 
           {/* ── Repeating Tasks ── */}
-          <Text style={styles.sectionLabel}>Repeating Tasks</Text>
+          <Text style={styles.sectionLabel}>{t('household.repeatingTasks')}</Text>
           <RepeatingTasksList householdId={hhId} />
 
           </CollapsibleGroup>
@@ -1076,22 +1088,22 @@ export default function HouseholdEditScreen({ route, navigation }) {
           {/* ═══ Pantry & Groceries ═══ */}
           <Rise index={1}>
           <CollapsibleGroup
-            title="Pantry & Groceries" icon="basket-outline"
+            title={t('household.groupPantry')} icon="basket-outline"
             open={openGroups.pantry} onToggle={() => toggleGroup('pantry')}
             styles={styles} colors={colors}
           >
 
           {/* ── Pantry Categories ── */}
           <View style={styles.sectionHeaderRow}>
-            <Text style={styles.sectionLabel}>Food Categories</Text>
+            <Text style={styles.sectionLabel}>{t('household.foodCategories')}</Text>
             <TouchableOpacity
               style={styles.addContactBtn}
               onPress={() => openAddCategory('food')}
               accessibilityRole="button"
-              accessibilityLabel="Add food category"
+              accessibilityLabel={t('household.addFoodCategory')}
             >
               <Ionicons name="add" size={15} color={colors.accent} />
-              <Text style={styles.addContactBtnLabel}>Add</Text>
+              <Text style={styles.addContactBtnLabel}>{t('common.add')}</Text>
             </TouchableOpacity>
           </View>
           <View style={[styles.card, { padding: 0 }]}>
@@ -1103,16 +1115,16 @@ export default function HouseholdEditScreen({ route, navigation }) {
                     style={styles.catSearchInput}
                     value={foodFilter}
                     onChangeText={setFoodFilter}
-                    placeholder="Filter food categories…"
+                    placeholder={t('household.filterFood')}
                     placeholderTextColor={colors.textTertiary}
                     autoCapitalize="none"
-                    accessibilityLabel="Filter food categories"
+                    accessibilityLabel={t('household.filterFoodA11y')}
                   />
                   {!!foodTerm && (
                     <TouchableOpacity
                       onPress={() => setFoodFilter('')}
                       hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                      accessibilityRole="button" accessibilityLabel="Clear filter"
+                      accessibilityRole="button" accessibilityLabel={t('household.clearFilter')}
                     >
                       <Ionicons name="close-circle" size={16} color={colors.textTertiary} />
                     </TouchableOpacity>
@@ -1121,7 +1133,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
                 {foodTerm ? (
                   filteredFoodCats.length === 0 ? (
                     <Text style={[styles.inviteHint, { padding: spacing.lg, textAlign: 'center' }]}>
-                      No categories match “{foodTerm}”.
+                      {t('household.noCategoriesMatch', { term: foodTerm })}
                     </Text>
                   ) : filteredFoodCats.map((cat, i) => (
                     <View key={cat.label} style={[styles.categoryRow, i > 0 && styles.categoryRowBorder]}>
@@ -1142,15 +1154,15 @@ export default function HouseholdEditScreen({ route, navigation }) {
 
           {/* ── Non-Food Categories ── */}
           <View style={styles.sectionHeaderRow}>
-            <Text style={styles.sectionLabel}>Non-Food Categories</Text>
+            <Text style={styles.sectionLabel}>{t('household.nonFoodCategories')}</Text>
             <TouchableOpacity
               style={styles.addContactBtn}
               onPress={() => openAddCategory('non-food')}
               accessibilityRole="button"
-              accessibilityLabel="Add non-food category"
+              accessibilityLabel={t('household.addNonFoodCategory')}
             >
               <Ionicons name="add" size={15} color={colors.accent} />
-              <Text style={styles.addContactBtnLabel}>Add</Text>
+              <Text style={styles.addContactBtnLabel}>{t('common.add')}</Text>
             </TouchableOpacity>
           </View>
           <View style={[styles.card, { padding: 0 }]}>
@@ -1162,16 +1174,16 @@ export default function HouseholdEditScreen({ route, navigation }) {
                     style={styles.catSearchInput}
                     value={nonFoodFilter}
                     onChangeText={setNonFoodFilter}
-                    placeholder="Filter non-food categories…"
+                    placeholder={t('household.filterNonFood')}
                     placeholderTextColor={colors.textTertiary}
                     autoCapitalize="none"
-                    accessibilityLabel="Filter non-food categories"
+                    accessibilityLabel={t('household.filterNonFoodA11y')}
                   />
                   {!!nonFoodTerm && (
                     <TouchableOpacity
                       onPress={() => setNonFoodFilter('')}
                       hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                      accessibilityRole="button" accessibilityLabel="Clear filter"
+                      accessibilityRole="button" accessibilityLabel={t('household.clearFilter')}
                     >
                       <Ionicons name="close-circle" size={16} color={colors.textTertiary} />
                     </TouchableOpacity>
@@ -1180,7 +1192,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
                 {nonFoodTerm ? (
                   filteredNonFoodCats.length === 0 ? (
                     <Text style={[styles.inviteHint, { padding: spacing.lg, textAlign: 'center' }]}>
-                      No categories match “{nonFoodTerm}”.
+                      {t('household.noCategoriesMatch', { term: nonFoodTerm })}
                     </Text>
                   ) : filteredNonFoodCats.map((cat, i) => (
                     <View key={cat.label} style={[styles.categoryRow, i > 0 && styles.categoryRowBorder]}>
@@ -1200,9 +1212,9 @@ export default function HouseholdEditScreen({ route, navigation }) {
           </View>
 
           {/* ── Units ── */}
-          <Text style={styles.sectionLabel}>Food Units</Text>
+          <Text style={styles.sectionLabel}>{t('household.foodUnits')}</Text>
           <View style={styles.card}>
-            <Text style={styles.inviteHint}>Select which units appear in pantry and grocery pickers.</Text>
+            <Text style={styles.inviteHint}>{t('household.foodUnitsHint')}</Text>
             <View style={styles.unitsGrid}>
               {UNITS.map((unit) => {
                 const isOn = enabledUnits.includes(unit);
@@ -1215,7 +1227,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
                     accessibilityState={{ checked: isOn }}
                     accessibilityLabel={unit}
                   >
-                    <Text style={[styles.unitToggleLabel, isOn && styles.unitToggleLabelActive]}>{unit}</Text>
+                    <Text style={[styles.unitToggleLabel, isOn && styles.unitToggleLabelActive]}>{unitName(unit)}</Text>
                   </TouchableOpacity>
                 );
               })}
@@ -1226,7 +1238,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
                     onPress={() => setCustomUnits((prev) => prev.filter((u) => u !== unit))}
                     hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
                     accessibilityRole="button"
-                    accessibilityLabel={`Remove ${unit}`}
+                    accessibilityLabel={t('household.removeUnit', { unit })}
                   >
                     <Ionicons name="close" size={12} color={colors.accent} />
                   </TouchableOpacity>
@@ -1238,19 +1250,19 @@ export default function HouseholdEditScreen({ route, navigation }) {
                 style={[styles.addUnitInput, !!unitError && styles.inputError]}
                 value={newUnitInput}
                 onChangeText={(t) => { setNewUnitInput(t); if (unitError) setUnitError(null); }}
-                placeholder="Add custom unit…"
+                placeholder={t('household.customUnitPlaceholder')}
                 placeholderTextColor={colors.textTertiary}
                 returnKeyType="done"
                 onSubmitEditing={handleAddUnit}
                 autoCapitalize="none"
-                accessibilityLabel="Custom unit name"
+                accessibilityLabel={t('household.customUnitA11y')}
               />
               <TouchableOpacity
                 style={[styles.addUnitBtn, !newUnitInput.trim() && { opacity: 0.4 }]}
                 onPress={handleAddUnit}
                 disabled={!newUnitInput.trim()}
                 accessibilityRole="button"
-                accessibilityLabel="Add unit"
+                accessibilityLabel={t('household.addUnit')}
               >
                 <Ionicons name="add" size={18} color="#fff" />
               </TouchableOpacity>
@@ -1264,22 +1276,22 @@ export default function HouseholdEditScreen({ route, navigation }) {
           {/* ═══ Finance ═══ */}
           <Rise index={2}>
           <CollapsibleGroup
-            title="Finance" icon="wallet-outline"
+            title={t('household.groupFinance')} icon="wallet-outline"
             open={openGroups.finance} onToggle={() => toggleGroup('finance')}
             styles={styles} colors={colors}
           >
 
           {/* ── Bill Categories ── */}
           <View style={styles.sectionHeaderRow}>
-            <Text style={styles.sectionLabel}>Bill Categories</Text>
+            <Text style={styles.sectionLabel}>{t('household.billCategories')}</Text>
             <TouchableOpacity
               style={styles.addContactBtn}
               onPress={() => openAddFinanceCat('bill')}
               accessibilityRole="button"
-              accessibilityLabel="Add bill category"
+              accessibilityLabel={t('household.addBillCategory')}
             >
               <Ionicons name="add" size={15} color={colors.accent} />
-              <Text style={styles.addContactBtnLabel}>Add</Text>
+              <Text style={styles.addContactBtnLabel}>{t('common.add')}</Text>
             </TouchableOpacity>
           </View>
           <View style={[styles.card, { padding: 0 }]}>
@@ -1288,15 +1300,15 @@ export default function HouseholdEditScreen({ route, navigation }) {
 
           {/* ── Expense Categories ── */}
           <View style={styles.sectionHeaderRow}>
-            <Text style={styles.sectionLabel}>Expense Categories</Text>
+            <Text style={styles.sectionLabel}>{t('household.expenseCategories')}</Text>
             <TouchableOpacity
               style={styles.addContactBtn}
               onPress={() => openAddFinanceCat('expense')}
               accessibilityRole="button"
-              accessibilityLabel="Add expense category"
+              accessibilityLabel={t('household.addExpenseCategory')}
             >
               <Ionicons name="add" size={15} color={colors.accent} />
-              <Text style={styles.addContactBtnLabel}>Add</Text>
+              <Text style={styles.addContactBtnLabel}>{t('common.add')}</Text>
             </TouchableOpacity>
           </View>
           <View style={[styles.card, { padding: 0 }]}>
@@ -1309,7 +1321,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
           {/* ═══ Emergency ═══ */}
           <Rise index={3}>
           <CollapsibleGroup
-            title="Emergency Contacts" icon="medkit-outline"
+            title={t('household.groupEmergency')} icon="medkit-outline"
             open={openGroups.emergency} onToggle={() => toggleGroup('emergency')}
             styles={styles} colors={colors}
             action={(
@@ -1317,16 +1329,16 @@ export default function HouseholdEditScreen({ route, navigation }) {
                 style={styles.addContactBtn}
                 onPress={openAddContact}
                 accessibilityRole="button"
-                accessibilityLabel="Add emergency contact"
+                accessibilityLabel={t('household.addContactA11y')}
               >
                 <Ionicons name="add" size={15} color={colors.accent} />
-                <Text style={styles.addContactBtnLabel}>Add</Text>
+                <Text style={styles.addContactBtnLabel}>{t('common.add')}</Text>
               </TouchableOpacity>
             )}
           >
           <View style={[styles.card, contacts.length === 0 && { paddingVertical: spacing.lg }]}>
             {contacts.length === 0 ? (
-              <Text style={[styles.inviteHint, { textAlign: 'center' }]}>No emergency contacts yet.</Text>
+              <Text style={[styles.inviteHint, { textAlign: 'center' }]}>{t('household.noContacts')}</Text>
             ) : (
               contacts.map((c, i) => (
                 <View key={c.id} style={[styles.contactRow, i > 0 && styles.contactRowBorder]}>
@@ -1344,7 +1356,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
                       onPress={() => openEditContact(c)}
                       hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                       accessibilityRole="button"
-                      accessibilityLabel={`Edit ${c.name}`}
+                      accessibilityLabel={t('household.editItem', { name: c.name })}
                     >
                       <Ionicons name="pencil-outline" size={17} color={colors.textTertiary} />
                     </TouchableOpacity>
@@ -1352,7 +1364,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
                       onPress={() => handleDeleteContact(c.id)}
                       hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                       accessibilityRole="button"
-                      accessibilityLabel={`Delete ${c.name}`}
+                      accessibilityLabel={t('household.deleteItem', { name: c.name })}
                     >
                       <Ionicons name="trash-outline" size={17} color={colors.danger} />
                     </TouchableOpacity>
@@ -1368,31 +1380,31 @@ export default function HouseholdEditScreen({ route, navigation }) {
           {/* ═══ Integrations ═══ */}
           <Rise index={4}>
           <CollapsibleGroup
-            title="Integrations" icon="hardware-chip-outline"
+            title={t('household.groupIntegrations')} icon="hardware-chip-outline"
             open={openGroups.integrations} onToggle={() => toggleGroup('integrations')}
             styles={styles} colors={colors}
           >
 
           {/* ── OpenRouter API Key ── */}
-          <Text style={styles.sectionLabel}>OpenRouter API Key</Text>
+          <Text style={styles.sectionLabel}>{t('household.openRouterKey')}</Text>
           <View style={styles.card}>
             <View style={styles.goveeKeyRow}>
               <TextInput
                 style={[styles.textInput, { flex: 1 }]}
                 value={openRouterApiKey}
                 onChangeText={setOpenRouterApiKey}
-                placeholder="Paste your OpenRouter API key…"
+                placeholder={t('household.openRouterPlaceholder')}
                 placeholderTextColor={colors.textTertiary}
                 secureTextEntry={!showOpenRouterKey}
                 autoCapitalize="none"
                 autoCorrect={false}
-                accessibilityLabel="OpenRouter API key"
+                accessibilityLabel={t('household.openRouterA11y')}
               />
               <TouchableOpacity
                 onPress={() => setShowOpenRouterKey((v) => !v)}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 accessibilityRole="button"
-                accessibilityLabel={showOpenRouterKey ? 'Hide API key' : 'Show API key'}
+                accessibilityLabel={showOpenRouterKey ? t('household.hideKey') : t('household.showKey')}
                 style={styles.goveeKeyToggle}
               >
                 <Ionicons
@@ -1403,12 +1415,12 @@ export default function HouseholdEditScreen({ route, navigation }) {
               </TouchableOpacity>
             </View>
             <Text style={styles.inviteHint}>
-              Powers the AI assistant and bank-statement import. Create a key at openrouter.ai under Keys. Stored securely per household.
+              {t('household.openRouterHint')}
             </Text>
           </View>
 
           {/* ── AI Model ── */}
-          <Text style={styles.sectionLabel}>AI Model</Text>
+          <Text style={styles.sectionLabel}>{t('household.aiModel')}</Text>
           <View style={styles.card}>
             {AI_MODELS.map((m, i) => {
               const selected = aiModel === m.id;
@@ -1436,7 +1448,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
                           styles.modelTagText,
                           { color: m.tier === 'free' ? colors.sage : colors.textSecondary },
                         ]}>
-                          {m.tier === 'free' ? 'Free' : 'Paid'}
+                          {m.tier === 'free' ? t('household.free') : t('household.paid')}
                         </Text>
                       </View>
                     </View>
@@ -1451,12 +1463,12 @@ export default function HouseholdEditScreen({ route, navigation }) {
           </View>
 
           {/* ── Govee Smart Lights ── */}
-          <Text style={styles.sectionLabel}>Govee Smart Lights</Text>
+          <Text style={styles.sectionLabel}>{t('household.govee')}</Text>
           <View style={styles.card}>
             <View style={styles.integrationToggleRow}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.integrationToggleTitle}>Enable Govee</Text>
-                <Text style={styles.inviteHint}>Shows the Lights page and enables Govee light control.</Text>
+                <Text style={styles.integrationToggleTitle}>{t('household.enableGovee')}</Text>
+                <Text style={styles.inviteHint}>{t('household.enableGoveeHint')}</Text>
               </View>
               <Switch
                 value={goveeEnabled}
@@ -1464,7 +1476,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
                 trackColor={{ false: colors.muted, true: colors.accent }}
                 thumbColor="#fff"
                 ios_backgroundColor={colors.muted}
-                accessibilityLabel="Enable Govee integration"
+                accessibilityLabel={t('household.enableGoveeA11y')}
               />
             </View>
             {goveeEnabled && (
@@ -1474,18 +1486,18 @@ export default function HouseholdEditScreen({ route, navigation }) {
                     style={[styles.textInput, { flex: 1 }]}
                     value={goveeApiKey}
                     onChangeText={setGoveeApiKey}
-                    placeholder="Paste your Govee API key…"
+                    placeholder={t('household.goveePlaceholder')}
                     placeholderTextColor={colors.textTertiary}
                     secureTextEntry={!showGoveeKey}
                     autoCapitalize="none"
                     autoCorrect={false}
-                    accessibilityLabel="Govee API key"
+                    accessibilityLabel={t('household.goveeA11y')}
                   />
                   <TouchableOpacity
                     onPress={() => setShowGoveeKey((v) => !v)}
                     hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     accessibilityRole="button"
-                    accessibilityLabel={showGoveeKey ? 'Hide API key' : 'Show API key'}
+                    accessibilityLabel={showGoveeKey ? t('household.hideKey') : t('household.showKey')}
                     style={styles.goveeKeyToggle}
                   >
                     <Ionicons
@@ -1496,19 +1508,19 @@ export default function HouseholdEditScreen({ route, navigation }) {
                   </TouchableOpacity>
                 </View>
                 <Text style={styles.inviteHint}>
-                  Found in the Govee Home app under Profile → About Us → Apply for API key. Stored securely per household.
+                  {t('household.goveeHint')}
                 </Text>
               </>
             )}
           </View>
 
           {/* ── Xiaomi (Mi Home) ── */}
-          <Text style={styles.sectionLabel}>Xiaomi (Mi Home)</Text>
+          <Text style={styles.sectionLabel}>{t('household.xiaomi')}</Text>
           <View style={styles.card}>
             <View style={styles.integrationToggleRow}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.integrationToggleTitle}>Enable Xiaomi</Text>
-                <Text style={styles.inviteHint}>Shows the Xiaomi page and enables Mi Home device control.</Text>
+                <Text style={styles.integrationToggleTitle}>{t('household.enableXiaomi')}</Text>
+                <Text style={styles.inviteHint}>{t('household.enableXiaomiHint')}</Text>
               </View>
               <Switch
                 value={xiaomiEnabled}
@@ -1516,12 +1528,12 @@ export default function HouseholdEditScreen({ route, navigation }) {
                 trackColor={{ false: colors.muted, true: colors.accent }}
                 thumbColor="#fff"
                 ios_backgroundColor={colors.muted}
-                accessibilityLabel="Enable Xiaomi integration"
+                accessibilityLabel={t('household.enableXiaomiA11y')}
               />
             </View>
             {xiaomiEnabled && (
               <>
-            <Text style={styles.modalLabel}>User ID</Text>
+            <Text style={styles.modalLabel}>{t('xiaomi.userId')}</Text>
             <TextInput
               style={styles.textInput}
               value={xiaomiCreds.userId}
@@ -1530,16 +1542,16 @@ export default function HouseholdEditScreen({ route, navigation }) {
               placeholderTextColor={colors.textTertiary}
               autoCapitalize="none"
               autoCorrect={false}
-              accessibilityLabel="Xiaomi user ID"
+              accessibilityLabel={t('household.xiaomiUserA11y')}
             />
 
             <View style={styles.xiaomiLabelRow}>
-              <Text style={styles.modalLabel}>Service Token</Text>
+              <Text style={styles.modalLabel}>{t('xiaomi.serviceToken')}</Text>
               <TouchableOpacity
                 onPress={() => setShowXiaomiSecrets((v) => !v)}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 accessibilityRole="button"
-                accessibilityLabel={showXiaomiSecrets ? 'Hide secrets' : 'Show secrets'}
+                accessibilityLabel={showXiaomiSecrets ? t('household.hideSecrets') : t('household.showSecrets')}
               >
                 <Ionicons
                   name={showXiaomiSecrets ? 'eye-off-outline' : 'eye-outline'}
@@ -1552,28 +1564,28 @@ export default function HouseholdEditScreen({ route, navigation }) {
               style={styles.textInput}
               value={xiaomiCreds.serviceToken}
               onChangeText={(t) => setXiaomiCreds((c) => ({ ...c, serviceToken: t }))}
-              placeholder="Service token"
+              placeholder={t('household.serviceTokenPlaceholder')}
               placeholderTextColor={colors.textTertiary}
               secureTextEntry={!showXiaomiSecrets}
               autoCapitalize="none"
               autoCorrect={false}
-              accessibilityLabel="Xiaomi service token"
+              accessibilityLabel={t('household.xiaomiTokenA11y')}
             />
 
-            <Text style={styles.modalLabel}>Security Key (ssecurity)</Text>
+            <Text style={styles.modalLabel}>{t('xiaomi.securityKey')}</Text>
             <TextInput
               style={styles.textInput}
               value={xiaomiCreds.ssecurity}
               onChangeText={(t) => setXiaomiCreds((c) => ({ ...c, ssecurity: t }))}
-              placeholder="base64-encoded key"
+              placeholder={t('xiaomi.securityKeyPlaceholder')}
               placeholderTextColor={colors.textTertiary}
               secureTextEntry={!showXiaomiSecrets}
               autoCapitalize="none"
               autoCorrect={false}
-              accessibilityLabel="Xiaomi security key"
+              accessibilityLabel={t('household.xiaomiKeyA11y')}
             />
 
-            <Text style={styles.modalLabel}>Region</Text>
+            <Text style={styles.modalLabel}>{t('xiaomi.region')}</Text>
             <View style={styles.unitsGrid}>
               {XIAOMI_REGIONS.map((r) => {
                 const isOn = xiaomiCreds.region === r.key;
@@ -1584,9 +1596,9 @@ export default function HouseholdEditScreen({ route, navigation }) {
                     onPress={() => setXiaomiCreds((c) => ({ ...c, region: r.key }))}
                     accessibilityRole="radio"
                     accessibilityState={{ selected: isOn }}
-                    accessibilityLabel={r.label}
+                    accessibilityLabel={regionName(r.label)}
                   >
-                    <Text style={[styles.unitToggleLabel, isOn && styles.unitToggleLabelActive]}>{r.label}</Text>
+                    <Text style={[styles.unitToggleLabel, isOn && styles.unitToggleLabelActive]}>{regionName(r.label)}</Text>
                   </TouchableOpacity>
                 );
               })}
@@ -1605,14 +1617,14 @@ export default function HouseholdEditScreen({ route, navigation }) {
           {/* ═══ Danger Zone ═══ */}
           <Rise index={5}>
           <CollapsibleGroup
-            title="Danger Zone" icon="warning-outline"
+            title={t('household.groupDanger')} icon="warning-outline"
             open={openGroups.danger} onToggle={() => toggleGroup('danger')}
             styles={styles} colors={colors}
           >
           <View style={styles.card}>
             <TouchableOpacity style={styles.leaveButton} onPress={handleLeave} accessibilityRole="button">
               <Ionicons name="exit-outline" size={18} color={colors.danger} />
-              <Text style={styles.leaveButtonLabel}>Leave Household</Text>
+              <Text style={styles.leaveButtonLabel}>{t('household.leaveHousehold')}</Text>
             </TouchableOpacity>
           </View>
           </CollapsibleGroup>
@@ -1643,7 +1655,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
                 accessibilityRole="button"
                 accessibilityState={{ disabled: !isDirty || saving }}
               >
-                <Text style={styles.updateButtonLabel}>{saving ? 'Saving…' : isDirty ? 'Save Changes' : 'No Changes'}</Text>
+                <Text style={styles.updateButtonLabel}>{saving ? t('common.saving') : isDirty ? t('grocery.saveChanges') : t('household.noChanges')}</Text>
               </TouchableOpacity>
             </View>
           ) : (
@@ -1664,14 +1676,14 @@ export default function HouseholdEditScreen({ route, navigation }) {
                   onPress={handleSaveAll}
                   disabled={!isDirty || saving}
                   accessibilityRole="button"
-                  accessibilityLabel={saving ? 'Saving' : isDirty ? 'Save changes' : 'No changes to save'}
+                  accessibilityLabel={saving ? t('household.saving') : isDirty ? t('household.saveChanges') : t('household.noChangesToSave')}
                   accessibilityState={{ disabled: !isDirty || saving }}
                 >
                   <Animated.View style={[styles.saveFabLayer, { opacity: saveExpand.interpolate({ inputRange: [0, 0.4], outputRange: [1, 0], extrapolate: 'clamp' }) }]}>
                     <Ionicons name="checkmark" size={24} color={colors.textSecondary} />
                   </Animated.View>
                   <Animated.View style={[styles.saveFabLayer, { opacity: saveExpand.interpolate({ inputRange: [0.6, 1], outputRange: [0, 1], extrapolate: 'clamp' }) }]}>
-                    <Text style={styles.updateButtonLabel} numberOfLines={1}>{saving ? 'Saving…' : 'Save Changes'}</Text>
+                    <Text style={styles.updateButtonLabel} numberOfLines={1}>{saving ? t('common.saving') : t('grocery.saveChanges')}</Text>
                   </Animated.View>
                 </TouchableOpacity>
               </Animated.View>
@@ -1691,9 +1703,11 @@ export default function HouseholdEditScreen({ route, navigation }) {
           <View style={styles.modalSheet}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>
-                {`${financeCatEditing ? 'Edit' : 'Add'} ${financeCatType === 'bill' ? 'Bill' : 'Expense'} Category`}
+                {t(financeCatType === 'bill'
+                  ? (financeCatEditing ? 'household.editBillCategoryTitle' : 'household.addBillCategoryTitle')
+                  : (financeCatEditing ? 'household.editExpenseCategoryTitle' : 'household.addExpenseCategoryTitle'))}
               </Text>
-              <TouchableOpacity onPress={() => setFinanceCatType(null)} accessibilityRole="button" accessibilityLabel="Close">
+              <TouchableOpacity onPress={() => setFinanceCatType(null)} accessibilityRole="button" accessibilityLabel={t('common.close')}>
                 <Ionicons name="close" size={22} color={colors.textPrimary} />
               </TouchableOpacity>
             </View>
@@ -1704,17 +1718,17 @@ export default function HouseholdEditScreen({ route, navigation }) {
               onChange={(ic) => setFinanceCatForm((f) => ({ ...f, icon: ic }))}
             />
 
-            <Text style={styles.modalLabel}>Category Name *</Text>
+            <Text style={styles.modalLabel}>{t('household.categoryName')}</Text>
             <TextInput
               style={[styles.modalInput, !!financeCatError && styles.inputError]}
               value={financeCatForm.label}
               onChangeText={(t) => { setFinanceCatForm((f) => ({ ...f, label: t })); if (financeCatError) setFinanceCatError(null); }}
-              placeholder="e.g. Pet care, Garden"
+              placeholder={t('household.financeCatPlaceholder')}
               placeholderTextColor={colors.textTertiary}
               returnKeyType="done"
               onSubmitEditing={handleSaveFinanceCat}
               autoFocus
-              accessibilityLabel="Category name"
+              accessibilityLabel={t('household.categoryNameA11y')}
             />
             {!!financeCatError && <Text style={styles.errorText}>{financeCatError}</Text>}
 
@@ -1724,7 +1738,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
               disabled={!financeCatForm.label.trim()}
               accessibilityRole="button"
             >
-              <Text style={styles.updateButtonLabel}>{financeCatEditing ? 'Save' : 'Add Category'}</Text>
+              <Text style={styles.updateButtonLabel}>{financeCatEditing ? t('common.save') : t('household.addCategory')}</Text>
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
@@ -1741,9 +1755,11 @@ export default function HouseholdEditScreen({ route, navigation }) {
           <View style={styles.modalSheet}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>
-                {`${catEditing ? 'Edit' : 'Add'} ${catModalType === 'non-food' ? 'Non-Food' : 'Food'} Category`}
+                {t(catModalType === 'non-food'
+                  ? (catEditing ? 'household.editNonFoodCategoryTitle' : 'household.addNonFoodCategoryTitle')
+                  : (catEditing ? 'household.editFoodCategoryTitle' : 'household.addFoodCategoryTitle'))}
               </Text>
-              <TouchableOpacity onPress={() => setCatModal(false)} accessibilityRole="button" accessibilityLabel="Close">
+              <TouchableOpacity onPress={() => setCatModal(false)} accessibilityRole="button" accessibilityLabel={t('common.close')}>
                 <Ionicons name="close" size={22} color={colors.textPrimary} />
               </TouchableOpacity>
             </View>
@@ -1754,20 +1770,20 @@ export default function HouseholdEditScreen({ route, navigation }) {
               onChange={(ic) => setCatForm((f) => ({ ...f, icon: ic }))}
             />
 
-            <Text style={styles.modalLabel}>Category Name *</Text>
+            <Text style={styles.modalLabel}>{t('household.categoryName')}</Text>
             <TextInput
               style={[styles.modalInput, !!catError && styles.inputError, catLocked && { opacity: 0.5 }]}
               value={catForm.label}
               onChangeText={(t) => { setCatForm((f) => ({ ...f, label: t })); if (catError) setCatError(null); }}
-              placeholder="e.g. Dairy, Fresh Produce"
+              placeholder={t('household.pantryCatPlaceholder')}
               placeholderTextColor={colors.textTertiary}
               returnKeyType="done"
               onSubmitEditing={handleSaveCategory}
               autoFocus={!catLocked}
               editable={!catLocked}
-              accessibilityLabel="Category name"
+              accessibilityLabel={t('household.categoryNameA11y')}
             />
-            {catLocked && <Text style={styles.inviteHint}>This is the fallback category, so only its icon can change.</Text>}
+            {catLocked && <Text style={styles.inviteHint}>{t('household.fallbackLocked')}</Text>}
             {!!catError && <Text style={styles.errorText}>{catError}</Text>}
 
             <TouchableOpacity
@@ -1776,7 +1792,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
               disabled={!catForm.label.trim()}
               accessibilityRole="button"
             >
-              <Text style={styles.updateButtonLabel}>{catEditing ? 'Save' : 'Add Category'}</Text>
+              <Text style={styles.updateButtonLabel}>{catEditing ? t('common.save') : t('household.addCategory')}</Text>
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
@@ -1793,9 +1809,9 @@ export default function HouseholdEditScreen({ route, navigation }) {
           <View style={styles.modalSheet}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>
-                {contactModal?.mode === 'add' ? 'Add Contact' : 'Edit Contact'}
+                {contactModal?.mode === 'add' ? t('household.addContact') : t('household.editContact')}
               </Text>
-              <TouchableOpacity onPress={() => setContactModal(null)} accessibilityRole="button" accessibilityLabel="Close">
+              <TouchableOpacity onPress={() => setContactModal(null)} accessibilityRole="button" accessibilityLabel={t('common.close')}>
                 <Ionicons name="close" size={22} color={colors.textPrimary} />
               </TouchableOpacity>
             </View>
@@ -1808,19 +1824,19 @@ export default function HouseholdEditScreen({ route, navigation }) {
             />
 
             {/* Name */}
-            <Text style={styles.modalLabel}>Name *</Text>
+            <Text style={styles.modalLabel}>{t('household.contactName')}</Text>
             <TextInput
               style={styles.modalInput}
               value={contactForm.name}
               onChangeText={(t) => setContactForm((f) => ({ ...f, name: t }))}
-              placeholder="e.g. Dr. Smith, Mom, Police"
+              placeholder={t('household.contactNamePlaceholder')}
               placeholderTextColor={colors.textTertiary}
               returnKeyType="next"
-              accessibilityLabel="Contact name"
+              accessibilityLabel={t('household.contactNameA11y')}
             />
 
             {/* Phone */}
-            <Text style={styles.modalLabel}>Phone / Contact *</Text>
+            <Text style={styles.modalLabel}>{t('household.phone')}</Text>
             <TextInput
               style={styles.modalInput}
               value={contactForm.phone}
@@ -1829,11 +1845,11 @@ export default function HouseholdEditScreen({ route, navigation }) {
               placeholderTextColor={colors.textTertiary}
               keyboardType="phone-pad"
               returnKeyType="next"
-              accessibilityLabel="Phone number"
+              accessibilityLabel={t('household.phoneA11y')}
             />
 
             {/* Relationship */}
-            <Text style={styles.modalLabel}>Relationship</Text>
+            <Text style={styles.modalLabel}>{t('household.relationship')}</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipRow} contentContainerStyle={styles.chipRowContent}>
               {RELATIONSHIPS.map((rel) => (
                 <TouchableOpacity
@@ -1841,25 +1857,25 @@ export default function HouseholdEditScreen({ route, navigation }) {
                   style={[styles.chip, contactForm.relationship === rel && styles.chipSelected]}
                   onPress={() => setContactForm((f) => ({ ...f, relationship: rel === f.relationship ? '' : rel }))}
                   accessibilityRole="button"
-                  accessibilityLabel={rel}
+                  accessibilityLabel={relationName(rel)}
                 >
-                  <Text style={[styles.chipLabel, contactForm.relationship === rel && styles.chipLabelSelected]}>{rel}</Text>
+                  <Text style={[styles.chipLabel, contactForm.relationship === rel && styles.chipLabelSelected]}>{relationName(rel)}</Text>
                 </TouchableOpacity>
               ))}
             </ScrollView>
 
             {/* Notes */}
-            <Text style={styles.modalLabel}>Notes</Text>
+            <Text style={styles.modalLabel}>{t('household.notes')}</Text>
             <TextInput
               style={[styles.modalInput, styles.modalInputMulti]}
               value={contactForm.notes}
               onChangeText={(t) => setContactForm((f) => ({ ...f, notes: t }))}
-              placeholder="Address, hours, extra info…"
+              placeholder={t('household.notesPlaceholder')}
               placeholderTextColor={colors.textTertiary}
               multiline
               numberOfLines={3}
               returnKeyType="done"
-              accessibilityLabel="Notes"
+              accessibilityLabel={t('household.notes')}
             />
 
             <TouchableOpacity
@@ -1871,7 +1887,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
               disabled={contactSaving || !contactForm.name.trim() || !contactForm.phone.trim()}
               accessibilityRole="button"
             >
-              <Text style={styles.updateButtonLabel}>{contactSaving ? 'Saving…' : 'Save Contact'}</Text>
+              <Text style={styles.updateButtonLabel}>{contactSaving ? t('common.saving') : t('household.saveContact')}</Text>
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>

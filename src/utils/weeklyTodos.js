@@ -2,6 +2,7 @@
 // recurring-task materialization. See docs/weekly-todos-next.md.
 import { addDays, addWeeks, format, parseISO, startOfWeek } from 'date-fns';
 import { FULL_DAYS } from './categories';
+import { t } from '../i18n';
 
 export const MAX_TODOS_PER_DAY = 15;
 export const WEEK_NAV_RANGE = 8;   // arrows reach ±8 weeks from this one
@@ -90,8 +91,8 @@ export function planMaterialization(rules, weekKey, weekTodos, max = MAX_TODOS_P
 export function formatRecurrenceDays(days) {
   const set = new Set(days ?? []);
   const ordered = FULL_DAYS.filter((d) => set.has(d));
-  if (ordered.length === 7) return 'Every day';
-  if (ordered.length === 5 && FULL_DAYS.slice(0, 5).every((d) => set.has(d))) return 'Weekdays';
-  if (ordered.length === 2 && set.has('Saturday') && set.has('Sunday')) return 'Weekends';
+  if (ordered.length === 7) return t('components.everyDay');
+  if (ordered.length === 5 && FULL_DAYS.slice(0, 5).every((d) => set.has(d))) return t('components.weekdays');
+  if (ordered.length === 2 && set.has('Saturday') && set.has('Sunday')) return t('components.weekends');
   return ordered.map((d) => d.slice(0, 3)).join(', ');
 }

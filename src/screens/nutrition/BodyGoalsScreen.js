@@ -23,6 +23,8 @@ import DatePickerInput from '../../components/DatePickerInput';
 import { spacing, radius, type } from '../../theme/colors';
 import { useIsDesktop, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
 import { Rise, useEntranceReplay } from '../../components/Motion';
+import { t } from '../../i18n';
+import { useLanguage } from '../../context/LanguageContext';
 
 const CHART_POINTS = 30;
 const CHART_HEIGHT = 110;
@@ -47,6 +49,7 @@ const profileToForm = (p) => ({
 });
 
 export default function BodyGoalsScreen({ navigation }) {
+  useLanguage();
   const { householdId, user } = useAuth();
   const { colors } = useTheme();
   const navScrollProps = useNavScrollProps();
@@ -85,20 +88,20 @@ export default function BodyGoalsScreen({ navigation }) {
   const handleLog = async () => {
     const kg = parseMetric(weightText);
     if (!kg || kg < 20 || kg > 400) {
-      showAlert({ title: 'Invalid weight', message: 'Enter a weight in kg between 20 and 400.', type: 'warning' });
+      showAlert({ title: t('body.invalidWeight'), message: t('body.invalidWeightMessage'), type: 'warning' });
       return;
     }
     if (!logDate) {
-      showAlert({ title: 'Pick a date', message: 'Choose the date of this weigh-in.', type: 'warning' });
+      showAlert({ title: t('body.pickDate'), message: t('body.pickDateMessage'), type: 'warning' });
       return;
     }
     setLogging(true);
     try {
       await logWeight(householdId, user.uid, logDate, kg);
       setWeightText('');
-      notify('Weight logged', `${fmtKg(kg)} on ${fmtDate(logDate)}.`, { type: 'success' });
+      notify(t('body.weightLogged'), t('body.weightOn', { weight: fmtKg(kg), date: fmtDate(logDate) }), { type: 'success' });
     } catch (e) {
-      showAlert({ title: 'Could not save', message: e.message, type: 'danger' });
+      showAlert({ title: t('body.couldNotSave'), message: e.message, type: 'danger' });
     } finally {
       setLogging(false);
     }
@@ -106,15 +109,15 @@ export default function BodyGoalsScreen({ navigation }) {
 
   const handleDelete = async (log) => {
     const ok = await showConfirm({
-      title: 'Delete entry?',
-      message: `${fmtKg(log.weightKg)} on ${fmtDate(log.date)}`,
-      confirmLabel: 'Delete',
+      title: t('body.deleteEntry'),
+      message: t('body.entryOn', { weight: fmtKg(log.weightKg), date: fmtDate(log.date) }),
+      confirmLabel: t('common.delete'),
     });
     if (!ok) return;
     try {
       await deleteWeightLog(householdId, log.id);
     } catch (e) {
-      showAlert({ title: 'Could not delete', message: e.message, type: 'danger' });
+      showAlert({ title: t('body.couldNotDelete'), message: e.message, type: 'danger' });
     }
   };
 
@@ -123,14 +126,14 @@ export default function BodyGoalsScreen({ navigation }) {
     const goalWeightKg = form.goalWeightKg.trim() ? parseMetric(form.goalWeightKg) : null;
     const age          = calcAge(form.birthDate);
     const problems = [];
-    if (!form.sex) problems.push('Choose a sex (used by the BMR formula).');
-    if (age == null || age < 13) problems.push('Enter a valid birth date (13+ years).');
-    if (!heightCm || heightCm < 80 || heightCm > 250) problems.push('Height must be 80–250 cm.');
+    if (!form.sex) problems.push(t('body.chooseSex'));
+    if (age == null || age < 13) problems.push(t('body.validBirthDate'));
+    if (!heightCm || heightCm < 80 || heightCm > 250) problems.push(t('body.heightRange'));
     if (form.goalWeightKg.trim() && (!goalWeightKg || goalWeightKg < 20 || goalWeightKg > 400)) {
-      problems.push('Goal weight must be 20–400 kg.');
+      problems.push(t('body.goalWeightRange'));
     }
     if (problems.length) {
-      showAlert({ title: 'Check your details', message: problems.join('\n'), type: 'warning' });
+      showAlert({ title: t('body.checkDetails'), message: problems.join('\n'), type: 'warning' });
       return;
     }
     setSaving(true);
@@ -144,9 +147,9 @@ export default function BodyGoalsScreen({ navigation }) {
         weeklyRateKg: form.weeklyRateKg,
         goalWeightKg,
       });
-      notify('Profile saved', 'Your calorie target has been updated.', { type: 'success' });
+      notify(t('body.profileSaved'), t('body.profileSavedMessage'), { type: 'success' });
     } catch (e) {
-      showAlert({ title: 'Could not save', message: e.message, type: 'danger' });
+      showAlert({ title: t('body.couldNotSave'), message: e.message, type: 'danger' });
     } finally {
       setSaving(false);
     }
@@ -181,11 +184,11 @@ export default function BodyGoalsScreen({ navigation }) {
               onPress={() => navigation.goBack()}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               accessibilityRole="button"
-              accessibilityLabel="Back"
+              accessibilityLabel={t('body.back')}
             >
               <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
             </TouchableOpacity>
-            <Text style={styles.title}>Body & goals</Text>
+            <Text style={styles.title}>{t('body.title')}</Text>
             <View style={{ width: 26 }} />
           </View>
         </Rise>
@@ -197,7 +200,7 @@ export default function BodyGoalsScreen({ navigation }) {
         ) : error ? (
           <View style={styles.centerState}>
             <Ionicons name="cloud-offline-outline" size={40} color={colors.danger} />
-            <Text style={styles.emptyTitle}>Couldn't load your data</Text>
+            <Text style={styles.emptyTitle}>{t('body.couldNotLoad')}</Text>
             <Text style={styles.emptySub}>{error.message}</Text>
           </View>
         ) : (
@@ -206,52 +209,52 @@ export default function BodyGoalsScreen({ navigation }) {
             <Rise index={1} style={styles.statsRow}>
               <View style={styles.statCard}>
                 <Text style={styles.statValue}>{fmtKg(currentWeight)}</Text>
-                <Text style={styles.statLabel}>Current</Text>
+                <Text style={styles.statLabel}>{t('body.current')}</Text>
               </View>
               <View style={styles.statCard}>
                 <Text style={[styles.statValue, bmiCat && { color: colors[bmiCat.tone] }]}>{bmi ?? '—'}</Text>
-                <Text style={styles.statLabel}>{bmiCat ? `BMI · ${bmiCat.label}` : 'BMI'}</Text>
+                <Text style={styles.statLabel}>{bmiCat ? t('body.bmiWithCategory', { category: bmiCat.label }) : t('body.bmi')}</Text>
               </View>
               <View style={styles.statCard}>
                 <Text style={[styles.statValue, { color: colors.accent }]}>
                   {calories ? calories.target.toLocaleString() : '—'}
                 </Text>
-                <Text style={styles.statLabel}>Target kcal/day</Text>
+                <Text style={styles.statLabel}>{t('body.targetKcal')}</Text>
               </View>
             </Rise>
 
             {/* Calorie breakdown */}
             <Rise index={2}>
               <View style={styles.card}>
-                <Text style={styles.cardTitle}>Suggested intake</Text>
+                <Text style={styles.cardTitle}>{t('body.suggestedIntake')}</Text>
                 {calories ? (
                   <>
-                    <BreakdownRow label="BMR (at rest)" value={`${calories.bmr.toLocaleString()} kcal`} styles={styles} />
-                    <BreakdownRow label="Maintenance (TDEE)" value={`${calories.tdee.toLocaleString()} kcal`} styles={styles} />
+                    <BreakdownRow label={t('body.bmr')} value={`${calories.bmr.toLocaleString()} kcal`} styles={styles} />
+                    <BreakdownRow label={t('body.tdee')} value={`${calories.tdee.toLocaleString()} kcal`} styles={styles} />
                     {profile.goal !== 'maintain' && (
                       <BreakdownRow
-                        label={`${profile.goal === 'lose' ? 'Lose' : 'Gain'} ${profile.weeklyRateKg} kg/week`}
+                        label={t(profile.goal === 'lose' ? 'body.loseRate' : 'body.gainRate', { rate: profile.weeklyRateKg })}
                         value={`${goalDelta(profile.goal, profile.weeklyRateKg) > 0 ? '+' : '−'}${Math.round(Math.abs(goalDelta(profile.goal, profile.weeklyRateKg)))} kcal`}
                         styles={styles}
                       />
                     )}
                     <View style={styles.divider} />
-                    <BreakdownRow label="Daily target" value={`${calories.target.toLocaleString()} kcal`} styles={styles} strong />
+                    <BreakdownRow label={t('body.dailyTarget')} value={`${calories.target.toLocaleString()} kcal`} styles={styles} strong />
                     {calories.clamped && (
                       <View style={styles.noteRow}>
                         <Ionicons name="information-circle-outline" size={14} color={colors.warning} />
                         <Text style={[styles.noteText, { color: colors.warning }]}>
-                          Raised to the safe minimum — consider a slower weekly rate.
+                          {t('body.raisedToMinimum')}
                         </Text>
                       </View>
                     )}
                     <Text style={styles.disclaimer}>
-                      Estimate from the Mifflin-St Jeor formula. Not medical advice.
+                      {t('body.estimateNote')}
                     </Text>
                   </>
                 ) : (
                   <Text style={styles.emptySub}>
-                    {!profile ? 'Fill in your profile below' : 'Log your weight'} to get a daily calorie suggestion.
+                    {!profile ? t('body.fillProfileHint') : t('body.logWeightHint')}
                   </Text>
                 )}
               </View>
@@ -260,7 +263,7 @@ export default function BodyGoalsScreen({ navigation }) {
             {/* Log weight */}
             <Rise index={3}>
               <View style={styles.card}>
-                <Text style={styles.cardTitle}>Log weight</Text>
+                <Text style={styles.cardTitle}>{t('body.logWeight')}</Text>
                 <View style={styles.logRow}>
                   <View style={styles.weightField}>
                     <TextInput
@@ -270,7 +273,7 @@ export default function BodyGoalsScreen({ navigation }) {
                       placeholder={currentWeight ? String(currentWeight) : '70.0'}
                       placeholderTextColor={colors.textTertiary}
                       keyboardType="decimal-pad"
-                      accessibilityLabel="Weight in kilograms"
+                      accessibilityLabel={t('body.weightA11y')}
                       onSubmitEditing={handleLog}
                     />
                     <Text style={styles.unit}>kg</Text>
@@ -279,8 +282,8 @@ export default function BodyGoalsScreen({ navigation }) {
                     <DatePickerInput
                       value={logDate}
                       onChange={setLogDate}
-                      placeholder="Date"
-                      accessibilityLabel="Weigh-in date"
+                      placeholder={t('body.date')}
+                      accessibilityLabel={t('body.dateA11y')}
                     />
                   </View>
                 </View>
@@ -292,7 +295,7 @@ export default function BodyGoalsScreen({ navigation }) {
                 >
                   {logging
                     ? <ActivityIndicator color={colors.accentForeground} />
-                    : <Text style={styles.primaryBtnText}>Log weight</Text>}
+                    : <Text style={styles.primaryBtnText}>{t('body.logWeight')}</Text>}
                 </TouchableOpacity>
               </View>
             </Rise>
@@ -300,9 +303,9 @@ export default function BodyGoalsScreen({ navigation }) {
             {/* Trend + goal */}
             <Rise index={4}>
               <View style={styles.card}>
-                <Text style={styles.cardTitle}>Trend</Text>
+                <Text style={styles.cardTitle}>{t('body.trend')}</Text>
                 {chartLogs.length < 2 ? (
-                  <Text style={styles.emptySub}>Log at least two weigh-ins to see your trend.</Text>
+                  <Text style={styles.emptySub}>{t('body.trendEmpty')}</Text>
                 ) : (
                   <WeightChart logs={chartLogs} goalWeightKg={profile?.goalWeightKg} colors={colors} styles={styles} />
                 )}
@@ -310,11 +313,11 @@ export default function BodyGoalsScreen({ navigation }) {
                 {progress && (
                   <View style={styles.goalBlock}>
                     <View style={styles.goalHeader}>
-                      <Text style={styles.goalLabel}>Goal {fmtKg(progress.goal)}</Text>
+                      <Text style={styles.goalLabel}>{t('body.goal', { weight: fmtKg(progress.goal) })}</Text>
                       <Text style={styles.goalMeta}>
                         {progress.reached
-                          ? 'Reached'
-                          : `${Math.abs(progress.remaining)} kg to go`}
+                          ? t('body.reached')
+                          : t('body.toGo', { kg: Math.abs(progress.remaining) })}
                       </Text>
                     </View>
                     <View style={styles.progressTrack}>
@@ -325,8 +328,8 @@ export default function BodyGoalsScreen({ navigation }) {
                       ]} />
                     </View>
                     <Text style={styles.goalMeta}>
-                      Started at {fmtKg(progress.start)}
-                      {progress.eta && !progress.reached ? ` · est. ${format(progress.eta, 'MMM d, yyyy')}` : ''}
+                      {t('body.startedAt', { weight: fmtKg(progress.start) })}
+                      {progress.eta && !progress.reached ? t('body.estimate', { date: format(progress.eta, 'MMM d, yyyy') }) : ''}
                     </Text>
                   </View>
                 )}
@@ -336,9 +339,9 @@ export default function BodyGoalsScreen({ navigation }) {
             {/* Recent entries */}
             <Rise index={5}>
               <View style={styles.card}>
-                <Text style={styles.cardTitle}>Recent entries</Text>
+                <Text style={styles.cardTitle}>{t('body.recentEntries')}</Text>
                 {recent.length === 0 ? (
-                  <Text style={styles.emptySub}>No weigh-ins yet.</Text>
+                  <Text style={styles.emptySub}>{t('body.noWeighIns')}</Text>
                 ) : recent.map((log, i) => {
                   const prev  = recent[i + 1];
                   const delta = prev ? Math.round((log.weightKg - prev.weightKg) * 10) / 10 : null;
@@ -355,7 +358,7 @@ export default function BodyGoalsScreen({ navigation }) {
                         onPress={() => handleDelete(log)}
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                         accessibilityRole="button"
-                        accessibilityLabel={`Delete entry from ${fmtDate(log.date)}`}
+                        accessibilityLabel={t('body.deleteEntryA11y', { date: fmtDate(log.date) })}
                       >
                         <Ionicons name="trash-outline" size={16} color={colors.textTertiary} />
                       </TouchableOpacity>
@@ -368,25 +371,25 @@ export default function BodyGoalsScreen({ navigation }) {
             {/* Profile */}
             <Rise index={6}>
               <View style={styles.card}>
-                <Text style={styles.cardTitle}>Profile</Text>
+                <Text style={styles.cardTitle}>{t('body.profile')}</Text>
 
-                <Text style={styles.fieldLabel}>SEX (FOR BMR FORMULA)</Text>
+                <Text style={styles.fieldLabel}>{t('body.sexLabel')}</Text>
                 <Segment
-                  options={[{ key: 'male', label: 'Male' }, { key: 'female', label: 'Female' }]}
+                  options={[{ key: 'male', label: t('body.male') }, { key: 'female', label: t('body.female') }]}
                   value={form.sex}
                   onChange={(v) => setField('sex', v)}
                   styles={styles}
                 />
 
-                <Text style={styles.fieldLabel}>BIRTH DATE</Text>
+                <Text style={styles.fieldLabel}>{t('body.birthDate')}</Text>
                 <DatePickerInput
                   value={form.birthDate}
                   onChange={(v) => setField('birthDate', v)}
-                  placeholder="Select"
-                  accessibilityLabel="Birth date"
+                  placeholder={t('body.select')}
+                  accessibilityLabel={t('body.birthDateA11y')}
                 />
 
-                <Text style={styles.fieldLabel}>HEIGHT</Text>
+                <Text style={styles.fieldLabel}>{t('body.height')}</Text>
                 <View style={styles.weightField}>
                   <TextInput
                     style={styles.weightInput}
@@ -395,12 +398,12 @@ export default function BodyGoalsScreen({ navigation }) {
                     placeholder="175"
                     placeholderTextColor={colors.textTertiary}
                     keyboardType="decimal-pad"
-                    accessibilityLabel="Height in centimeters"
+                    accessibilityLabel={t('body.heightA11y')}
                   />
                   <Text style={styles.unit}>cm</Text>
                 </View>
 
-                <Text style={styles.fieldLabel}>ACTIVITY LEVEL</Text>
+                <Text style={styles.fieldLabel}>{t('body.activityLevel')}</Text>
                 <View style={styles.chipRow}>
                   {ACTIVITY_LEVELS.map((a) => {
                     const active = form.activityLevel === a.key;
@@ -421,7 +424,7 @@ export default function BodyGoalsScreen({ navigation }) {
                   {ACTIVITY_LEVELS.find((a) => a.key === form.activityLevel)?.hint}
                 </Text>
 
-                <Text style={styles.fieldLabel}>GOAL</Text>
+                <Text style={styles.fieldLabel}>{t('body.goalLabel')}</Text>
                 <Segment
                   options={GOALS}
                   value={form.goal}
@@ -431,7 +434,7 @@ export default function BodyGoalsScreen({ navigation }) {
 
                 {form.goal !== 'maintain' && (
                   <>
-                    <Text style={styles.fieldLabel}>WEEKLY RATE</Text>
+                    <Text style={styles.fieldLabel}>{t('body.weeklyRate')}</Text>
                     <View style={styles.chipRow}>
                       {WEEKLY_RATES.map((r) => {
                         const active = form.weeklyRateKg === r;
@@ -443,7 +446,7 @@ export default function BodyGoalsScreen({ navigation }) {
                             accessibilityRole="button"
                             accessibilityState={{ selected: active }}
                           >
-                            <Text style={[styles.chipText, active && styles.chipTextActive]}>{r} kg/week</Text>
+                            <Text style={[styles.chipText, active && styles.chipTextActive]}>{t('body.perWeek', { rate: r })}</Text>
                           </TouchableOpacity>
                         );
                       })}
@@ -451,7 +454,7 @@ export default function BodyGoalsScreen({ navigation }) {
                   </>
                 )}
 
-                <Text style={styles.fieldLabel}>GOAL WEIGHT (OPTIONAL)</Text>
+                <Text style={styles.fieldLabel}>{t('body.goalWeight')}</Text>
                 <View style={styles.weightField}>
                   <TextInput
                     style={styles.weightInput}
@@ -460,7 +463,7 @@ export default function BodyGoalsScreen({ navigation }) {
                     placeholder="—"
                     placeholderTextColor={colors.textTertiary}
                     keyboardType="decimal-pad"
-                    accessibilityLabel="Goal weight in kilograms"
+                    accessibilityLabel={t('body.goalWeightA11y')}
                   />
                   <Text style={styles.unit}>kg</Text>
                 </View>
@@ -473,7 +476,7 @@ export default function BodyGoalsScreen({ navigation }) {
                 >
                   {saving
                     ? <ActivityIndicator color={colors.accentForeground} />
-                    : <Text style={styles.primaryBtnText}>Save profile</Text>}
+                    : <Text style={styles.primaryBtnText}>{t('body.saveProfile')}</Text>}
                 </TouchableOpacity>
               </View>
             </Rise>
@@ -553,7 +556,7 @@ function WeightChart({ logs, goalWeightKg, colors, styles }) {
         {goalWeightKg ? (
           <View style={styles.legendRow}>
             <View style={styles.legendSwatch} />
-            <Text style={styles.chartAxisText}>Goal</Text>
+            <Text style={styles.chartAxisText}>{t('body.chartGoal')}</Text>
           </View>
         ) : null}
         <Text style={styles.chartAxisText}>{format(parseISO(logs[lastIdx].date), 'MMM d')}</Text>

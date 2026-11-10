@@ -5,13 +5,16 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../context/ThemeContext';
 import { spacing, radius, type } from '../theme/colors';
 import { parseTimeString, formatTimeString, formatReminderLabel } from '../utils/reminders';
+import { t } from '../i18n';
+import { useLanguage } from '../context/LanguageContext';
 
 // Compact time control for inline use (see the weekly-todo editor).
 // `value` is an 'HH:mm' string or null; `onChange` receives the same or null
 // when cleared. Mirrors DatePickerInput's platform split: a native <input> on
 // web, a dialog on Android, an inline spinner on iOS.
-export default function TimePickerChip({ value, onChange, placeholder = 'Remind', accessibilityLabel = 'Set a reminder time' }) {
+export default function TimePickerChip({ value, onChange, placeholder = t('components.remind'), accessibilityLabel = t('components.setReminder') }) {
   const { colors, theme } = useTheme();
+  useLanguage();
   const [showPicker, setShowPicker] = useState(false);
 
   const parsed = parseTimeString(value);
@@ -32,7 +35,7 @@ export default function TimePickerChip({ value, onChange, placeholder = 'Remind'
         onPress={onPress}
         activeOpacity={0.7}
         accessibilityRole="button"
-        accessibilityLabel={parsed ? `Reminder at ${label}. Change` : accessibilityLabel}
+        accessibilityLabel={parsed ? t('components.reminderAt', { time: label }) : accessibilityLabel}
       >
         <Ionicons
           name={parsed ? 'notifications' : 'notifications-outline'}
@@ -46,7 +49,7 @@ export default function TimePickerChip({ value, onChange, placeholder = 'Remind'
           onPress={clear}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           accessibilityRole="button"
-          accessibilityLabel="Clear reminder"
+          accessibilityLabel={t('components.clearReminder')}
         >
           <Ionicons name="close-circle" size={14} color={colors.textTertiary} />
         </TouchableOpacity>
@@ -83,7 +86,7 @@ export default function TimePickerChip({ value, onChange, placeholder = 'Remind'
           <TouchableOpacity
             onPress={clear}
             accessibilityRole="button"
-            accessibilityLabel="Clear reminder"
+            accessibilityLabel={t('components.clearReminder')}
           >
             <Ionicons name="close-circle" size={14} color={colors.textTertiary} />
           </TouchableOpacity>
@@ -118,10 +121,10 @@ export default function TimePickerChip({ value, onChange, placeholder = 'Remind'
         <View style={styles.iosSpinnerWrapper}>
           <View style={styles.iosSpinnerHeader}>
             <TouchableOpacity onPress={clear}>
-              <Text style={[styles.iosAction, { color: colors.danger }]}>Clear</Text>
+              <Text style={[styles.iosAction, { color: colors.danger }]}>{t('components.clear')}</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={() => setShowPicker(false)}>
-              <Text style={[styles.iosAction, { color: colors.accent }]}>Done</Text>
+              <Text style={[styles.iosAction, { color: colors.accent }]}>{t('components.done')}</Text>
             </TouchableOpacity>
           </View>
           <DateTimePicker

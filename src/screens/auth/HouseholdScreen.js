@@ -10,10 +10,13 @@ import { useAlert } from '../../context/AlertContext';
 import { createHousehold, joinHousehold } from '../../services/firestore';
 import { spacing, radius, type } from '../../theme/colors';
 import { Rise } from '../../components/Motion';
+import { t } from '../../i18n';
+import { useLanguage } from '../../context/LanguageContext';
 
 export default function HouseholdScreen() {
   const { user, saveHouseholdId, signOut } = useAuth();
   const { colors } = useTheme();
+  useLanguage();
   const { showAlert } = useAlert();
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
@@ -27,34 +30,34 @@ export default function HouseholdScreen() {
       promise,
       new Promise((_, reject) =>
         setTimeout(() => reject(new Error(
-          'Request timed out. Check Firestore security rules — set "allow read, write: if true" in Firebase console for development.'
+          t('auth.timedOut')
         )), ms)
       ),
     ]);
 
   const handleCreate = async () => {
-    if (!householdName.trim()) { showAlert({ title: 'Missing name', message: 'Enter a household name to continue.', type: 'info' }); return; }
+    if (!householdName.trim()) { showAlert({ title: t('auth.missingName'), message: t('auth.missingNameMessage'), type: 'info' }); return; }
     setLoading(true);
     try {
       const profile = { name: user.displayName || '', email: user.email || '' };
       const id = await withTimeout(createHousehold(user.uid, householdName.trim(), profile));
       await saveHouseholdId(id);
     } catch (e) {
-      showAlert({ title: 'Error', message: e.message, type: 'error' });
+      showAlert({ title: t('common.error'), message: e.message, type: 'error' });
     } finally {
       setLoading(false);
     }
   };
 
   const handleJoin = async () => {
-    if (!inviteCode.trim()) { showAlert({ title: 'Missing code', message: 'Enter an invite code to continue.', type: 'info' }); return; }
+    if (!inviteCode.trim()) { showAlert({ title: t('auth.missingCode'), message: t('auth.missingCodeMessage'), type: 'info' }); return; }
     setLoading(true);
     try {
       const profile = { name: user.displayName || '', email: user.email || '' };
       const id = await withTimeout(joinHousehold(user.uid, inviteCode.trim(), profile));
       await saveHouseholdId(id);
     } catch (e) {
-      showAlert({ title: 'Error', message: e.message, type: 'error' });
+      showAlert({ title: t('common.error'), message: e.message, type: 'error' });
     } finally {
       setLoading(false);
     }
@@ -72,14 +75,14 @@ export default function HouseholdScreen() {
               </View>
             </View>
             <Text style={styles.appName}>HomeBase</Text>
-            <Text style={styles.tagline}>Your family's home hub</Text>
+            <Text style={styles.tagline}>{t('auth.tagline')}</Text>
           </Rise>
 
           <Rise index={1} style={styles.authCard}>
             <View style={styles.tabRow}>
               {[
-                { id: 'create', icon: 'add-circle-outline', label: 'Create' },
-                { id: 'join',   icon: 'people-outline',     label: 'Join'   },
+                { id: 'create', icon: 'add-circle-outline', label: t('auth.create') },
+                { id: 'join',   icon: 'people-outline',     label: t('auth.join') },
               ].map((tab) => (
                 <TouchableOpacity
                   key={tab.id}
@@ -102,16 +105,16 @@ export default function HouseholdScreen() {
 
             {activeTab === 'create' ? (
               <View style={styles.formSection}>
-                <Text style={styles.inputLabel}>Household Name</Text>
+                <Text style={styles.inputLabel}>{t('auth.householdName')}</Text>
                 <TextInput
                   style={styles.textInput}
-                  placeholder="e.g. The Smith Family"
+                  placeholder={t('profile.householdNamePlaceholder')}
                   value={householdName}
                   onChangeText={setHouseholdName}
                   placeholderTextColor={colors.textTertiary}
                   returnKeyType="done"
                   onSubmitEditing={handleCreate}
-                  accessibilityLabel="Household name"
+                  accessibilityLabel={t('auth.householdNameA11y')}
                 />
                 <TouchableOpacity
                   style={[styles.primaryButton, loading && styles.primaryButtonDisabled]}
@@ -119,13 +122,13 @@ export default function HouseholdScreen() {
                   disabled={loading}
                   accessibilityRole="button"
                 >
-                  <Text style={styles.primaryButtonLabel}>{loading ? 'Creating…' : 'Create Household'}</Text>
+                  <Text style={styles.primaryButtonLabel}>{loading ? t('profile.creating') : t('profile.createHousehold')}</Text>
                   {!loading && <Ionicons name="arrow-forward" size={17} color="#fff" />}
                 </TouchableOpacity>
               </View>
             ) : (
               <View style={styles.formSection}>
-                <Text style={styles.inputLabel}>Invite Code</Text>
+                <Text style={styles.inputLabel}>{t('auth.inviteCode')}</Text>
                 <TextInput
                   style={[styles.textInput, styles.inviteCodeInput]}
                   placeholder="ABC123"
@@ -135,7 +138,7 @@ export default function HouseholdScreen() {
                   placeholderTextColor={colors.textTertiary}
                   returnKeyType="done"
                   onSubmitEditing={handleJoin}
-                  accessibilityLabel="Invite code"
+                  accessibilityLabel={t('auth.inviteCodeA11y')}
                 />
                 <TouchableOpacity
                   style={[styles.primaryButton, loading && styles.primaryButtonDisabled]}
@@ -143,7 +146,7 @@ export default function HouseholdScreen() {
                   disabled={loading}
                   accessibilityRole="button"
                 >
-                  <Text style={styles.primaryButtonLabel}>{loading ? 'Joining…' : 'Join Household'}</Text>
+                  <Text style={styles.primaryButtonLabel}>{loading ? t('profile.joining') : t('profile.joinHousehold')}</Text>
                   {!loading && <Ionicons name="arrow-forward" size={17} color="#fff" />}
                 </TouchableOpacity>
               </View>
@@ -155,10 +158,10 @@ export default function HouseholdScreen() {
             style={styles.logoutButton}
             onPress={signOut}
             accessibilityRole="button"
-            accessibilityLabel="Log out"
+            accessibilityLabel={t('auth.logOut')}
           >
             <Ionicons name="log-out-outline" size={17} color={colors.textSecondary} />
-            <Text style={styles.logoutLabel}>Log out</Text>
+            <Text style={styles.logoutLabel}>{t('auth.logOut')}</Text>
           </TouchableOpacity>
           </Rise>
 

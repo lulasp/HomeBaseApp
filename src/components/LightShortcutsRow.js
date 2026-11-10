@@ -8,6 +8,8 @@ import { useAlert } from '../context/AlertContext';
 import { spacing, radius, type } from '../theme/colors';
 import { deleteLightShortcut } from '../services/firestore';
 import { applyActionsToDevice } from '../services/govee';
+import { t } from '../i18n';
+import { useLanguage } from '../context/LanguageContext';
 
 export const SHORTCUT_VISUALS = [
   { icon: 'flash',         color: '#FFB347' },
@@ -34,7 +36,7 @@ function ShortcutCard({ shortcut, isRunning, onRun, onOptions }) {
         onLongPress={onOptions}
         disabled={isRunning}
         accessibilityRole="button"
-        accessibilityLabel={`Run ${shortcut.name} shortcut`}
+        accessibilityLabel={t('components.runShortcut', { name: shortcut.name })}
       >
         <View style={[styles.shortcutIcon, { backgroundColor: visual.color + '33' }]}>
           {isRunning
@@ -52,7 +54,7 @@ function ShortcutCard({ shortcut, isRunning, onRun, onOptions }) {
           onPress={onOptions}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           accessibilityRole="button"
-          accessibilityLabel={`${shortcut.name} shortcut options`}
+          accessibilityLabel={t('components.shortcutOptions', { name: shortcut.name })}
         >
           <Ionicons name="ellipsis-horizontal" size={14} color={colors.textTertiary} />
         </TouchableOpacity>
@@ -72,6 +74,7 @@ export default function LightShortcutsRow({
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const { showAlert, showOptions, showConfirm } = useAlert();
+  useLanguage();
   const [runningId, setRunningId] = useState(null);
 
   const runShortcut = useCallback(async (shortcut) => {
@@ -94,8 +97,8 @@ export default function LightShortcutsRow({
     setRunningId(null);
     if (failed.length > 0) {
       showAlert({
-        title: 'Shortcut partially failed',
-        message: `Could not update: ${failed.join(', ')}`,
+        title: t('components.shortcutFailed'),
+        message: t('components.couldNotUpdate', { names: failed.join(', ') }),
         type: 'warning',
       });
     }
@@ -106,17 +109,17 @@ export default function LightShortcutsRow({
       title: shortcut.name,
       icon: 'flash-outline',
       options: [
-        { label: 'Edit', value: 'edit' },
-        { label: 'Delete', value: 'delete', style: 'destructive' },
-        { label: 'Cancel', style: 'cancel' },
+        { label: t('common.edit'), value: 'edit' },
+        { label: t('common.delete'), value: 'delete', style: 'destructive' },
+        { label: t('common.cancel'), style: 'cancel' },
       ],
     });
     if (choice === 'edit') onEdit(shortcut);
     if (choice === 'delete') {
       const ok = await showConfirm({
-        title: 'Delete shortcut?',
-        message: `"${shortcut.name}" will be removed for the whole household.`,
-        confirmLabel: 'Delete',
+        title: t('components.deleteShortcut'),
+        message: t('components.deleteShortcutMessage', { name: shortcut.name }),
+        confirmLabel: t('common.delete'),
       });
       if (ok) deleteLightShortcut(householdId, shortcut.id).catch(console.error);
     }
@@ -144,13 +147,13 @@ export default function LightShortcutsRow({
           style={[styles.shortcutCard, styles.shortcutCardAdd]}
           onPress={onCreateNew}
           accessibilityRole="button"
-          accessibilityLabel="Create shortcut"
+          accessibilityLabel={t('components.createShortcut')}
         >
           <View style={[styles.shortcutIcon, { backgroundColor: colors.muted }]}>
             <Ionicons name="add" size={24} color={colors.textSecondary} />
           </View>
-          <Text style={styles.shortcutName} numberOfLines={1}>New</Text>
-          <Text style={styles.shortcutMeta}>shortcut</Text>
+          <Text style={styles.shortcutName} numberOfLines={1}>{t('components.newShortcut')}</Text>
+          <Text style={styles.shortcutMeta}>{t('components.shortcut')}</Text>
         </TouchableOpacity>
       )}
     </ScrollView>

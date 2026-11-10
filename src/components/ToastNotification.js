@@ -3,6 +3,7 @@ import { Animated, View, Text, TouchableOpacity, StyleSheet, Platform } from 're
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../context/ThemeContext';
 import { spacing, radius, type } from '../theme/colors';
+import { t } from '../i18n';
 
 const TYPE_CONFIG = {
   success: { icon: 'checkmark-circle', colorKey: 'success', softKey: 'successSoft' },
@@ -79,7 +80,7 @@ export default function ToastNotification({ visible, title, body, type = 'info',
       <TouchableOpacity
         onPress={hide}
         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-        accessibilityLabel="Dismiss notification"
+        accessibilityLabel={t('components.dismissNotification')}
         accessibilityRole="button"
       >
         <Ionicons name="close" size={16} color={colors.textTertiary} />

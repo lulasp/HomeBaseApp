@@ -10,6 +10,8 @@ import { useTheme } from '../../context/ThemeContext';
 import { useNavScrollProps } from '../../context/NavScrollContext';
 import { useAlert } from '../../context/AlertContext';
 import { useNotification } from '../../context/NotificationContext';
+import { useLanguage } from '../../context/LanguageContext';
+import { LANGUAGES } from '../../i18n';
 import {
   createHousehold, joinHousehold, getHouseholdsByIds,
 } from '../../services/firestore';
@@ -27,6 +29,7 @@ export default function ProfileScreen({ navigation }) {
   const contentKey = useEntranceReplay();
   const { showAlert, showConfirm } = useAlert();
   const { notify } = useNotification();
+  const { t, language, setLanguage } = useLanguage();
   const styles  = useMemo(() => makeStyles(colors), [colors]);
   const isDesktop = useIsDesktop();
   const windowHeight = useVisualViewportHeight();
@@ -64,30 +67,30 @@ export default function ProfileScreen({ navigation }) {
   const closeSheet = () => { setSheetVisible(false); setHhName(''); setInviteCode(''); setSheetErrors({}); };
 
   const handleCreateHousehold = async () => {
-    if (!hhName.trim()) { setSheetErrors({ hhName: 'Required' }); return; }
+    if (!hhName.trim()) { setSheetErrors({ hhName: t('common.required') }); return; }
     setSheetLoading(true);
     try {
       const id = await createHousehold(user.uid, hhName.trim(), { name: user.displayName || '', email: user.email || '' });
       await saveHouseholdId(id);
-      notify('Household created', `"${hhName.trim()}" is ready.`, { type: 'success' });
+      notify(t('profile.householdCreated'), t('profile.householdReady', { name: hhName.trim() }), { type: 'success' });
       closeSheet();
     } catch (e) {
-      showAlert({ title: 'Error', message: e.message, type: 'error' });
+      showAlert({ title: t('common.error'), message: e.message, type: 'error' });
     } finally {
       setSheetLoading(false);
     }
   };
 
   const handleJoinHousehold = async () => {
-    if (!inviteCode.trim()) { setSheetErrors({ inviteCode: 'Required' }); return; }
+    if (!inviteCode.trim()) { setSheetErrors({ inviteCode: t('common.required') }); return; }
     setSheetLoading(true);
     try {
       const id = await joinHousehold(user.uid, inviteCode.trim(), { name: user.displayName || '', email: user.email || '' });
       await saveHouseholdId(id);
-      notify('Joined household', "You've been added to the household.", { type: 'success' });
+      notify(t('profile.joinedHousehold'), t('profile.joinedMessage'), { type: 'success' });
       closeSheet();
     } catch (e) {
-      showAlert({ title: 'Error', message: e.message, type: 'error' });
+      showAlert({ title: t('common.error'), message: e.message, type: 'error' });
     } finally {
       setSheetLoading(false);
     }
@@ -109,7 +112,7 @@ export default function ProfileScreen({ navigation }) {
       >
         <Rise index={0}>
         {/* ── Header ── */}
-        <Text style={styles.screenTitle}>Profile</Text>
+        <Text style={styles.screenTitle}>{t('profile.title')}</Text>
 
         {/* ── User card ── */}
         <View style={styles.card}>
@@ -128,8 +131,8 @@ export default function ProfileScreen({ navigation }) {
                     returnKeyType="done"
                     onSubmitEditing={saveName}
                     placeholderTextColor={colors.textTertiary}
-                    placeholder="Your name"
-                    accessibilityLabel="Display name"
+                    placeholder={t('profile.yourName')}
+                    accessibilityLabel={t('profile.displayName')}
                   />
                   <TouchableOpacity onPress={saveName} style={styles.nameEditSave} accessibilityRole="button">
                     <Ionicons name="checkmark" size={18} color={colors.accent} />
@@ -140,7 +143,7 @@ export default function ProfileScreen({ navigation }) {
                 </View>
               ) : (
                 <TouchableOpacity style={styles.nameRow} onPress={() => setEditingName(true)} accessibilityRole="button">
-                  <Text style={styles.userName}>{displayName || 'Set your name'}</Text>
+                  <Text style={styles.userName}>{displayName || t('profile.setYourName')}</Text>
                   <Ionicons name="pencil-outline" size={14} color={colors.textTertiary} />
                 </TouchableOpacity>
               )}
@@ -153,14 +156,14 @@ export default function ProfileScreen({ navigation }) {
         <Rise index={1}>
         {/* ── Households ── */}
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Households</Text>
+          <Text style={styles.sectionTitle}>{t('profile.households')}</Text>
           <TouchableOpacity
             style={styles.addButton}
             onPress={() => { setSheetTab('create'); setSheetVisible(true); }}
             accessibilityRole="button"
           >
             <Ionicons name="add" size={16} color="#fff" />
-            <Text style={styles.addButtonLabel}>Add</Text>
+            <Text style={styles.addButtonLabel}>{t('common.add')}</Text>
           </TouchableOpacity>
         </View>
 
@@ -168,7 +171,7 @@ export default function ProfileScreen({ navigation }) {
           {loadingHH ? (
             <ActivityIndicator color={colors.accent} style={{ padding: spacing.xl }} />
           ) : households.length === 0 ? (
-            <Text style={styles.emptyText}>No households yet.</Text>
+            <Text style={styles.emptyText}>{t('profile.noHouseholds')}</Text>
           ) : (
             households.map((hh, i) => {
               const isActive = hh.id === householdId;
@@ -180,7 +183,7 @@ export default function ProfileScreen({ navigation }) {
                   <View style={{ flex: 1 }}>
                     <Text style={styles.hhName} numberOfLines={1}>{hh.name}</Text>
                     {isActive && (
-                      <Text style={styles.hhActive}>Active</Text>
+                      <Text style={styles.hhActive}>{t('profile.active')}</Text>
                     )}
                   </View>
                   {!isActive && (
@@ -189,7 +192,7 @@ export default function ProfileScreen({ navigation }) {
                       onPress={() => switchHousehold(hh.id)}
                       accessibilityRole="button"
                     >
-                      <Text style={styles.switchButtonLabel}>Switch</Text>
+                      <Text style={styles.switchButtonLabel}>{t('profile.switch')}</Text>
                     </TouchableOpacity>
                   )}
                   <TouchableOpacity
@@ -197,7 +200,7 @@ export default function ProfileScreen({ navigation }) {
                     onPress={() => navigation.navigate('HouseholdEdit', { householdId: hh.id })}
                     hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     accessibilityRole="button"
-                    accessibilityLabel={`Edit ${hh.name}`}
+                    accessibilityLabel={t('profile.editHousehold', { name: hh.name })}
                   >
                     <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
                   </TouchableOpacity>
@@ -210,39 +213,60 @@ export default function ProfileScreen({ navigation }) {
 
         <Rise index={2}>
         {/* ── App ── */}
-        <Text style={[styles.sectionTitle, { marginTop: spacing.xl }]}>App</Text>
+        <Text style={[styles.sectionTitle, { marginTop: spacing.xl }]}>{t('profile.app')}</Text>
 
         <View style={styles.card}>
-          <TouchableOpacity style={styles.settingsRow} onPress={toggleTheme} accessibilityRole="button">
+          <View style={styles.settingsRow}>
+            <Ionicons name="language-outline" size={18} color={colors.textSecondary} />
+            <Text style={[styles.settingsLabel, { flex: 1, color: colors.textPrimary }]}>{t('language.title')}</Text>
+            <View style={styles.langSegment} accessibilityRole="radiogroup" accessibilityLabel={t('language.title')}>
+              {LANGUAGES.map((lang) => {
+                const selected = language === lang.code;
+                return (
+                  <TouchableOpacity
+                    key={lang.code}
+                    style={[styles.langOption, selected && styles.langOptionActive]}
+                    onPress={() => setLanguage(lang.code)}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected }}
+                  >
+                    <Text style={[styles.langOptionLabel, selected && styles.langOptionLabelActive]}>{lang.label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+
+          <TouchableOpacity style={[styles.settingsRow, styles.settingsRowBorder]} onPress={toggleTheme} accessibilityRole="button">
             <Ionicons
               name={theme === 'dark' ? 'sunny-outline' : 'moon-outline'}
               size={18}
               color={colors.textSecondary}
             />
-            <Text style={[styles.settingsLabel, { flex: 1, color: colors.textPrimary }]}>{theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}</Text>
+            <Text style={[styles.settingsLabel, { flex: 1, color: colors.textPrimary }]}>{theme === 'dark' ? t('profile.switchToLightMode') : t('profile.switchToDarkMode')}</Text>
             <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
           </TouchableOpacity>
 
           <View style={[styles.settingsRow, styles.settingsRowBorder, { opacity: 0.5 }]}>
             <Ionicons name="information-circle-outline" size={18} color={colors.textSecondary} />
-            <Text style={[styles.settingsLabel, { flex: 1, color: colors.textPrimary }]}>Version 1.0</Text>
+            <Text style={[styles.settingsLabel, { flex: 1, color: colors.textPrimary }]}>{t('profile.version', { version: '1.0' })}</Text>
           </View>
 
           <TouchableOpacity
             style={[styles.settingsRow, styles.settingsRowBorder]}
             onPress={async () => {
               const confirmed = await showConfirm({
-                title: 'Sign out',
-                message: 'Are you sure you want to sign out?',
+                title: t('profile.signOutTitle'),
+                message: t('profile.signOutMessage'),
                 type: 'danger',
-                confirmLabel: 'Sign Out',
+                confirmLabel: t('profile.signOut'),
               });
               if (confirmed) signOut();
             }}
             accessibilityRole="button"
           >
             <Ionicons name="log-out-outline" size={18} color={colors.danger} />
-            <Text style={[styles.settingsLabel, { flex: 1, color: colors.danger }]}>Sign Out</Text>
+            <Text style={[styles.settingsLabel, { flex: 1, color: colors.danger }]}>{t('profile.signOut')}</Text>
           </TouchableOpacity>
         </View>
         </Rise>
@@ -255,31 +279,31 @@ export default function ProfileScreen({ navigation }) {
           <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={closeSheet} />
           <View style={styles.bottomSheet}>
             <View style={styles.dragHandle} />
-            <Text style={styles.sheetTitle}>Add Household</Text>
+            <Text style={styles.sheetTitle}>{t('profile.addHousehold')}</Text>
 
             <View style={styles.tabRow}>
               {[
-                { id: 'create', label: 'Create New' },
-                { id: 'join',   label: 'Join Existing' },
-              ].map((t) => (
+                { id: 'create', label: t('profile.createNew') },
+                { id: 'join',   label: t('profile.joinExisting') },
+              ].map((item) => (
                 <TouchableOpacity
-                  key={t.id}
-                  style={[styles.tabButton, sheetTab === t.id && styles.tabButtonActive]}
-                  onPress={() => { setSheetTab(t.id); setSheetErrors({}); }}
+                  key={item.id}
+                  style={[styles.tabButton, sheetTab === item.id && styles.tabButtonActive]}
+                  onPress={() => { setSheetTab(item.id); setSheetErrors({}); }}
                   accessibilityRole="tab"
                 >
-                  <Text style={[styles.tabLabel, sheetTab === t.id && styles.tabLabelActive]}>{t.label}</Text>
+                  <Text style={[styles.tabLabel, sheetTab === item.id && styles.tabLabelActive]}>{item.label}</Text>
                 </TouchableOpacity>
               ))}
             </View>
 
             {sheetTab === 'create' ? (
               <>
-                <Text style={styles.inputLabel}>Household Name *</Text>
+                <Text style={styles.inputLabel}>{t('profile.householdName')}</Text>
                 <View>
                   <TextInput
                     style={[styles.textInput, !!sheetErrors.hhName && styles.inputError]}
-                    placeholder="e.g. The Smith Family"
+                    placeholder={t('profile.householdNamePlaceholder')}
                     value={hhName}
                     onChangeText={(t) => { setHhName(t); if (sheetErrors.hhName) setSheetErrors((e) => ({ ...e, hhName: null })); }}
                     placeholderTextColor={colors.textTertiary}
@@ -294,12 +318,12 @@ export default function ProfileScreen({ navigation }) {
                   onPress={handleCreateHousehold}
                   disabled={sheetLoading}
                 >
-                  <Text style={styles.primaryButtonLabel}>{sheetLoading ? 'Creating…' : 'Create Household'}</Text>
+                  <Text style={styles.primaryButtonLabel}>{sheetLoading ? t('profile.creating') : t('profile.createHousehold')}</Text>
                 </TouchableOpacity>
               </>
             ) : (
               <>
-                <Text style={styles.inputLabel}>Invite Code *</Text>
+                <Text style={styles.inputLabel}>{t('profile.inviteCode')}</Text>
                 <View>
                   <TextInput
                     style={[styles.textInput, { textAlign: 'center', letterSpacing: 6, ...type.h4 }, !!sheetErrors.inviteCode && styles.inputError]}
@@ -319,13 +343,13 @@ export default function ProfileScreen({ navigation }) {
                   onPress={handleJoinHousehold}
                   disabled={sheetLoading}
                 >
-                  <Text style={styles.primaryButtonLabel}>{sheetLoading ? 'Joining…' : 'Join Household'}</Text>
+                  <Text style={styles.primaryButtonLabel}>{sheetLoading ? t('profile.joining') : t('profile.joinHousehold')}</Text>
                 </TouchableOpacity>
               </>
             )}
 
             <TouchableOpacity style={styles.cancelButton} onPress={closeSheet}>
-              <Text style={styles.cancelLabel}>Cancel</Text>
+              <Text style={styles.cancelLabel}>{t('common.cancel')}</Text>
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
@@ -399,6 +423,15 @@ const makeStyles = (colors) => StyleSheet.create({
   },
   settingsRowBorder: { borderTopWidth: 1, borderTopColor: colors.border },
   settingsLabel: { ...type.bodyMed, color: colors.textSecondary },
+  langSegment: {
+    flexDirection: 'row', backgroundColor: colors.muted,
+    borderRadius: radius.md, padding: 3, gap: 3,
+  },
+  langOption: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: radius.sm },
+  langOptionActive: { backgroundColor: colors.surfaceElevated },
+  langOptionLabel: { ...type.caption, color: colors.textTertiary, fontWeight: '600' },
+  langOptionLabelActive: { color: colors.accent },
+
 
   // Sheet
   sheetOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: colors.overlay },

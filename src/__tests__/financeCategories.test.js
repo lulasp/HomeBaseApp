@@ -42,3 +42,27 @@ describe('withCustomCats', () => {
     expect(cats.map((c) => c.key)).toEqual(['gas', 'other']);
   });
 });
+
+describe('built-in labels follow the app language', () => {
+  const { setCurrentLanguage } = require('../i18n');
+  afterEach(() => setCurrentLanguage('en'));
+
+  it('reads labels in the current language', () => {
+    const rent = BILL_CATS.find((c) => c.key === 'rent');
+    expect(rent.label).toBe('Rent');
+    setCurrentLanguage('pt');
+    expect(rent.label).toBe('Renda');
+    expect(EXPENSE_CATS.find((c) => c.key === 'groceries').label).toBe('Supermercado');
+  });
+
+  it('keeps a household rename over the translation', () => {
+    setCurrentLanguage('pt');
+    const [rent] = withCustomCats(BILL_CATS, [], { rent: { label: 'Casa' } });
+    expect(rent.label).toBe('Casa');
+  });
+
+  it('has a translation for every built-in', () => {
+    setCurrentLanguage('pt');
+    for (const c of [...BILL_CATS, ...EXPENSE_CATS]) expect(c.label).not.toMatch(/^fin\.cats\./);
+  });
+});
