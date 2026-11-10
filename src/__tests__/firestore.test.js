@@ -66,6 +66,7 @@ import {
   updateHouseholdXiaomiCreds,
   updateHouseholdIntegrationFlags,
   updateHouseholdReduceMotion,
+  updateHouseholdFormat,
   subscribeHouseholdPrivate,
   subscribePriceEntries,
   getPriceEntries,
@@ -576,6 +577,19 @@ describe('updateHouseholdReduceMotion', () => {
     expect(mockSetDoc).toHaveBeenCalledWith(
       'households/hh1/private/data',
       { reduceMotion: true },
+      { merge: true },
+    );
+  });
+});
+
+// ── updateHouseholdFormat ─────────────────────────────────────────────────────
+
+describe('updateHouseholdFormat', () => {
+  it('merges the date format and currency into the private doc', async () => {
+    await updateHouseholdFormat('hh1', { dateFormat: 'long', currency: 'EUR' });
+    expect(mockSetDoc).toHaveBeenCalledWith(
+      'households/hh1/private/data',
+      { dateFormat: 'long', currency: 'EUR' },
       { merge: true },
     );
   });

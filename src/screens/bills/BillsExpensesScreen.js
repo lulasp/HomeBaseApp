@@ -33,6 +33,8 @@ import {
   amountForMonth, billTypeOf, estimatedTotal, hasMonthOverride, incomeForMonth,
   isActiveInMonth, isEstimate, isRecurringBill, payableBills, recurringTotal, shiftMonth, withRecurring,
 } from '../../utils/recurring';
+import { formatMoney, formatMoneyCompact, formatMonthKey, formatMonthShort, formatDate, currencySymbol } from '../../utils/format';
+import useFormat from '../../hooks/useFormat';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -49,26 +51,19 @@ function ordinal(n) {
 // "5th" in English, a plain "5" in Portuguese ("Vence dia 5").
 const dueDayNumber = (n, language) => (language === 'en' ? ordinal(n) : String(n));
 
-function fmtCurrency(n) {
-  return `$${Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
+// Money in the household currency (Household settings → Date & currency).
+const fmtCurrency = (n) => formatMoney(n);
 
-// Compact form for tight spaces (chart labels, summary cards): $1.2k, $980.
-function fmtCompact(n) {
-  const v = Number(n || 0);
-  if (Math.abs(v) >= 1000) return `$${(v / 1000).toLocaleString('en-US', { maximumFractionDigits: 1 })}k`;
-  return `$${Math.round(v)}`;
-}
+// Compact form for tight spaces (chart labels, summary cards): $1.2k, 980 €.
+const fmtCompact = (n) => formatMoneyCompact(n);
 
 // Money spent by an expense — income rows (direction 'in') don't count toward spend totals.
 function spentAmount(e) {
   return e.direction === 'in' ? 0 : Number(e.amount || 0);
 }
 
-function fmtMonthGroup(key) {
-  const [yr, mo] = key.split('-');
-  return format(new Date(Number(yr), Number(mo) - 1, 1), 'MMMM yyyy');
-}
+// 'yyyy-MM' → 'November 2026' in the person's language.
+const fmtMonthGroup = (key) => formatMonthKey(key);
 
 const BLANK_BILL    = { name: '', category: 'other', billType: 'fixed', amount: '', dueDayOfMonth: '', notes: '' };
 // Values are i18n keys.
@@ -156,10 +151,11 @@ const chipSt = StyleSheet.create({
 
 // ── Bill card ──────────────────────────────────────────────────────────────────
 
-const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const MONTH_INDEXES = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
 
 const BillCard = memo(function BillCard({ bill, cats, monthKey, currentMonth, onEdit, onEditMonth, onDelete, onTogglePaid, colors, styles }) {
   const { t, language } = useLanguage();
+  useFormat();
   const cat       = cats.find(c => c.key === bill.category) || cats[cats.length - 1];
   const iconColor = colors[cat.colorKey] || colors.textSecondary;
   const today     = new Date();
@@ -241,13 +237,13 @@ const BillCard = memo(function BillCard({ bill, cats, monthKey, currentMonth, on
 
         {/* 12-month payment history */}
         {billType !== 'once' && <View style={styles.historyRow}>
-          {MONTHS_SHORT.map((m, i) => {
+          {MONTH_INDEXES.map((i) => {
             const mk    = `${year}-${String(i + 1).padStart(2, '0')}`;
             const paid  = bill.paidMonths?.includes(mk);
             const isCur = mk === monthKey;
             const fut   = mk > currentMonth;
             return (
-              <View key={m} style={styles.historyItem}>
+              <View key={i} style={styles.historyItem}>
                 <View style={[
                   styles.historyDot,
                   { borderColor: isCur ? statusColor : colors.border },
@@ -257,7 +253,7 @@ const BillCard = memo(function BillCard({ bill, cats, monthKey, currentMonth, on
                   {paid && <Ionicons name="checkmark" size={7} color="#fff" />}
                 </View>
                 <Text style={[styles.historyMonth, isCur && { color: colors.textPrimary, fontWeight: '700' }]}>
-                  {m[0]}
+                  {formatMonthShort(new Date(year, i, 1)).charAt(0).toUpperCase()}
                 </Text>
               </View>
             );
@@ -306,9 +302,10 @@ const BillCard = memo(function BillCard({ bill, cats, monthKey, currentMonth, on
 
 const ExpenseCard = memo(function ExpenseCard({ expense, cats, ownerLabel, onEdit, onDelete, colors, styles }) {
   const { t } = useLanguage();
+  useFormat();
   const cat       = cats.find(c => c.key === expense.category) || cats[cats.length - 1];
   const iconColor = colors[cat.colorKey] || colors.textSecondary;
-  const dateLabel = expense.date ? format(new Date(expense.date + 'T00:00:00'), 'MMM d, yyyy') : '';
+  const dateLabel = formatDate(expense.date);
   const isIncome  = expense.direction === 'in';
   const person    = ownerLabel || expense.paidBy;
 
@@ -379,6 +376,7 @@ const ExpenseCard = memo(function ExpenseCard({ expense, cats, ownerLabel, onEdi
 
 const IncomeCard = memo(function IncomeCard({ source, monthKey, ownerLabel, onEdit, onEditMonth, onDelete, colors, styles }) {
   const { t } = useLanguage();
+  useFormat();
   const adjusted = hasMonthOverride(source, monthKey);
   return (
     <View style={styles.expenseCard}>
@@ -439,6 +437,7 @@ const IncomeCard = memo(function IncomeCard({ source, monthKey, ownerLabel, onEd
 const Dropdown = memo(function Dropdown({ label, placeholder, emptyText, value, fallback, options, onChange, colors, styles }) {
   const [open, setOpen] = useState(false);
   const { t } = useLanguage();
+  useFormat();
   const shown = value ? (options.find(o => o.value === value)?.label ?? fallback) : '';
   return (
     <View>
@@ -482,6 +481,7 @@ const Dropdown = memo(function Dropdown({ label, placeholder, emptyText, value, 
 
 const MonthStepper = memo(function MonthStepper({ value, currentMonth, onChange, colors, styles }) {
   const { t } = useLanguage();
+  useFormat();
   return (
     <View style={styles.monthStepper}>
       <TouchableOpacity
@@ -519,6 +519,7 @@ const CHART_H = 130;
 
 const TrendChart = memo(function TrendChart({ data, colors, styles }) {
   const { t }      = useLanguage();
+  useFormat();
   const max        = Math.max(1, ...data.map(d => d.spending));
   const currentKey = data.length ? data[data.length - 1].key : null;
   return (
@@ -559,6 +560,7 @@ const TrendChart = memo(function TrendChart({ data, colors, styles }) {
 
 const BudgetRow = memo(function BudgetRow({ row, cat, colors, styles, onEdit, onDelete }) {
   const { t }     = useLanguage();
+  useFormat();
   const iconColor = colors[cat.colorKey] || colors.textSecondary;
   const pct       = Math.min(1, row.ratio);
   const barColor  = row.over ? colors.danger : row.ratio >= 0.8 ? colors.amber : colors.sage;
@@ -607,6 +609,7 @@ export default function BillsExpensesScreen({ navigation }) {
   const { colors }    = useTheme();
   const { showConfirm } = useAlert();
   const { t, language } = useLanguage();
+  useFormat();
   const isDesktop     = useIsDesktop();
   const windowHeight = useVisualViewportHeight();
   const fab           = useFabHideOnScroll();
@@ -721,7 +724,8 @@ export default function BillsExpensesScreen({ navigation }) {
     return withRecurring(expenses, bills, incomeSources, keys);
   }, [expenses, bills, incomeSources]);
   const flow      = useMemo(() => cashFlow(flowRows, monthKey), [flowRows, monthKey]);
-  const trend     = useMemo(() => monthlyTrend(flowRows, 6), [flowRows]);
+  // `language`: the month labels are in the person's language.
+  const trend     = useMemo(() => monthlyTrend(flowRows, 6), [flowRows, language]);
   const hasActivity = expenses.length > 0 || bills.length > 0 || incomeSources.length > 0;
   const fixedBills = useMemo(() => recurringTotal(bills.filter(isRecurringBill), monthKey), [bills, monthKey]);
   const budgetCatById = useMemo(() => {
@@ -1450,7 +1454,7 @@ export default function BillsExpensesScreen({ navigation }) {
                 <>
                   <Text style={styles.fieldLabel}>{t('fin.amountForMonth', { month: fmtMonthGroup(viewMonth) })}</Text>
                   <View style={[styles.inputPrefix, errors.amount && styles.inputError]}>
-                    <Text style={styles.prefixText}>$</Text>
+                    <Text style={styles.prefixText}>{currencySymbol()}</Text>
                     <TextInput
                       style={styles.inputInner}
                       placeholder="0.00"
@@ -1507,7 +1511,7 @@ export default function BillsExpensesScreen({ navigation }) {
 
                   <Text style={styles.fieldLabel}>{incomeForm.recurring ? t('fin.monthlyAmount') : t('fin.amount')}</Text>
                   <View style={[styles.inputPrefix, errors.amount && styles.inputError]}>
-                    <Text style={styles.prefixText}>$</Text>
+                    <Text style={styles.prefixText}>{currencySymbol()}</Text>
                     <TextInput
                       style={styles.inputInner}
                       placeholder="0.00"
@@ -1584,7 +1588,7 @@ export default function BillsExpensesScreen({ navigation }) {
 
                   <Text style={styles.fieldLabel}>{t('fin.monthlyLimit')}</Text>
                   <View style={[styles.inputPrefix, errors.amount && styles.inputError]}>
-                    <Text style={styles.prefixText}>$</Text>
+                    <Text style={styles.prefixText}>{currencySymbol()}</Text>
                     <TextInput
                       style={styles.inputInner}
                       placeholder="0.00"
@@ -1637,7 +1641,7 @@ export default function BillsExpensesScreen({ navigation }) {
 
                   <Text style={styles.fieldLabel}>{t(BILL_AMOUNT_LABEL[billForm.billType])}</Text>
                   <View style={[styles.inputPrefix, errors.amount && styles.inputError]}>
-                    <Text style={styles.prefixText}>$</Text>
+                    <Text style={styles.prefixText}>{currencySymbol()}</Text>
                     <TextInput
                       style={styles.inputInner}
                       placeholder="0.00"
@@ -1697,7 +1701,7 @@ export default function BillsExpensesScreen({ navigation }) {
 
                   <Text style={styles.fieldLabel}>{t('fin.amount')}</Text>
                   <View style={[styles.inputPrefix, errors.amount && styles.inputError]}>
-                    <Text style={styles.prefixText}>$</Text>
+                    <Text style={styles.prefixText}>{currencySymbol()}</Text>
                     <TextInput
                       style={styles.inputInner}
                       placeholder="0.00"

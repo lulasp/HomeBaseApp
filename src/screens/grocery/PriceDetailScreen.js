@@ -28,14 +28,14 @@ import { spacing, radius, type } from '../../theme/colors';
 import { useIsDesktop, DESKTOP_MAX_CONTENT } from '../../navigation/TabBar';
 import { t } from '../../i18n';
 import { useLanguage } from '../../context/LanguageContext';
+import { formatDate } from '../../utils/format';
+import useFormat from '../../hooks/useFormat';
 
 const CHART_HEIGHT = 120;
 const MAX_BARS = 24;
 
-const fmtDate = (iso) => {
-  if (!iso) return '';
-  try { return format(parseISO(iso), 'd MMM yyyy'); } catch { return iso; }
-};
+// In the household's date format.
+const fmtDate = (iso) => formatDate(iso) || iso;
 
 // ── Price-over-time bars ───────────────────────────────────────────────────────
 // Plain Views rather than a chart library: the data is a short, single series
@@ -93,6 +93,7 @@ export default function PriceDetailScreen() {
   const { colors } = useTheme();
   const { showAlert, showConfirm } = useAlert();
   useLanguage();
+  useFormat();
   const { notify } = useNotification();
   const navigation = useNavigation();
   const route = useRoute();

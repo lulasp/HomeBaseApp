@@ -17,7 +17,7 @@ import {
   updateHouseholdNonFoodCategories, updateHouseholdFinanceCategories, updateHouseholdGoveeApiKey,
   updateHouseholdOpenRouterApiKey, updateHouseholdAiModel,
   updateHouseholdUnits, upsertMemberProfile, updateHouseholdXiaomiCreds, updateHouseholdIntegrationFlags,
-  updateHouseholdReduceMotion, updateHouseholdCategoryOverrides, renameItemCategories,
+  updateHouseholdReduceMotion, updateHouseholdFormat, updateHouseholdCategoryOverrides, renameItemCategories,
   subscribeEmergencyContacts, addEmergencyContact, updateEmergencyContact, deleteEmergencyContact,
 } from '../../services/firestore';
 import { saveCredentials as saveXiaomiCredentials } from '../../services/xiaomi';
@@ -36,6 +36,12 @@ import { useIsDesktop, useMobileNavClearance, MOBILE_NAV_COMPACT_SHIFT, SIDEBAR_
 import useVisualViewportHeight from '../../hooks/useVisualViewportHeight';
 import { t } from '../../i18n';
 import { useLanguage } from '../../context/LanguageContext';
+import {
+  DATE_FORMATS, CURRENCIES, DEFAULT_DATE_FORMAT, DEFAULT_CURRENCY, formatDate, formatMoney,
+} from '../../utils/format';
+
+// Shown in the date-format options: 10 Nov 2026.
+const FORMAT_SAMPLE_DATE = new Date(2026, 10, 10);
 
 const CONTACT_ICONS  = ['🚑','🏥','👨‍⚕️','🚒','🚓','👮','💊','🧑‍🚒','👨‍👩‍👧','👴','🏠','🔑','🌐','📞','⚡','🐾'];
 const RELATIONSHIPS  = ['Doctor','Hospital','Police','Fire Dept','Family','Neighbor','Vet','Electrician','Plumber','Other'];
@@ -131,7 +137,7 @@ export default function HouseholdEditScreen({ route, navigation }) {
   const [navBarH, setNavBarH]               = useState(0);
   const [footerH, setFooterH]               = useState(0);
   const [openGroups, setOpenGroups]         = useState({
-    household: true, pantry: true, finance: false,
+    household: true, format: false, pantry: true, finance: false,
     emergency: false, integrations: false, danger: false,
   });
   const toggleGroup = (id) => setOpenGroups((p) => ({ ...p, [id]: !p[id] }));
@@ -181,6 +187,8 @@ export default function HouseholdEditScreen({ route, navigation }) {
   const [goveeEnabled, setGoveeEnabled]           = useState(false);
   const [xiaomiEnabled, setXiaomiEnabled]         = useState(false);
   const [reduceMotionPref, setReduceMotionPref]   = useState(false);
+  const [dateFormatPref, setDateFormatPref]       = useState(DEFAULT_DATE_FORMAT);
+  const [currencyPref, setCurrencyPref]           = useState(DEFAULT_CURRENCY);
   const [openRouterApiKey, setOpenRouterApiKey]   = useState('');
   const [showOpenRouterKey, setShowOpenRouterKey] = useState(false);
   const [xiaomiCreds, setXiaomiCreds]             = useState(BLANK_XIAOMI);
@@ -269,6 +277,8 @@ export default function HouseholdEditScreen({ route, navigation }) {
         setGoveeEnabled(hh?.goveeEnabled ?? !!hh?.goveeApiKey);
         setXiaomiEnabled(hh?.xiaomiEnabled ?? !!(xc.userId || xc.serviceToken || xc.ssecurity));
         setReduceMotionPref(hh?.reduceMotion ?? false);
+        setDateFormatPref(hh?.dateFormat ?? DEFAULT_DATE_FORMAT);
+        setCurrencyPref(hh?.currency ?? DEFAULT_CURRENCY);
         setAiModel(hh?.aiModel ?? DEFAULT_AI_MODEL);
         setEnabledUnits(hh?.enabledUnits ?? UNITS);
         setCustomUnits(hh?.customUnits ?? []);
@@ -466,12 +476,14 @@ export default function HouseholdEditScreen({ route, navigation }) {
     goveeEnabled,
     xiaomiEnabled,
     reduceMotion: reduceMotionPref,
+    dateFormat: dateFormatPref,
+    currency: currencyPref,
   }), [
     nameInput, enabledCategories, customCategories, orderedFoodCats,
     enabledNonFoodCategories, customNonFoodCategories, orderedNonFoodCats,
     customBillCats, customExpenseCats, foodOverrides, nonFoodOverrides, billOverrides, expenseOverrides,
     goveeApiKey, openRouterApiKey, aiModel, enabledUnits, customUnits, xiaomiCreds, goveeEnabled, xiaomiEnabled,
-    reduceMotionPref,
+    reduceMotionPref, dateFormatPref, currencyPref,
   ]);
 
   // Capture the baseline once the household has loaded.
@@ -758,6 +770,9 @@ export default function HouseholdEditScreen({ route, navigation }) {
     }
     if (changed(snap.reduceMotion, base.reduceMotion)) {
       writes.push(updateHouseholdReduceMotion(hhId, snap.reduceMotion));
+    }
+    if (changed(snap.dateFormat, base.dateFormat) || changed(snap.currency, base.currency)) {
+      writes.push(updateHouseholdFormat(hhId, { dateFormat: snap.dateFormat, currency: snap.currency }));
     }
 
     if (writes.length === 0) return true;
@@ -1270,6 +1285,61 @@ export default function HouseholdEditScreen({ route, navigation }) {
             {!!unitError && <Text style={styles.errorText}>{unitError}</Text>}
           </View>
 
+          </CollapsibleGroup>
+          </Rise>
+
+          {/* ═══ Date & currency ═══ */}
+          <Rise index={1}>
+          <CollapsibleGroup
+            title={t('household.groupFormat')} icon="calendar-outline"
+            open={openGroups.format} onToggle={() => toggleGroup('format')}
+            styles={styles} colors={colors}
+          >
+          <Text style={styles.sectionLabel}>{t('household.dateFormat')}</Text>
+          <View style={styles.card}>
+            <View style={styles.unitsGrid}>
+              {DATE_FORMATS.map((f) => {
+                const isOn = dateFormatPref === f.key;
+                const example = formatDate(FORMAT_SAMPLE_DATE, { dateFormat: f.key });
+                return (
+                  <TouchableOpacity
+                    key={f.key}
+                    style={[styles.unitToggle, isOn && styles.unitToggleActive]}
+                    onPress={() => setDateFormatPref(f.key)}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected: isOn }}
+                    accessibilityLabel={example}
+                  >
+                    <Text style={[styles.unitToggleLabel, isOn && styles.unitToggleLabelActive]}>{example}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+            <Text style={styles.inviteHint}>{t('household.dateFormatHint')}</Text>
+          </View>
+
+          <Text style={styles.sectionLabel}>{t('household.currency')}</Text>
+          <View style={styles.card}>
+            <View style={styles.unitsGrid}>
+              {CURRENCIES.map((c) => {
+                const isOn = currencyPref === c.code;
+                const label = `${t(`household.currencyNames.${c.code}`)} · ${formatMoney(1234.56, { currency: c.code })}`;
+                return (
+                  <TouchableOpacity
+                    key={c.code}
+                    style={[styles.unitToggle, isOn && styles.unitToggleActive]}
+                    onPress={() => setCurrencyPref(c.code)}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected: isOn }}
+                    accessibilityLabel={label}
+                  >
+                    <Text style={[styles.unitToggleLabel, isOn && styles.unitToggleLabelActive]}>{label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+            <Text style={styles.inviteHint}>{t('household.currencyHint')}</Text>
+          </View>
           </CollapsibleGroup>
           </Rise>
 

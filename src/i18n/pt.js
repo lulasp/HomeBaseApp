@@ -1478,5 +1478,15 @@ export default {
     notes: 'Notas',
     notesPlaceholder: 'Morada, horário, outras informações…',
     saveContact: 'Guardar contacto',
+    groupFormat: 'Data e moeda',
+    dateFormat: 'Formato da data',
+    dateFormatHint: 'Como as datas aparecem na aplicação. Os nomes dos meses e dos dias seguem o idioma de cada pessoa.',
+    currency: 'Moeda',
+    currencyHint: 'Muda o símbolo e o formato dos números. Os valores não são convertidos.',
+    currencyNames: {
+      EUR: 'Euro',
+      USD: 'Dólar americano',
+      BRL: 'Real brasileiro',
+    },
   },
 };

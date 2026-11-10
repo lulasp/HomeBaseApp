@@ -1,5 +1,6 @@
 import { t } from '../i18n';
 import { unitName } from './categories';
+import { formatMoney } from './format';
 
 // Grocery price tracking — pure helpers.
 //
@@ -451,10 +452,8 @@ export const buildStoreComparison = (rawEntries = [], { maxStores = 4, minItems 
 
 // ── Formatting ───────────────────────────────────────────
 
-export const formatPrice = (n, { decimals = 2 } = {}) =>
-  `$${Number(n || 0).toLocaleString('en-US', {
-    minimumFractionDigits: decimals, maximumFractionDigits: decimals,
-  })}`;
+// In the household's currency (Household settings → Date & currency).
+export const formatPrice = (n, { decimals = 2 } = {}) => formatMoney(n, { decimals });
 
 // Unit prices are often fractions of a cent (per gram, per ml); show enough
 // precision to be meaningful without printing noise.

@@ -396,6 +396,10 @@ export const updateHouseholdIntegrationFlags = (householdId, { goveeEnabled, xia
 export const updateHouseholdReduceMotion = (householdId, reduceMotion) =>
   setDoc(privateRef(householdId), { reduceMotion }, { merge: true });
 
+// Household date format ('dmy' | 'mdy' | 'iso' | 'long') and currency ('EUR' | 'USD' | 'BRL').
+export const updateHouseholdFormat = (householdId, { dateFormat, currency }) =>
+  setDoc(privateRef(householdId), { dateFormat, currency }, { merge: true });
+
 // Live members-only private doc (secrets, member profiles, integration flags).
 // Calls back with the doc data (or {}); returns the unsubscribe fn.
 export const subscribeHouseholdPrivate = (householdId, callback) =>

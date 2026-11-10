@@ -3,8 +3,8 @@
 **Status:** built 2026-11-09 (branch `appTranslations`), not yet released
 
 Each person picks English or Portuguese (pt-PT). The whole app follows it,
-including the AI assistant's replies. Dates and money keep their existing
-formatting in both languages.
+including the AI assistant's replies. Month and day names follow the language;
+the date format and currency are a household setting (see `docs/date-currency.md`).
 
 ## Choosing the language
 
@@ -54,8 +54,6 @@ unchanged, since they extract data rather than write text.
 
 ## Known limits
 
-- Day and month names stay in English, as agreed, for example "Monday" in the
-  tasks and "Nov 2026" on Finances.
 - Editing a built-in pantry category in Portuguese shows its Portuguese name.
   Saving it unchanged keeps the stored English name. Saving a new name stores
   the new name, the same as any rename.

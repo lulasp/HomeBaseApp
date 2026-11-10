@@ -42,8 +42,8 @@ import {
   MAX_TODOS_PER_DAY, WEEK_NAV_RANGE, weekKeyFor, shiftWeekKey, weekRangeLabel,
   carryOverCandidates, planCarryOver, planMaterialization, formatRecurrenceDays,
 } from '../../utils/weeklyTodos';
-const DAYS_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+import { formatDate, formatMoney, dayName } from '../../utils/format';
+import useFormat from '../../hooks/useFormat';
 
 function greeting() {
   const h = new Date().getHours();
@@ -249,6 +249,7 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
   const { notify } = useNotification();
   const { showConfirm } = useAlert();
   useLanguage();
+  useFormat();
   const { privateData } = useHousehold();
   const { user } = useAuth();
   const uid = user?.uid;
@@ -333,7 +334,7 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
       materializeTodoRecurrences(householdId, currentWeekKey, creates, markRuleIds)
         .then(() => {
           if (skipped.length) {
-            const days = [...new Set(skipped.map((x) => x.day))].join(', ');
+            const days = [...new Set(skipped.map((x) => dayName(x.day)))].join(', ');
             notify(t('home.repeatSkipped'), t('home.dayAlreadyFull', { day: days, max: MAX_TODOS_PER_DAY }), { type: 'warning' });
           }
         })
@@ -420,7 +421,7 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
     if (!text) { cancelEdit(); return; }          // empty text reverts rather than blanking the task
     const movedTo = editDay !== todo.day ? editDay : null;
     if (movedTo && (countsByDay[movedTo]?.total || 0) >= MAX_TODOS_PER_DAY) {
-      notify(t('home.dayFull'), t('home.dayAlreadyFull', { day: movedTo, max: MAX_TODOS_PER_DAY }), { type: 'warning' });
+      notify(t('home.dayFull'), t('home.dayAlreadyFull', { day: dayName(movedTo), max: MAX_TODOS_PER_DAY }), { type: 'warning' });
       return;
     }
     const remindChanged = (editRemindTime || null) !== (todo.remindTime || null);
@@ -434,7 +435,7 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
         patch.remindFor = editRemindTime ? uid : null;
       }
       await updateWeeklyTodo(householdId, todo.id, patch);
-      if (movedTo) notify(t('home.taskMoved'), t('home.movedTo', { day: movedTo }), { type: 'info' });
+      if (movedTo) notify(t('home.taskMoved'), t('home.movedTo', { day: dayName(movedTo) }), { type: 'info' });
     } catch (err) {
       console.error(err);
       notify(t('home.couldNotSaveTask'), err?.message || t('home.tryAgain'), { type: 'error' });
@@ -673,7 +674,7 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
               style={{ flex: 1 }}
               onPress={() => { cancelEdit(); setSelectedDay(full); }}
               accessibilityRole="button"
-              accessibilityLabel={full}
+              accessibilityLabel={dayName(full)}
               accessibilityState={{ selected: isSelected }}
             >
               <M
@@ -694,7 +695,7 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
                   { color: isSelected ? '#fff' : colors.textSecondary },
                   isToday && !isSelected && { color: colors.accent },
                 ]}>
-                  {short}
+                  {dayName(short, { short: true })}
                 </Text>
                 {pending > 0 && (
                   <View style={[
@@ -711,7 +712,7 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
       {/* Todo list */}
       {dayTodos.length === 0 && (
         <Text style={[styles.calendarEmpty, { color: colors.textTertiary }]}>
-          {t('home.noTasksFor', { day: selectedDay })}{isCurrentWeek ? '' : ` · ${weekRangeLabel(viewWeekKey)}`}
+          {t('home.noTasksFor', { day: dayName(selectedDay) })}{isCurrentWeek ? '' : ` · ${weekRangeLabel(viewWeekKey)}`}
         </Text>
       )}
       <Presence>
@@ -770,14 +771,14 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
                         ]}
                         onPress={() => setEditDay(full)}
                         accessibilityRole="button"
-                        accessibilityLabel={t('home.moveTo', { day: full })}
+                        accessibilityLabel={t('home.moveTo', { day: dayName(full) })}
                         accessibilityState={{ selected: isPicked }}
                       >
                         <Text style={[
                           styles.moveChipText,
                           { color: isPicked ? '#fff' : colors.textSecondary },
                         ]}>
-                          {short}
+                          {dayName(short, { short: true })}
                         </Text>
                       </TouchableOpacity>
                     );
@@ -849,11 +850,11 @@ function WeeklyCalendar({ householdId, weekKey: currentWeekKey, todayFull, today
                         style={[styles.moveChip, { backgroundColor: isPicked ? colors.accent : colors.muted }]}
                         onPress={() => toggleRepeatDay(full)}
                         accessibilityRole="checkbox"
-                        accessibilityLabel={full}
+                        accessibilityLabel={dayName(full)}
                         accessibilityState={{ checked: isPicked }}
                       >
                         <Text style={[styles.moveChipText, { color: isPicked ? '#fff' : colors.textSecondary }]}>
-                          {short}
+                          {dayName(short, { short: true })}
                         </Text>
                       </TouchableOpacity>
                     );
@@ -995,6 +996,7 @@ export default function HomeScreen({ navigation }) {
   const { user, householdId, displayName } = useAuth();
   const { colors } = useTheme();
   useLanguage();
+  useFormat();
   const navScrollProps = useNavScrollProps();
   const isDesktop = useIsDesktop();
   const { animationsEnabled } = useHousehold();
@@ -1002,7 +1004,8 @@ export default function HomeScreen({ navigation }) {
   const today       = new Date();
   const todayFull   = FULL_DAYS[today.getDay() === 0 ? 6 : today.getDay() - 1]; // Mon=0 offset
   const weekKey     = weekKeyFor(today);
-  const dateLabel   = `${DAYS_SHORT[today.getDay()]}, ${MONTH_NAMES[today.getMonth()]} ${today.getDate()}`;
+  // Weekday in the person's language, then the date in the household format.
+  const dateLabel   = `${dayName(todayFull, { short: true })}, ${formatDate(today, { short: true })}`;
   const initials    = (displayName || user?.email || 'Y').split(' ').map((w) => w[0]).join('').toUpperCase().slice(0, 2);
 
   const [household,    setHousehold]    = useState(null);
@@ -1291,7 +1294,7 @@ export default function HomeScreen({ navigation }) {
                   </Text>
                 </View>
                 <Text style={[styles.billAmount, { color: colors.textPrimary }]}>
-                  ${Number(nextBill.amount || 0).toLocaleString('en-US', { minimumFractionDigits: 0 })}
+                  {formatMoney(nextBill.amount, { decimals: 0 })}
                 </Text>
               </View>
             </WidgetCard>

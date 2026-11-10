@@ -7,6 +7,8 @@ import { useTheme } from '../context/ThemeContext';
 import { spacing, radius, type } from '../theme/colors';
 import { t } from '../i18n';
 import { useLanguage } from '../context/LanguageContext';
+import { formatDate } from '../utils/format';
+import useFormat from '../hooks/useFormat';
 
 // On web, render a native <input type="date"> via a thin inline component.
 // This avoids any dependency on the native module on web.
@@ -61,11 +63,12 @@ export default function DatePickerInput({
 }) {
   const { colors, theme } = useTheme();
   useLanguage();
+  useFormat();
   const [showPicker, setShowPicker] = useState(false);
 
   const parsedDate = value ? parseISO(value) : null;
   const dateIsValid = parsedDate && isValid(parsedDate);
-  const displayText = dateIsValid ? format(parsedDate, 'MMM d, yyyy') : '';
+  const displayText = dateIsValid ? formatDate(parsedDate) : '';
   const pickerDate = dateIsValid ? parsedDate : new Date();
 
   const handleClear = () => {

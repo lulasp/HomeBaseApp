@@ -4,6 +4,7 @@
 // Income rows carry direction 'in' and never count toward spending.
 
 import { format } from 'date-fns';
+import { formatMonthShort } from './format';
 
 const isIncome = (e) => e.direction === 'in';
 const amt = (e) => Number(e.amount || 0);
@@ -47,7 +48,7 @@ export function monthlyTrend(expenses = [], months = 6, ref = new Date()) {
   for (let i = months - 1; i >= 0; i--) {
     const d = new Date(ref.getFullYear(), ref.getMonth() - i, 1);
     const key = format(d, 'yyyy-MM');
-    const bucket = { key, label: format(d, 'MMM'), income: 0, spending: 0 };
+    const bucket = { key, label: formatMonthShort(d), income: 0, spending: 0 };
     index[key] = bucket;
     buckets.push(bucket);
   }

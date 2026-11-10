@@ -1483,5 +1483,15 @@ export default {
     notes: 'Notes',
     notesPlaceholder: 'Address, hours, extra info…',
     saveContact: 'Save Contact',
+    groupFormat: 'Date & currency',
+    dateFormat: 'Date format',
+    dateFormatHint: 'How dates are shown across the app. Month and day names follow each person\'s language.',
+    currency: 'Currency',
+    currencyHint: 'Changes the symbol and number style. Amounts are not converted.',
+    currencyNames: {
+      EUR: 'Euro',
+      USD: 'US dollar',
+      BRL: 'Brazilian real',
+    },
   },
 };
