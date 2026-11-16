@@ -26,3 +26,4 @@ Read the exact versioned docs at https://docs.expo.dev/versions/v56.0.0/ before 
 @.claude/rules/web-scroll.md
 @.claude/rules/testing.md
 @.claude/rules/git-workflow.md
+@.claude/rules/worktrees.md
