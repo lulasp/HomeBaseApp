@@ -11,3 +11,4 @@ Rules in this project:
 - **web-scroll.md** — react-native-web `ScrollView` needs a definite pixel height (not `flex: 1`); pin to `windowHeight` on web. The recurring "page won't scroll on web" gotcha.
 - **testing.md** — jest-expo conventions, what needs tests, mocking policy, `npm test` before commits.
 - **git-workflow.md** — `master`→production / `staging`→fixed preview branch mapping; feature→staging→master cycle; the re-sync step that keeps staging identical to master.
+- **worktrees.md** — one git worktree per feature in `~/projects/HomeBaseApp-worktrees/` (or Orca), port registry, Firestore rules lock, build → manual test → approval → push + compare link.
